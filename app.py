@@ -1,6 +1,9 @@
 import streamlit as st
 from view_cores import view_cores
 
+# Force wide layout for Streamlit
+st.set_page_config(layout="wide")
+
 # Custom CSS to reduce blank space
 st.markdown(
     """
