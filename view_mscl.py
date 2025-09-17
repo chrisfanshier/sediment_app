@@ -32,30 +32,20 @@ def visualize_mscl_data():
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
                 # Construct the full file path
                 uploaded_file_path = file_row['file_path']
-                st.write(f"Debug: file_path = '{uploaded_file_path}'")
-                st.write(f"Debug: file_name = '{selected_file_label}'")
-
-                # Pass the directory path and file name to the parsing function
                 df = parse_mscl_out_file(uploaded_file_path, selected_file_label)
                 if df is not None:
-                    show_parsed_data = st.checkbox("Show Parsed Data Preview", value=False)
-                    if show_parsed_data:
-                        st.write("Parsed MSCL Data Preview:")
-                        st.dataframe(df)
-                    numeric_columns = df.select_dtypes(include='number').columns.tolist()
-                    if "SB DEPTH" in numeric_columns:
-                        numeric_columns.remove("SB DEPTH")
-                    if numeric_columns:
-                        parameter = st.selectbox("Select Parameter to Plot", options=numeric_columns, index=0)
-                        x_min = st.number_input('Set X-axis Min', value=float(df[parameter].min()), step=0.1)
-                        x_max = st.number_input('Set X-axis Max', value=float(df[parameter].max()), step=0.1)
-                        y_min = st.number_input('Set Y-axis Min (Depth)', value=float(df["SB DEPTH"].min()), step=0.1)
-                        y_max = st.number_input('Set Y-axis Max (Depth)', value=float(df["SB DEPTH"].max()), step=0.1)
-                    else:
-                        st.warning("No numeric columns found for plotting.")
-                        df = None
-                else:
-                    st.warning("Could not parse the MSCL data file.")
+                    with st.expander("Plot Settings"):
+                        numeric_columns = df.select_dtypes(include='number').columns.tolist()
+                        if "SB DEPTH" in numeric_columns:
+                            numeric_columns.remove("SB DEPTH")
+                        if numeric_columns:
+                            parameter = st.selectbox("Select Parameter to Plot", options=numeric_columns, index=0, key="parameter_select")
+                            x_min = st.number_input('Set X-axis Min', value=float(df[parameter].min()), step=0.1, key="x_min_input")
+                            x_max = st.number_input('Set X-axis Max', value=float(df[parameter].max()), step=0.1, key="x_max_input")
+                            y_min = st.number_input('Set Y-axis Min (Depth)', value=float(df["SB DEPTH"].min()), step=0.1, key="y_min_input")
+                            y_max = st.number_input('Set Y-axis Max (Depth)', value=float(df["SB DEPTH"].max()), step=0.1, key="y_max_input")
+                        else:
+                            st.warning("No numeric columns found for plotting.")
             else:
                 st.warning("No MSCL file for this core.")
                 uploaded_file_path = None
