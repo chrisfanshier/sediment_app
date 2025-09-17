@@ -63,27 +63,54 @@ def visualize_mscl_data():
         if uploaded_file_path:
             with st.expander("Plot Settings"):
                 try:
-                    # Pass the full file path to the parsing function
-                    df = parse_mscl_out_file(uploaded_file_path, selected_file_label)
-                    if df is not None:
-                        show_parsed_data = st.checkbox("Show Parsed Data Preview", value=False)
-                        if show_parsed_data:
-                            st.write("Parsed MSCL Data Preview:")
-                            st.dataframe(df)
-                        numeric_columns = df.select_dtypes(include='number').columns.tolist()
-                        if "SB DEPTH" in numeric_columns:
-                            numeric_columns.remove("SB DEPTH")
-                        if numeric_columns:
-                            parameter = st.selectbox("Select Parameter to Plot", options=numeric_columns, index=0)
-                            x_min = st.number_input('Set X-axis Min', value=float(df[parameter].min()), step=0.1)
-                            x_max = st.number_input('Set X-axis Max', value=float(df[parameter].max()), step=0.1)
-                            y_min = st.number_input('Set Y-axis Min (Depth)', value=float(df["SB DEPTH"].min()), step=0.1)
-                            y_max = st.number_input('Set Y-axis Max (Depth)', value=float(df["SB DEPTH"].max()), step=0.1)
-                        else:
-                            st.warning("No numeric columns found for plotting.")
-                            df = None
+                    # Debug: Check if df is valid
+                    st.write("Debug: DataFrame loaded successfully.")
+                    st.write("Debug: DataFrame columns:", df.columns)
+                    st.write("Debug: DataFrame sample:")
+                    st.dataframe(df.head())
+
+                    # Check for numeric columns
+                    numeric_columns = df.select_dtypes(include='number').columns.tolist()
+                    st.write("Debug: Numeric columns:", numeric_columns)
+
+                    if "SB DEPTH" in numeric_columns:
+                        numeric_columns.remove("SB DEPTH")
+                    st.write("Debug: Numeric columns after removing 'SB DEPTH':", numeric_columns)
+
+                    if numeric_columns:
+                        parameter = st.selectbox(
+                            "Select Parameter to Plot",
+                            options=numeric_columns,
+                            index=0,
+                            key="parameter_select"
+                        )
+                        x_min = st.number_input(
+                            'Set X-axis Min',
+                            value=float(df[parameter].min()),
+                            step=0.1,
+                            key="x_min_input"
+                        )
+                        x_max = st.number_input(
+                            'Set X-axis Max',
+                            value=float(df[parameter].max()),
+                            step=0.1,
+                            key="x_max_input"
+                        )
+                        y_min = st.number_input(
+                            'Set Y-axis Min (Depth)',
+                            value=float(df["SB DEPTH"].min()),
+                            step=0.1,
+                            key="y_min_input"
+                        )
+                        y_max = st.number_input(
+                            'Set Y-axis Max (Depth)',
+                            value=float(df["SB DEPTH"].max()),
+                            step=0.1,
+                            key="y_max_input"
+                        )
                     else:
-                        st.warning("Could not parse the MSCL data file.")
+                        st.warning("No numeric columns found for plotting.")
+                        df = None
                 except Exception as e:
                     st.error(f"An error occurred while processing the file: {e}")
                     df = None
