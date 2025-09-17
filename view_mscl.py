@@ -127,8 +127,6 @@ def visualize_mscl_data():
                             file_row_2 = df_files_2[df_files_2['file_name'] == selected_file_label_2].iloc[0]
                             # Pass only the directory path
                             uploaded_file_path_2 = file_row_2['file_path']
-                            st.write(f"Debug: file_path_2 = '{uploaded_file_path_2}'")
-                            st.write(f"Debug: file_name_2 = '{selected_file_label_2}'")
 
                             try:
                                 # Pass the directory path and file name to the parsing function
