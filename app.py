@@ -27,7 +27,7 @@ st.markdown(
 )
 
 # Sidebar navigation
-menu = ["View Cores"]
+menu = ["View Cores", "Visualize MSCL Data"]
 choice = st.sidebar.radio("Select Option", menu)
 
 # Render the selected page
