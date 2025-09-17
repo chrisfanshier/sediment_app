@@ -2,16 +2,13 @@ import re
 import pandas as pd
 import streamlit as st
 
-# Define the base network directory
-NETWORK_BASE_DIR = "/home/server/project/marssam"
-
-def parse_mscl_out_file(file_path):
+def parse_mscl_out_file(file_path, file_name):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
     try:
-        # Construct the full file path
-        full_path = f"{NETWORK_BASE_DIR}/{file_path}"
+        # Construct the full file path using the file_path column and file_name
+        full_path = f"{file_path}/{file_name}"
 
-        # Open the file from the network directory
+        # Open the file from the specified path
         with open(full_path, "r", encoding="utf-8") as file:
             lines = file.readlines()
 
