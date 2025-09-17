@@ -1,3 +1,4 @@
+import os
 import re
 import pandas as pd
 import streamlit as st
@@ -5,8 +6,9 @@ import streamlit as st
 def parse_mscl_out_file(file_path, file_name):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
     try:
-        # Construct the full file path using the file_path column and file_name
-        full_path = f"{file_path}/{file_name}"
+        # Construct the full file path using os.path.join
+        full_path = os.path.join(file_path, file_name)
+        st.write(f"Attempting to open file: {full_path}")
 
         # Open the file from the specified path
         with open(full_path, "r", encoding="utf-8") as file:
