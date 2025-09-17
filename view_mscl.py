@@ -30,7 +30,9 @@ def visualize_mscl_data():
             if not df_files.empty:
                 selected_file_label = st.selectbox("Select MSCL Data File", df_files['file_name'])
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
-                uploaded_file_path = file_row['file_path']
+                # Construct the full file path
+                uploaded_file_path = os.path.join(file_row['file_path'], file_row['file_name'])
+                st.write(f"Debug: full file path = '{uploaded_file_path}'")
             else:
                 st.warning("No MSCL file for this core.")
                 uploaded_file_path = None
@@ -38,8 +40,8 @@ def visualize_mscl_data():
         if uploaded_file_path:
             with st.expander("Plot Settings"):
                 try:
-                    with open(uploaded_file_path, "rb") as file:
-                        df = parse_mscl_out_file(file)
+                    # Pass the full file path to the parsing function
+                    df = parse_mscl_out_file(uploaded_file_path, selected_file_label)
                     if df is not None:
                         show_parsed_data = st.checkbox("Show Parsed Data Preview", value=False)
                         if show_parsed_data:
@@ -117,10 +119,9 @@ def visualize_mscl_data():
                         if not df_files_2.empty:
                             selected_file_label_2 = st.selectbox("Select MSCL Data File for Second Core", df_files_2['file_name'])
                             file_row_2 = df_files_2[df_files_2['file_name'] == selected_file_label_2].iloc[0]
-                            uploaded_file_path_2 = file_row_2['file_path']
+                            uploaded_file_path_2 = os.path.join(file_row_2['file_path'], file_row_2['file_name'])
                             try:
-                                with open(uploaded_file_path_2, "rb") as file2:
-                                    df2 = parse_mscl_out_file(file2)
+                                df2 = parse_mscl_out_file(uploaded_file_path_2, selected_file_label_2)
                                 if df2 is not None:
                                     # Apply the same dropout filter to the second core if enabled
                                     if enable_dropout and filter_column in df2.columns:
