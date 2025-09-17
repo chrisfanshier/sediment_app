@@ -1,0 +1,114 @@
+import plotly.graph_objects as go  # For creating plots
+from plotly.subplots import make_subplots  # For creating subplots
+import streamlit as st  # For rendering plots in the Streamlit app
+
+def plot_mscl_data(df, x_col, y_col, core_name, x_min, x_max, y_min, y_max):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df[x_col], 
+        y=df[y_col], 
+        mode='lines', 
+        name=x_col, 
+        line=dict(color='blue')
+    ))
+    if 'Den1' in df.columns and x_col != 'Den1':
+        fig.add_trace(go.Scatter(
+            x=df['Den1'], 
+            y=df[y_col], 
+            mode='lines', 
+            name='Den1', 
+            line=dict(color='red')
+        ))
+    fig.update_layout(
+        title=f"{core_name}: {x_col} vs Depth",
+        xaxis_title="Value",
+        yaxis_title="Depth (SB DEPTH)",
+        showlegend=True,
+        height=1200
+    )
+    if x_min is not None and x_max is not None:
+        fig.update_xaxes(range=[x_min, x_max])
+    if y_min is not None and y_max is not None:
+        fig.update_yaxes(range=[y_max, y_min], autorange=False)
+    else:
+        fig.update_yaxes(autorange='reversed')
+    st.plotly_chart(fig)
+
+def plot_mscl_data_compare(
+    df1,
+    df2,
+    x_col,
+    y_col,
+    core_name_1,
+    core_name_2,
+    plot_type="Overlay",
+    x_min=None,
+    x_max=None,
+    y_min=None,
+    y_max=None,
+    x_offset=0.0,
+    y_offset=0.0,
+    x_scale=1.0,
+    y_scale=1.0
+):
+    if plot_type == "Side by Side":
+        fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=(core_name_1, core_name_2))
+        fig.add_trace(go.Scatter(
+            x=df1[x_col],
+            y=df1[y_col],
+            mode='lines+markers',
+            name=core_name_1,
+            line=dict(color='blue')
+        ), row=1, col=1)
+        x2 = df2[x_col] * x_scale + x_offset
+        y2 = df2[y_col] * y_scale + y_offset
+        fig.add_trace(go.Scatter(
+            x=x2,
+            y=y2,
+            mode='lines+markers',
+            name=core_name_2,
+            line=dict(color='red')
+        ), row=1, col=2)
+        if x_min is not None and x_max is not None:
+            fig.update_xaxes(range=[x_min, x_max], row=1, col=1)
+            fig.update_xaxes(range=[x_min, x_max], row=1, col=2)
+        if y_min is not None and y_max is not None:
+            fig.update_yaxes(range=[y_max, y_min], row=1, col=1)
+            fig.update_yaxes(range=[y_max, y_min], row=1, col=2)
+        else:
+            fig.update_yaxes(autorange="reversed", row=1, col=1)
+            fig.update_yaxes(autorange="reversed", row=1, col=2)
+        fig.update_layout(
+            title=f"Comparison of {core_name_1} and {core_name_2} for {x_col}",
+            height=1200
+        )
+    else:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df1[x_col],
+            y=df1[y_col],
+            mode='lines+markers',
+            name=core_name_1,
+            line=dict(color='blue')
+        ))
+        x2 = df2[x_col] * x_scale + x_offset
+        y2 = df2[y_col] * y_scale + y_offset
+        fig.add_trace(go.Scatter(
+            x=x2,
+            y=y2,
+            mode='lines+markers',
+            name=core_name_2,
+            line=dict(color='red')
+        ))
+        fig.update_layout(
+            title=f"Overlay: {core_name_1} vs {core_name_2} for {x_col}",
+            xaxis=dict(
+                range=[x_min, x_max] if x_min is not None and x_max is not None else None
+            ),
+            yaxis=dict(
+                range=[y_max, y_min] if y_min is not None and y_max is not None else None,
+                autorange="reversed" if y_min is None and y_max is None else False
+            ),
+            height=1200
+        )
+    st.plotly_chart(fig, use_container_width=True)
