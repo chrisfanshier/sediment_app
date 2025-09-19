@@ -167,8 +167,12 @@ def plot_rbr_downsampled(primary_df, overlay_df=None, third_df=None, y_axis="Dep
     return fig
 
 
-def plot_rbr_high_resolution(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", start_time=None, end_time=None, primary_core_name="Primary Core"):
-    """Generate a high-resolution Plotly line plot for RBR primary, overlay, and third traces."""
+def plot_rbr_high_resolution(
+    primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", start_time=None, end_time=None,
+    primary_core_name="Primary Core", overlay_x_offset=0.0, overlay_y_offset=0.0,
+    third_x_offset=0.0, third_y_offset=0.0
+):
+    """Generate a high-resolution Plotly line plot for RBR primary, overlay, and third traces with offsets."""
     # Filter primary data for the selected time range
     high_res_df = primary_df[
         (primary_df["Timestamp"] >= start_time) & (primary_df["Timestamp"] <= end_time)
@@ -192,6 +196,8 @@ def plot_rbr_high_resolution(primary_df, overlay_df=None, third_df=None, y_axis=
         overlay_high_res_df = overlay_df[
             (overlay_df["Timestamp"] >= start_time) & (overlay_df["Timestamp"] <= end_time)
         ]
+        overlay_high_res_df["Timestamp"] += overlay_x_offset
+        overlay_high_res_df[y_axis] += overlay_y_offset
         overlay_trace = px.line(
             overlay_high_res_df, x="Timestamp", y=y_axis,
             color_discrete_sequence=["red"]
@@ -204,6 +210,8 @@ def plot_rbr_high_resolution(primary_df, overlay_df=None, third_df=None, y_axis=
         third_high_res_df = third_df[
             (third_df["Timestamp"] >= start_time) & (third_df["Timestamp"] <= end_time)
         ]
+        third_high_res_df["Timestamp"] += third_x_offset
+        third_high_res_df[y_axis] += third_y_offset
         third_trace = px.line(
             third_high_res_df, x="Timestamp", y=y_axis,
             color_discrete_sequence=["green"]

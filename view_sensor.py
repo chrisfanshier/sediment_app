@@ -118,12 +118,22 @@ def view_sensor_data():
                     start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):", value=default_start_time, key="start_time")
                     end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):", value=default_end_time, key="end_time")
 
+                    # Add number inputs for x and y offsets
+                    st.subheader("Adjust Overlay and Third Trace (Offsets)")
+                    overlay_x_offset = st.number_input("Overlay X Offset", value=0.0, step=0.1)
+                    overlay_y_offset = st.number_input("Overlay Y Offset", value=0.0, step=0.1)
+                    third_x_offset = st.number_input("Third Trace X Offset", value=0.0, step=0.1)
+                    third_y_offset = st.number_input("Third Trace Y Offset", value=0.0, step=0.1)
+
                     # Generate high-resolution plot
                     if st.button("Generate High-Resolution Plot"):
                         if start_time and end_time:
                             try:
                                 high_res_fig = plot_rbr_high_resolution(
-                                    primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time, primary_core_name=selected_core_label
+                                    primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time,
+                                    primary_core_name=selected_core_label,
+                                    overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
+                                    third_x_offset=third_x_offset, third_y_offset=third_y_offset
                                 )
                                 st.plotly_chart(high_res_fig, use_container_width=True)
                             except Exception as e:
