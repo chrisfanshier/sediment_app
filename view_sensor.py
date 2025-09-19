@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import pandas as pd
 from db_util import get_connection, fetch_cores
-
+from utils import process_rsk_data
 
 # --- Visualize Sensor Data Page ---
 def view_sensor_data():
@@ -32,7 +32,22 @@ def view_sensor_data():
             if not df_files.empty:
                 selected_file_label = st.selectbox("Select Sensor Data File", df_files['file_name'])
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
-                uploaded_file_path = file_row['file_path']
+                file_path = file_row['file_path']
+                file_name = selected_file_label
+
+                # Construct the full file path
+                full_file_path = os.path.join(file_path, file_name)
+                st.write(f"Full file path: {full_file_path}")  # Debugging
+
+                # Process the selected file
+                try:
+                    processed_data = process_rsk_data(full_file_path)
+                    if processed_data is not None:
+                        st.subheader("Processed Data Preview")
+                        st.dataframe(processed_data.head())  # Display the first few rows of the DataFrame
+                    else:
+                        st.warning("No data was returned from the processing function.")
+                except Exception as e:
+                    st.error(f"An error occurred while processing the file: {e}")
             else:
                 st.warning("No Sensor file for this core.")
-                uploaded_file_path = None  # Ensure the variable is defined
