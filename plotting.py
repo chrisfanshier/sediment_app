@@ -115,13 +115,13 @@ def plot_mscl_data_compare(
         )
     st.plotly_chart(fig, use_container_width=True)
 
-def plot_rbr_downsampled(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", max_points=1000):
+def plot_rbr_downsampled(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", max_points=1000, primary_core_name="Primary Core"):
     """Generate a downsampled Plotly line plot for RBR primary, overlay, and third traces."""
     # Downsample primary data
     primary_downsampled_df = downsample_data(primary_df, max_points=max_points)
 
     # Autogenerate title
-    title = f"Downsampled Plot of {y_axis}"
+    title = f"{primary_core_name}: Downsampled Plot of {y_axis}"
     if overlay_df is not None or third_df is not None:
         title += " (with Overlay and/or Third Trace)"
 
@@ -166,7 +166,8 @@ def plot_rbr_downsampled(primary_df, overlay_df=None, third_df=None, y_axis="Dep
     )
     return fig
 
-def plot_rbr_high_resolution(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", start_time=None, end_time=None):
+
+def plot_rbr_high_resolution(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", start_time=None, end_time=None, primary_core_name="Primary Core"):
     """Generate a high-resolution Plotly line plot for RBR primary, overlay, and third traces."""
     # Filter primary data for the selected time range
     high_res_df = primary_df[
@@ -174,7 +175,7 @@ def plot_rbr_high_resolution(primary_df, overlay_df=None, third_df=None, y_axis=
     ]
 
     # Autogenerate title
-    title = f"High-Resolution Plot of {y_axis}"
+    title = f"{primary_core_name}: High-Resolution Plot of {y_axis}"
     if overlay_df is not None or third_df is not None:
         title += " (with Overlay and/or Third Trace)"
 

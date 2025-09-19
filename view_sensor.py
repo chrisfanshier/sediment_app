@@ -96,7 +96,9 @@ def view_sensor_data():
                         options=["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"],
                         index=2,
                     )
-                    fig = plot_rbr_downsampled(primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points)
+                    fig = plot_rbr_downsampled(
+                        primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label
+                    )
                     st.plotly_chart(fig, use_container_width=True)
 
                     # --- High-Resolution Plotting ---
@@ -121,7 +123,7 @@ def view_sensor_data():
                         if start_time and end_time:
                             try:
                                 high_res_fig = plot_rbr_high_resolution(
-                                    primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time
+                                    primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time, primary_core_name=selected_core_label
                                 )
                                 st.plotly_chart(high_res_fig, use_container_width=True)
                             except Exception as e:
