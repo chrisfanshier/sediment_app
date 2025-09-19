@@ -99,12 +99,34 @@ def view_sensor_data():
                     fig = plot_rbr_downsampled(primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points)
                     st.plotly_chart(fig, use_container_width=True)
 
-                    # High-Resolution Plotting
+                    # --- High-Resolution Plotting ---
                     st.subheader("High-Resolution Plot")
-                    start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):")
-                    end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):")
+
+                    # Calculate default start and end times based on the greatest depth
+                    if primary_df is not None and "Depth (m)" in primary_df.columns:
+                        max_depth_row = primary_df.loc[primary_df["Depth (m)"].idxmax()]
+                        max_depth_time = max_depth_row["Timestamp"]
+                        default_start_time = (max_depth_time - pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                        default_end_time = (max_depth_time + pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        default_start_time = ""
+                        default_end_time = ""
+
+                    # Input fields for start and end times
+                    start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):", value=default_start_time, key="start_time")
+                    end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):", value=default_end_time, key="end_time")
+
+                    # Generate high-resolution plot
                     if st.button("Generate High-Resolution Plot"):
-                        high_res_fig = plot_rbr_high_resolution(primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time)
-                        st.plotly_chart(high_res_fig, use_container_width=True)
+                        if start_time and end_time:
+                            try:
+                                high_res_fig = plot_rbr_high_resolution(
+                                    primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time
+                                )
+                                st.plotly_chart(high_res_fig, use_container_width=True)
+                            except Exception as e:
+                                st.error(f"An error occurred while generating the high-resolution plot: {e}")
+                        else:
+                            st.warning("Please provide both Start Time and End Time for high-resolution plotting.")
             except Exception as e:
                 st.error(f"An error occurred while processing the files: {e}")
