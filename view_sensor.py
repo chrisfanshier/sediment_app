@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from db_util import get_rbr_core_files
 from utils import process_rsk_data, downsample_data
+import os
 
 def view_sensor_data():
     """Render the View Sensor Data page."""
@@ -20,6 +21,8 @@ def view_sensor_data():
         selected_core = st.selectbox("Select an RBR Sensor Core (Primary):", list(core_files_dict.keys()))
         primary_file_paths = core_files_dict[selected_core]
         selected_file_path = st.selectbox(f"Select a file for {selected_core} (Primary):", primary_file_paths)
+
+        st.write(f"Selected file path: {selected_file_path}")
 
         # --- Secondary File Selection ---
         st.subheader("Overlay Plot")
@@ -59,7 +62,10 @@ def view_sensor_data():
         if selected_file_path:
             st.subheader(f"Processing data from: {selected_file_path} (Primary)")
             st.subheader(f"Core: {selected_core} (Primary)")
-            primary_df = process_rsk_data(selected_file_path)
+            # Construct the full file path
+            full_file_path = os.path.join(selected_file_path, "your_file_name_here")  # Replace "your_file_name_here" with the actual file name logic
+            st.write(f"Full file path: {full_file_path}")  # Debugging
+            primary_df = process_rsk_data(full_file_path)
 
             overlay_df = None
             if overlay_file_path:
