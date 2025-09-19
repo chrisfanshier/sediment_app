@@ -2,6 +2,8 @@ import os
 import re
 import pandas as pd
 import streamlit as st
+import numpy as np
+from pyrsktools import RSK
 
 def parse_mscl_out_file(file_path, file_name):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
@@ -53,3 +55,31 @@ def parse_mscl_out_file(file_path, file_name):
     except Exception as e:
         st.error(f"An error occurred while parsing the file: {e}")
         return None
+
+def process_rsk_data(file_path):
+    """Process an RSK file and return a DataFrame."""
+    try:
+        with RSK(file_path) as rsk:
+            rsk.open()
+            rsk.readdata()
+            rsk.deriveseapressure()
+            rsk.derivedepth(latitude=45.0)
+            data_dict = {
+                "Timestamp": rsk.data["timestamp"],
+                "Pressure (dbar)": rsk.data["pressure"],
+                "Sea Pressure (dbar)": rsk.data["sea_pressure"],
+                "Depth (m)": rsk.data["depth"],
+            }
+            df = pd.DataFrame(data_dict)
+            return df
+    except FileNotFoundError:
+        raise FileNotFoundError(f"RSK file not found at path: {file_path}")
+    except Exception as e:
+        raise RuntimeError(f"Error processing RSK file at {file_path}: {e}")
+
+def downsample_data(df, max_points=1000):
+    """Downsample a DataFrame to a maximum number of points."""
+    if df is not None and len(df) > max_points:
+        indices = np.linspace(0, len(df) - 1, max_points, dtype=int)
+        return df.iloc[indices]
+    return df

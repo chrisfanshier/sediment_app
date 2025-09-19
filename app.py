@@ -1,6 +1,7 @@
 import streamlit as st
 from view_cores import view_cores
 from view_mscl import visualize_mscl_data
+from view_sensor import view_sensor_data  # Import the new page function
 
 # Force wide layout for Streamlit
 st.set_page_config(layout="wide")
@@ -27,7 +28,7 @@ st.markdown(
 )
 
 # Sidebar navigation
-menu = ["View Cores", "Visualize MSCL Data"]
+menu = ["View Cores", "Visualize MSCL Data", "View Sensor Data"]  # Add the new page to the menu
 choice = st.sidebar.radio("Select Option", menu)
 
 # Render the selected page
@@ -35,3 +36,5 @@ if choice == "View Cores":
     view_cores()
 elif choice == "Visualize MSCL Data":
     visualize_mscl_data()
+elif choice == "View Sensor Data":  # Handle the new page
+    view_sensor_data()

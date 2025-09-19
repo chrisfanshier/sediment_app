@@ -16,3 +16,19 @@ def fetch_cores():
     query = "SELECT * FROM cores ORDER BY core_name"
     with get_connection() as conn:
         return pd.read_sql(query, conn)
+
+def get_rbr_core_files():
+    """Fetch RBR sensor core files from the database."""
+    try:
+        with engine.connect() as connection:
+            query = """
+                SELECT c.core_name, f.file_path
+                FROM cores c
+                JOIN files f ON c.core_id = f.core_id
+                WHERE f.file_type = 'RBR Sensor';
+            """
+            df = pd.read_sql(query, connection)
+            core_files = df.groupby('core_name')['file_path'].apply(list).to_dict()
+            return core_files
+    except Exception as e:
+        raise RuntimeError(f"Error fetching core/file data: {e}")
