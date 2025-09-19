@@ -5,7 +5,7 @@ from db_util import get_connection, fetch_cores
 
 
 # --- Visualize Sensor Data Page ---
-def visualize_sensor_data():
+def view_sensor_data():
     st.title("📊 Visualize Sensor Data")
     if 'compare_enabled' not in st.session_state:
         st.session_state['compare_enabled'] = False
