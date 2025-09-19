@@ -19,28 +19,40 @@ def view_sensor_data():
     if core_files_dict:
         # --- Primary File Selection ---
         selected_core = st.selectbox("Select an RBR Sensor Core (Primary):", list(core_files_dict.keys()))
-        primary_file_paths = core_files_dict[selected_core]
-        selected_file_path = st.selectbox(f"Select a file for {selected_core} (Primary):", primary_file_paths)
+        primary_files = core_files_dict[selected_core]
+        selected_file = st.selectbox(
+            f"Select a file for {selected_core} (Primary):",
+            [file_name for _, file_name in primary_files]
+        )
 
-        st.write(f"Selected file path: {selected_file_path}")
+        # Construct the full file path for the selected file
+        selected_file_path = next(
+            os.path.join(file_path, file_name)
+            for file_path, file_name in primary_files
+            if file_name == selected_file
+        )
+        st.write(f"Full file path: {selected_file_path}")  # Debugging
 
-        # --- Secondary File Selection ---
+        # --- Secondary File Selection (Overlay) ---
         st.subheader("Overlay Plot")
-        overlay_option = st.radio("Select overlay data source:", ["Same Core", "Different Core", "None"])
+        overlay_option = st.radio("Select overlay data source:", ["None", "Same Core", "Different Core"])
         overlay_file_path = None
         overlay_core_name = None
+
         if overlay_option == "Same Core":
             overlay_file_path = st.selectbox(
                 f"Select a file to overlay from {selected_core}:",
-                [fp for fp in primary_file_paths if fp != selected_file_path],  # Exclude primary
-                index=0 if len(primary_file_paths) > 1 else None
+                [os.path.join(file_path, file_name) for file_path, file_name in primary_files if file_name != selected_file],
+                index=0 if len(primary_files) > 1 else None
             )
             overlay_core_name = selected_core
         elif overlay_option == "Different Core":
-            overlay_core = st.selectbox("Select an RBR Sensor Core (Overlay):", list(core_files_dict.keys()),
-                                        index=1 if len(core_files_dict) > 1 else 0)
+            overlay_core = st.selectbox("Select an RBR Sensor Core (Overlay):", list(core_files_dict.keys()))
             overlay_file_paths = core_files_dict[overlay_core]
-            overlay_file_path = st.selectbox(f"Select a file for {overlay_core} (Overlay):", overlay_file_paths)
+            overlay_file_path = st.selectbox(
+                f"Select a file for {overlay_core} (Overlay):",
+                [os.path.join(file_path, file_name) for file_path, file_name in overlay_file_paths]
+            )
             overlay_core_name = overlay_core
 
         # --- Third Trace Selection ---
@@ -48,6 +60,7 @@ def view_sensor_data():
         third_trace_option = st.radio("Add a third data source?", ["None", "Select Core and File"])
         third_file_path = None
         third_core_name = None
+
         if third_trace_option == "Select Core and File":
             third_core = st.selectbox(
                 "Select an RBR Sensor Core (Third Trace):", 
@@ -55,28 +68,26 @@ def view_sensor_data():
                 key="third_core_select"
             )
             third_file_paths = core_files_dict[third_core]
-            third_file_path = st.selectbox(f"Select a file for {third_core} (Third Trace):", third_file_paths, key="third_file_select")
+            third_file_path = st.selectbox(
+                f"Select a file for {third_core} (Third Trace):",
+                [os.path.join(file_path, file_name) for file_path, file_name in third_file_paths],
+                key="third_file_select"
+            )
             third_core_name = third_core
 
         # --- Process Data and Plot ---
         if selected_file_path:
             st.subheader(f"Processing data from: {selected_file_path} (Primary)")
-            st.subheader(f"Core: {selected_core} (Primary)")
-            # Construct the full file path
-            full_file_path = os.path.join(selected_file_path, "your_file_name_here")  # Replace "your_file_name_here" with the actual file name logic
-            st.write(f"Full file path: {full_file_path}")  # Debugging
-            primary_df = process_rsk_data(full_file_path)
+            primary_df = process_rsk_data(selected_file_path)
 
             overlay_df = None
             if overlay_file_path:
                 st.subheader(f"Processing data from: {overlay_file_path} (Overlay)")
-                st.subheader(f"Core: {overlay_core_name} (Overlay)")
                 overlay_df = process_rsk_data(overlay_file_path)
 
             third_df = None
             if third_file_path:
                 st.subheader(f"Processing data from: {third_file_path} (Third Trace)")
-                st.subheader(f"Core: {third_core_name} (Third Trace)")
                 third_df = process_rsk_data(third_file_path)
 
             # --- Plotting ---
