@@ -58,6 +58,12 @@ def parse_mscl_out_file(file_path, file_name):
 
 def process_rsk_data(file_path):
     """Process an RSK file and return a DataFrame."""
+
+    # Validate the file path
+    if not os.path.exists(file_path):
+        st.error(f"RSK file not found at path: {file_path}")
+        return None
+
     try:
         with RSK(file_path) as rsk:
             rsk.open()
@@ -73,9 +79,14 @@ def process_rsk_data(file_path):
             df = pd.DataFrame(data_dict)
             return df
     except FileNotFoundError:
-        raise FileNotFoundError(f"RSK file not found at path: {file_path}")
+        st.error(f"RSK file not found at path: {file_path}")
+        return None
+    except OSError as e:
+        st.error(f"Error processing RSK file: {e}")
+        return None
     except Exception as e:
-        raise RuntimeError(f"Error processing RSK file at {file_path}: {e}")
+        st.error(f"An unexpected error occurred: {e}")
+        return None
 
 def downsample_data(df, max_points=1000):
     """Downsample a DataFrame to a maximum number of points."""
