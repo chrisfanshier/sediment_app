@@ -1,6 +1,8 @@
 import plotly.graph_objects as go  # For creating plots
 from plotly.subplots import make_subplots  # For creating subplots
 import streamlit as st  # For rendering plots in the Streamlit app
+import plotly.express as px
+from utils import downsample_data
 
 def plot_mscl_data(df, x_col, y_col, core_name, x_min, x_max, y_min, y_max):
     fig = go.Figure()
@@ -112,3 +114,97 @@ def plot_mscl_data_compare(
             height=1200
         )
     st.plotly_chart(fig, use_container_width=True)
+
+def plot_rbr_downsampled(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", max_points=1000):
+    """Generate a downsampled Plotly line plot for RBR primary, overlay, and third traces."""
+    # Downsample primary data
+    primary_downsampled_df = downsample_data(primary_df, max_points=max_points)
+    fig = px.line(
+        primary_downsampled_df, x="Timestamp", y=y_axis,
+        title=f"{y_axis} for Primary (Downsampled)",
+        color_discrete_sequence=["blue"]
+    )
+    fig.data[0].name = "Primary"
+
+    # Add overlay data if available
+    if overlay_df is not None:
+        overlay_downsampled_df = downsample_data(overlay_df, max_points=max_points)
+        overlay_trace = px.line(
+            overlay_downsampled_df, x="Timestamp", y=y_axis,
+            color_discrete_sequence=["red"]
+        ).data[0]
+        overlay_trace.name = "Overlay"
+        fig.add_trace(overlay_trace)
+
+    # Add third trace data if available
+    if third_df is not None:
+        third_downsampled_df = downsample_data(third_df, max_points=max_points)
+        third_trace = px.line(
+            third_downsampled_df, x="Timestamp", y=y_axis,
+            color_discrete_sequence=["green"]
+        ).data[0]
+        third_trace.name = "Third Trace"
+        fig.add_trace(third_trace)
+
+    # Update layout
+    fig.update_layout(
+        showlegend=True,
+        legend_title_text="Data Source",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        xaxis_title="Timestamp",
+        yaxis_title=y_axis,
+        template="plotly_white",
+        yaxis=dict(autorange="reversed"),
+        height=600,
+    )
+    return fig
+
+def plot_rbr_high_resolution(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", start_time=None, end_time=None):
+    """Generate a high-resolution Plotly line plot for RBR primary, overlay, and third traces."""
+    # Filter primary data for the selected time range
+    high_res_df = primary_df[
+        (primary_df["Timestamp"] >= start_time) & (primary_df["Timestamp"] <= end_time)
+    ]
+    fig = px.line(
+        high_res_df, x="Timestamp", y=y_axis,
+        title=f"{y_axis} for Primary (High Resolution)",
+        color_discrete_sequence=["blue"]
+    )
+    fig.data[0].name = "Primary"
+
+    # Add overlay data if available
+    if overlay_df is not None:
+        overlay_high_res_df = overlay_df[
+            (overlay_df["Timestamp"] >= start_time) & (overlay_df["Timestamp"] <= end_time)
+        ]
+        overlay_trace = px.line(
+            overlay_high_res_df, x="Timestamp", y=y_axis,
+            color_discrete_sequence=["red"]
+        ).data[0]
+        overlay_trace.name = "Overlay"
+        fig.add_trace(overlay_trace)
+
+    # Add third trace data if available
+    if third_df is not None:
+        third_high_res_df = third_df[
+            (third_df["Timestamp"] >= start_time) & (third_df["Timestamp"] <= end_time)
+        ]
+        third_trace = px.line(
+            third_high_res_df, x="Timestamp", y=y_axis,
+            color_discrete_sequence=["green"]
+        ).data[0]
+        third_trace.name = "Third Trace"
+        fig.add_trace(third_trace)
+
+    # Update layout
+    fig.update_layout(
+        showlegend=True,
+        legend_title_text="Data Source",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        xaxis_title="Timestamp",
+        yaxis_title=y_axis,
+        template="plotly_white",
+        yaxis=dict(autorange="reversed"),
+        height=600,
+    )
+    return fig

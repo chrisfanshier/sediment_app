@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 from db_util import get_connection, fetch_cores
 from utils import process_rsk_data
+from plotting import plot_rbr_downsampled, plot_rbr_high_resolution
 
 # --- Visualize Sensor Data Page ---
 def view_sensor_data():
@@ -21,6 +22,7 @@ def view_sensor_data():
     with col1:
         st.header("Controls")
         with st.expander("Core and File Selection", expanded=True):
+            # --- Primary File Selection ---
             selected_core_label = st.selectbox("Select Core to Visualize Sensor Data", list(core_options.keys()))
             selected_core_id = core_options[selected_core_label]
 
@@ -30,24 +32,68 @@ def view_sensor_data():
                 df_files = pd.read_sql(query, conn, params=(selected_core_id,))
 
             if not df_files.empty:
-                selected_file_label = st.selectbox("Select Sensor Data File", df_files['file_name'])
+                selected_file_label = st.selectbox("Select Primary Sensor Data File", df_files['file_name'])
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
                 file_path = file_row['file_path']
                 file_name = selected_file_label
 
-                # Construct the full file path
-                full_file_path = os.path.join(file_path, file_name)
-                st.write(f"Full file path: {full_file_path}")  # Debugging
+                # Construct the full file path for the primary file
+                primary_file_path = os.path.join(file_path, file_name)
+                st.write(f"Primary file path: {primary_file_path}")  # Debugging
 
-                # Process the selected file
+                # --- Secondary File Selection ---
+                st.subheader("Overlay Plot")
+                overlay_option = st.radio("Select overlay data source:", ["None", "Same Core", "Different Core"])
+                overlay_file_path = None
+                if overlay_option == "Same Core":
+                    overlay_file_path = st.selectbox(
+                        "Select a file to overlay from the same core:",
+                        [os.path.join(file_row['file_path'], file) for file in df_files['file_name'] if file != file_name],
+                        index=0 if len(df_files) > 1 else None
+                    )
+                elif overlay_option == "Different Core":
+                    overlay_core_label = st.selectbox("Select Core for Overlay:", list(core_options.keys()))
+                    overlay_core_id = core_options[overlay_core_label]
+                    with get_connection() as conn:
+                        overlay_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
+                        overlay_df_files = pd.read_sql(overlay_query, conn, params=(overlay_core_id,))
+                    if not overlay_df_files.empty:
+                        overlay_file_label = st.selectbox("Select Overlay File", overlay_df_files['file_name'])
+                        overlay_file_row = overlay_df_files[overlay_df_files['file_name'] == overlay_file_label].iloc[0]
+                        overlay_file_path = os.path.join(overlay_file_row['file_path'], overlay_file_label)
+
+                # --- Third Trace Selection ---
+                st.subheader("Add a Third Trace (Optional)")
+                third_trace_option = st.radio("Add a third data source?", ["None", "Select Core and File"])
+                third_file_path = None
+                if third_trace_option == "Select Core and File":
+                    third_core_label = st.selectbox("Select Core for Third Trace:", list(core_options.keys()))
+                    third_core_id = core_options[third_core_label]
+                    with get_connection() as conn:
+                        third_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
+                        third_df_files = pd.read_sql(third_query, conn, params=(third_core_id,))
+                    if not third_df_files.empty:
+                        third_file_label = st.selectbox("Select Third Trace File", third_df_files['file_name'])
+                        third_file_row = third_df_files[third_df_files['file_name'] == third_file_label].iloc[0]
+                        third_file_path = os.path.join(third_file_row['file_path'], third_file_label)
+
+                # --- Process and Plot Data ---
                 try:
-                    processed_data = process_rsk_data(full_file_path)
-                    if processed_data is not None:
-                        st.subheader("Processed Data Preview")
-                        st.dataframe(processed_data.head())  # Display the first few rows of the DataFrame
-                    else:
-                        st.warning("No data was returned from the processing function.")
+                    primary_df = process_rsk_data(primary_file_path)
+                    overlay_df = process_rsk_data(overlay_file_path) if overlay_file_path else None
+                    third_df = process_rsk_data(third_file_path) if third_file_path else None
+
+                    if primary_df is not None:
+                        st.subheader("Interactive Plotting")
+                        max_points = st.slider("Max Points for Plotting", min_value=100, max_value=5000, value=1000, step=100)
+                        y_axis = st.selectbox(
+                            "Select Parameter to Plot:",
+                            options=["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"],
+                            index=2,
+                        )
+                        fig = plot_rbr_downsampled(primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points)
+                        st.plotly_chart(fig, use_container_width=True)
                 except Exception as e:
-                    st.error(f"An error occurred while processing the file: {e}")
+                    st.error(f"An error occurred while processing the files: {e}")
             else:
-                st.warning("No Sensor file for this core.")
+                st.warning("No Sensor files found for this core.")
