@@ -17,7 +17,7 @@ def view_sensor_data():
     cores = fetch_cores()
     core_options = {f"{name} (ID: {id})": id for id, name in zip(cores['core_id'], cores['core_name'])}
 
-    col1, col2 = st.columns([1, 3])
+    col1, col2 = st.columns([1, 3])  # Left column for controls, right column for plotting
 
     with col1:
         st.header("Controls")
@@ -45,12 +45,15 @@ def view_sensor_data():
                 st.subheader("Overlay Plot")
                 overlay_option = st.radio("Select overlay data source:", ["None", "Same Core", "Different Core"])
                 overlay_file_path = None
+
                 if overlay_option == "Same Core":
-                    overlay_file_path = st.selectbox(
+                    overlay_file_label = st.selectbox(
                         "Select a file to overlay from the same core:",
-                        [os.path.join(file_row['file_path'], file) for file in df_files['file_name'] if file != file_name],
+                        [file for file in df_files['file_name'] if file != file_name],
                         index=0 if len(df_files) > 1 else None
                     )
+                    overlay_file_path = os.path.join(file_row['file_path'], overlay_file_label)
+
                 elif overlay_option == "Different Core":
                     overlay_core_label = st.selectbox("Select Core for Overlay:", list(core_options.keys()))
                     overlay_core_id = core_options[overlay_core_label]
@@ -77,23 +80,31 @@ def view_sensor_data():
                         third_file_row = third_df_files[third_df_files['file_name'] == third_file_label].iloc[0]
                         third_file_path = os.path.join(third_file_row['file_path'], third_file_label)
 
-                # --- Process and Plot Data ---
-                try:
-                    primary_df = process_rsk_data(primary_file_path)
-                    overlay_df = process_rsk_data(overlay_file_path) if overlay_file_path else None
-                    third_df = process_rsk_data(third_file_path) if third_file_path else None
+    # --- Plotting in the Right Column ---
+    with col2:
+        if 'primary_file_path' in locals() and primary_file_path:
+            try:
+                primary_df = process_rsk_data(primary_file_path)
+                overlay_df = process_rsk_data(overlay_file_path) if overlay_file_path else None
+                third_df = process_rsk_data(third_file_path) if third_file_path else None
 
-                    if primary_df is not None:
-                        st.subheader("Interactive Plotting")
-                        max_points = st.slider("Max Points for Plotting", min_value=100, max_value=5000, value=1000, step=100)
-                        y_axis = st.selectbox(
-                            "Select Parameter to Plot:",
-                            options=["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"],
-                            index=2,
-                        )
-                        fig = plot_rbr_downsampled(primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points)
-                        st.plotly_chart(fig, use_container_width=True)
-                except Exception as e:
-                    st.error(f"An error occurred while processing the files: {e}")
-            else:
-                st.warning("No Sensor files found for this core.")
+                if primary_df is not None:
+                    st.subheader("Interactive Plotting")
+                    max_points = st.slider("Max Points for Plotting", min_value=100, max_value=5000, value=1000, step=100)
+                    y_axis = st.selectbox(
+                        "Select Parameter to Plot:",
+                        options=["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"],
+                        index=2,
+                    )
+                    fig = plot_rbr_downsampled(primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points)
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # High-Resolution Plotting
+                    st.subheader("High-Resolution Plot")
+                    start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):")
+                    end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):")
+                    if st.button("Generate High-Resolution Plot"):
+                        high_res_fig = plot_rbr_high_resolution(primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time)
+                        st.plotly_chart(high_res_fig, use_container_width=True)
+            except Exception as e:
+                st.error(f"An error occurred while processing the files: {e}")
