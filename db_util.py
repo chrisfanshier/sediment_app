@@ -32,3 +32,29 @@ def get_rbr_core_files():
             return core_files
     except Exception as e:
         raise RuntimeError(f"Error fetching core/file data: {e}")
+    
+def fetch_dropdown_values():
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Fetch vessels
+            cur.execute("SELECT vessel_id, vessel_name FROM vessels ORDER BY vessel_name;")
+            vessels = cur.fetchall()
+
+            # Fetch core types
+            cur.execute("SELECT core_type_id, core_type_name, required_fields FROM core_types ORDER BY core_type_name;")
+            core_types = cur.fetchall()
+
+def get_dynamic_fields_metadata(core_type_id):
+    """
+    Fetch dynamic fields for the selected core type from the database.
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            # Correct query to fetch the required fields
+            cur.execute("SELECT required_fields FROM core_types WHERE core_type_id = %s", (core_type_id,))
+            core_type_metadata = cur.fetchone()
+            if core_type_metadata:
+                # Directly return the data since psycopg2 already deserializes the JSON column
+                return core_type_metadata[0]
+    return []
+

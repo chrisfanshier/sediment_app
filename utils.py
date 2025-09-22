@@ -4,6 +4,8 @@ import pandas as pd
 import streamlit as st
 import numpy as np
 from pyrsktools import RSK
+from db_util import get_connection
+from db_util import get_dynamic_fields_metadata
 
 def parse_mscl_out_file(file_path, file_name):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
@@ -94,3 +96,60 @@ def downsample_data(df, max_points=1000):
         indices = np.linspace(0, len(df) - 1, max_points, dtype=int)
         return df.iloc[indices]
     return df
+
+def map_data_type_to_input(data_type):
+    """
+    Map database column data types to Streamlit input types.
+    """
+    if data_type in ["integer", "bigint", "smallint"]:
+        return {"input_type": "integer", "step": 1, "format": "%d"}
+    elif data_type in ["real", "double precision", "numeric", "decimal"]:
+        return {"input_type": "float", "step": 0.01, "format": "%.2f"}
+    elif data_type in ["character varying", "text"]:
+        return {"input_type": "text"}
+    elif data_type in ["boolean"]:
+        return {"input_type": "boolean"}
+    elif data_type in ["date"]:
+        return {"input_type": "date"}
+    elif data_type in ["time without time zone", "time with time zone"]:
+        return {"input_type": "time"}
+    else:
+        return {"input_type": "text"}  # Default to text input
+
+def render_dynamic_fields_from_metadata(core_type_id):
+    """
+    Render dynamic fields based on metadata from the database.
+    """
+    # Fetch dynamic fields metadata
+    dynamic_fields = get_dynamic_fields_metadata(core_type_id) or []  # Ensure it's a list, even if None is returned
+
+    dynamic_field_values = {}
+
+    # Render input fields based on the metadata
+    for field in dynamic_fields:
+        field_name = field.replace("_", " ").capitalize()  # Clean up field names for display
+
+        # Map the data type to Streamlit input type
+        input_metadata = map_data_type_to_input(field)
+
+        # Render inputs dynamically
+        if input_metadata["input_type"] == "integer":
+            dynamic_field_values[field] = st.number_input(
+                f"{field_name} (integer)", min_value=0, step=input_metadata["step"], format=input_metadata["format"]
+            )
+        elif input_metadata["input_type"] == "float":
+            dynamic_field_values[field] = st.number_input(
+                f"{field_name} (numeric)", min_value=0.0, step=input_metadata["step"], format=input_metadata["format"]
+            )
+        elif input_metadata["input_type"] == "text":
+            dynamic_field_values[field] = st.text_input(f"{field_name}")
+        elif input_metadata["input_type"] == "boolean":
+            dynamic_field_values[field] = st.checkbox(f"{field_name}")
+        elif input_metadata["input_type"] == "date":
+            dynamic_field_values[field] = st.date_input(f"{field_name}")
+        elif input_metadata["input_type"] == "time":
+            dynamic_field_values[field] = st.time_input(f"{field_name}")
+        else:
+            dynamic_field_values[field] = st.text_input(f"{field_name} (default)")
+
+    return dynamic_field_values
