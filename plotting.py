@@ -196,7 +196,7 @@ def plot_rbr_high_resolution(
     if overlay_df is not None:
         overlay_high_res_df = overlay_df[
             (overlay_df["Timestamp"] >= start_time) & (overlay_df["Timestamp"] <= end_time)
-        ]
+        ].copy()  # Explicitly create a copy
         # Apply x and y offsets
         overlay_high_res_df["Timestamp"] += pd.to_timedelta(overlay_x_offset, unit="s")
         overlay_high_res_df[y_axis] += overlay_y_offset
@@ -211,7 +211,7 @@ def plot_rbr_high_resolution(
     if third_df is not None:
         third_high_res_df = third_df[
             (third_df["Timestamp"] >= start_time) & (third_df["Timestamp"] <= end_time)
-        ]
+        ].copy()  # Explicitly create a copy
         # Apply x and y offsets
         third_high_res_df["Timestamp"] += pd.to_timedelta(third_x_offset, unit="s")
         third_high_res_df[y_axis] += third_y_offset
