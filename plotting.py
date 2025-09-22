@@ -3,6 +3,7 @@ from plotly.subplots import make_subplots  # For creating subplots
 import streamlit as st  # For rendering plots in the Streamlit app
 import plotly.express as px
 from utils import downsample_data
+import pandas as pd
 
 def plot_mscl_data(df, x_col, y_col, core_name, x_min, x_max, y_min, y_max):
     fig = go.Figure()
@@ -196,7 +197,8 @@ def plot_rbr_high_resolution(
         overlay_high_res_df = overlay_df[
             (overlay_df["Timestamp"] >= start_time) & (overlay_df["Timestamp"] <= end_time)
         ]
-        overlay_high_res_df["Timestamp"] += overlay_x_offset
+        # Apply x and y offsets
+        overlay_high_res_df["Timestamp"] += pd.to_timedelta(overlay_x_offset, unit="s")
         overlay_high_res_df[y_axis] += overlay_y_offset
         overlay_trace = px.line(
             overlay_high_res_df, x="Timestamp", y=y_axis,
@@ -210,7 +212,8 @@ def plot_rbr_high_resolution(
         third_high_res_df = third_df[
             (third_df["Timestamp"] >= start_time) & (third_df["Timestamp"] <= end_time)
         ]
-        third_high_res_df["Timestamp"] += third_x_offset
+        # Apply x and y offsets
+        third_high_res_df["Timestamp"] += pd.to_timedelta(third_x_offset, unit="s")
         third_high_res_df[y_axis] += third_y_offset
         third_trace = px.line(
             third_high_res_df, x="Timestamp", y=y_axis,
