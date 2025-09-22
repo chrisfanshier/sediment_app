@@ -51,12 +51,12 @@ def get_dynamic_fields_metadata(core_type_id):
     Fetch dynamic fields for the selected core type from the database.
     """
     with get_connection() as conn:
-        with conn.cursor() as cur:
-            # Correct query to fetch the required fields
-            cur.execute("SELECT required_fields FROM core_types WHERE core_type_id = %s", (core_type_id,))
-            core_type_metadata = cur.fetchone()
-            if core_type_metadata:
-                # Directly return the data since psycopg2 already deserializes the JSON column
-                return core_type_metadata[0]
+        # Use SQLAlchemy's conn.execute() and text() for the query
+        query = text("SELECT required_fields FROM core_types WHERE core_type_id = :core_type_id")
+        result = conn.execute(query, {"core_type_id": core_type_id}).fetchone()
+        
+        if result:
+            # Return the required fields (assuming it's stored as JSON or a string)
+            return result[0]
     return []
 
