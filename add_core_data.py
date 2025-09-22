@@ -5,6 +5,7 @@ from db_util import get_connection
 from db_util import fetch_dropdown_values
 from utils import render_dynamic_fields_from_metadata
 from datetime import date, time
+from sqlalchemy import text
 
 # Force wide layout for Streamlit
 st.set_page_config(layout="wide")
@@ -121,38 +122,37 @@ if st.button("Save Core"):
     else:
         try:
             with get_connection() as conn:  # Open the database connection
-                with conn.cursor() as cur:  # Open the cursor
-                    # Base query (static fields)
-                    base_query = """
-                        INSERT INTO cores (
-                            core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
-                            time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
-                            tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes
-                        """
-                    base_values = [
-                        core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
-                        water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
-                        time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
-                        tension_at_bottom, pullout_tension, notes or None
-                    ]
+                # Base query (static fields)
+                base_query = """
+                    INSERT INTO cores (
+                        core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
+                        time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
+                        tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes
+                    """
+                base_values = [
+                    core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
+                    water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
+                    time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
+                    tension_at_bottom, pullout_tension, notes or None
+                ]
 
-                    # Handle dynamic fields
-                    if dynamic_field_values:
-                        dynamic_columns = ", ".join(dynamic_field_values.keys())
-                        dynamic_placeholders = ", ".join(["%s"] * len(dynamic_field_values))
-                        dynamic_values = list(dynamic_field_values.values())
+                # Handle dynamic fields
+                if dynamic_field_values:
+                    dynamic_columns = ", ".join(dynamic_field_values.keys())
+                    dynamic_placeholders = ", ".join([":{}".format(key) for key in dynamic_field_values.keys()])
+                    dynamic_values = {key: value for key, value in dynamic_field_values.items()}
 
-                        # Combine static and dynamic fields
-                        query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join(['%s'] * len(base_values))}, {dynamic_placeholders})"
-                        values = base_values + dynamic_values
-                    else:
-                        # Static fields only
-                        query = f"{base_query}) VALUES ({', '.join(['%s'] * len(base_values))})"
-                        values = base_values
+                    # Combine static and dynamic fields
+                    query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
+                    values = {**{str(i): value for i, value in enumerate(base_values)}, **dynamic_values}
+                else:
+                    # Static fields only
+                    query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
+                    values = {str(i): value for i, value in enumerate(base_values)}
 
-                    # Execute the query
-                    cur.execute(query, values)
-                    conn.commit()  # Commit the transaction
+                # Execute the query
+                conn.execute(text(query), values)
+                conn.commit()  # Commit the transaction
             st.success("Core successfully saved!")
         except Exception as e:
             st.error(f"An error occurred: {e}")
