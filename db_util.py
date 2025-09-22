@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 import pandas as pd
 
 # Database connection string
@@ -37,11 +37,11 @@ def fetch_dropdown_values():
     """Fetch dropdown values for vessels and core types."""
     with get_connection() as conn:
         # Fetch vessels
-        vessels_query = "SELECT vessel_id, vessel_name FROM vessels ORDER BY vessel_name;"
+        vessels_query = text("SELECT vessel_id, vessel_name FROM vessels ORDER BY vessel_name;")
         vessels = conn.execute(vessels_query).fetchall()
 
         # Fetch core types
-        core_types_query = "SELECT core_type_id, core_type_name, required_fields FROM core_types ORDER BY core_type_name;"
+        core_types_query = text("SELECT core_type_id, core_type_name, required_fields FROM core_types ORDER BY core_type_name;")
         core_types = conn.execute(core_types_query).fetchall()
 
     return vessels, core_types
