@@ -4,6 +4,7 @@ import pandas as pd
 from db_util import get_connection, fetch_cores
 from utils import process_rsk_data
 from plotting import plot_rbr_downsampled, plot_rbr_high_resolution
+from config import get_full_path  # Import the utility function for constructing full paths
 
 # --- Visualize Sensor Data Page ---
 def view_sensor_data():
@@ -34,55 +35,55 @@ def view_sensor_data():
             if not df_files.empty:
                 selected_file_label = st.selectbox("Select Primary Sensor Data File", df_files['file_name'])
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
-                file_path = file_row['file_path']
-                file_name = selected_file_label
-
                 # Construct the full file path for the primary file
-                primary_file_path = os.path.join(file_path, file_name)
-                st.write(f"Primary file path: {primary_file_path}")  # Debugging
+                primary_file_path = get_full_path(file_row['file_path'])
+            else:
+                st.warning("No sensor data file for this core.")
+                primary_file_path = None
 
-                # --- Secondary File Selection ---
-                st.subheader("Overlay Plot")
-                overlay_option = st.radio("Select overlay data source:", ["None", "Same Core", "Different Core"])
-                overlay_file_path = None
+            # --- Secondary File Selection ---
+            st.subheader("Overlay Plot")
+            overlay_option = st.radio("Select overlay data source:", ["None", "Same Core", "Different Core"])
+            overlay_file_path = None
 
-                if overlay_option == "Same Core":
-                    overlay_file_label = st.selectbox(
-                        "Select a file to overlay from the same core:",
-                        [file for file in df_files['file_name'] if file != file_name],
-                        index=0 if len(df_files) > 1 else None
-                    )
-                    overlay_file_path = os.path.join(file_row['file_path'], overlay_file_label)
+            if overlay_option == "Same Core":
+                overlay_file_label = st.selectbox(
+                    "Select a file to overlay from the same core:",
+                    [file for file in df_files['file_name'] if file != selected_file_label],
+                    index=0 if len(df_files) > 1 else None
+                )
+                overlay_file_row = df_files[df_files['file_name'] == overlay_file_label].iloc[0]
+                overlay_file_path = get_full_path(overlay_file_row['file_path'])
 
-                elif overlay_option == "Different Core":
-                    overlay_core_label = st.selectbox("Select Core for Overlay:", list(core_options.keys()))
-                    overlay_core_id = core_options[overlay_core_label]
-                    with get_connection() as conn:
-                        overlay_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
-                        overlay_df_files = pd.read_sql(overlay_query, conn, params=(overlay_core_id,))
-                    if not overlay_df_files.empty:
-                        overlay_file_label = st.selectbox("Select Overlay File", overlay_df_files['file_name'])
-                        overlay_file_row = overlay_df_files[overlay_df_files['file_name'] == overlay_file_label].iloc[0]
-                        overlay_file_path = os.path.join(overlay_file_row['file_path'], overlay_file_label)
+            elif overlay_option == "Different Core":
+                overlay_core_label = st.selectbox("Select Core for Overlay:", list(core_options.keys()))
+                overlay_core_id = core_options[overlay_core_label]
+                with get_connection() as conn:
+                    overlay_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
+                    overlay_df_files = pd.read_sql(overlay_query, conn, params=(overlay_core_id,))
+                if not overlay_df_files.empty:
+                    overlay_file_label = st.selectbox("Select Overlay File", overlay_df_files['file_name'])
+                    overlay_file_row = overlay_df_files[overlay_df_files['file_name'] == overlay_file_label].iloc[0]
+                    overlay_file_path = get_full_path(overlay_file_row['file_path'])
 
-                # --- Third Trace Selection ---
-                st.subheader("Add a Third Trace (Optional)")
-                third_trace_option = st.radio("Add a third data source?", ["None", "Select Core and File"])
-                third_file_path = None
-                if third_trace_option == "Select Core and File":
-                    third_core_label = st.selectbox("Select Core for Third Trace:", list(core_options.keys()))
-                    third_core_id = core_options[third_core_label]
-                    with get_connection() as conn:
-                        third_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
-                        third_df_files = pd.read_sql(third_query, conn, params=(third_core_id,))
-                    if not third_df_files.empty:
-                        third_file_label = st.selectbox("Select Third Trace File", third_df_files['file_name'])
-                        third_file_row = third_df_files[third_df_files['file_name'] == third_file_label].iloc[0]
-                        third_file_path = os.path.join(third_file_row['file_path'], third_file_label)
+            # --- Third Trace Selection ---
+            st.subheader("Add a Third Trace (Optional)")
+            third_trace_option = st.radio("Add a third data source?", ["None", "Select Core and File"])
+            third_file_path = None
+            if third_trace_option == "Select Core and File":
+                third_core_label = st.selectbox("Select Core for Third Trace:", list(core_options.keys()))
+                third_core_id = core_options[third_core_label]
+                with get_connection() as conn:
+                    third_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
+                    third_df_files = pd.read_sql(third_query, conn, params=(third_core_id,))
+                if not third_df_files.empty:
+                    third_file_label = st.selectbox("Select Third Trace File", third_df_files['file_name'])
+                    third_file_row = third_df_files[third_df_files['file_name'] == third_file_label].iloc[0]
+                    third_file_path = get_full_path(third_file_row['file_path'])
 
     # --- Plotting in the Right Column ---
     with col2:
-        if 'primary_file_path' in locals() and primary_file_path:
+        if primary_file_path:
             try:
                 primary_df = process_rsk_data(primary_file_path)
                 overlay_df = process_rsk_data(overlay_file_path) if overlay_file_path else None
