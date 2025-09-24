@@ -38,12 +38,6 @@ def view_sensor_data():
                 # Combine file_path and file_name to create the full relative path
                 relative_path = os.path.join(file_row['file_path'], file_row['file_name'])
                 primary_file_path = get_full_path(relative_path)
-
-                # Debugging outputs
-                st.write(f"File Path from Database: {file_row['file_path']}")
-                st.write(f"File Name from Database: {file_row['file_name']}")
-                st.write(f"Relative Path: {relative_path}")
-                st.write(f"Full Path: {primary_file_path}")
             else:
                 st.warning("No sensor data file for this core.")
                 primary_file_path = None
@@ -58,17 +52,21 @@ def view_sensor_data():
             overlay_file_path = None
 
             if overlay_option == "Same Core":
-                overlay_file_label = st.selectbox(
-                    "Select a file to overlay from the same core:",
-                    [file for file in df_files['file_name'] if file != selected_file_label],
-                    index=0 if len(df_files) > 1 else None
-                )
-                overlay_file_row = df_files[df_files['file_name'] == overlay_file_label]
-                if not overlay_file_row.empty:
-                    relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
-                    overlay_file_path = get_full_path(relative_path)
+                other_files = [file for file in df_files['file_name'] if file != selected_file_label]
+                if other_files:
+                    overlay_file_label = st.selectbox(
+                        "Select a file to overlay from the same core:",
+                        other_files,
+                        index=0
+                    )
+                    overlay_file_row = df_files[df_files['file_name'] == overlay_file_label]
+                    if not overlay_file_row.empty:
+                        relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
+                        overlay_file_path = get_full_path(relative_path)
+                    else:
+                        st.warning("The selected overlay file could not be found.")
                 else:
-                    st.warning("The selected overlay file could not be found.")
+                    st.warning("No other files available for overlay in the same core.")
 
             elif overlay_option == "Different Core":
                 overlay_core_label = st.selectbox("Select Core for Overlay:", list(core_options.keys()))
@@ -87,11 +85,6 @@ def view_sensor_data():
                 else:
                     st.warning("No sensor data files found for the selected core.")
 
-            # Debugging outputs for overlay file selection
-            st.write("Selected Overlay File Label:", overlay_file_label)
-            st.write("Filtered Overlay File Row:", overlay_file_row)
-            st.write("Overlay File Path:", overlay_file_path)
-
             # --- Third Trace Selection ---
             st.subheader("Add a Third Trace (Optional)")
             third_trace_option = st.radio("Add a third data source?", ["None", "Select Core and File"])
@@ -105,7 +98,7 @@ def view_sensor_data():
                 if not third_df_files.empty:
                     third_file_label = st.selectbox("Select Third Trace File", third_df_files['file_name'])
                     third_file_row = third_df_files[third_df_files['file_name'] == third_file_label].iloc[0]
-                    third_file_path = get_full_path(third_file_row['file_path'])
+                    third_file_path = get_full_path(os.path.join(third_file_row['file_path'], third_file_row['file_name']))
 
     # --- Plotting in the Right Column ---
     with col2:
