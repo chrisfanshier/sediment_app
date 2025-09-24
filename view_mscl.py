@@ -4,6 +4,7 @@ import pandas as pd
 from db_util import get_connection, fetch_cores
 from plotting import plot_mscl_data, plot_mscl_data_compare
 from utils import parse_mscl_out_file
+from config import get_full_path  # Import the utility function for constructing full paths
 
 # --- Visualize MSCL Data Page ---
 def visualize_mscl_data():
@@ -33,7 +34,8 @@ def visualize_mscl_data():
             if not df_files.empty:
                 selected_file_label = st.selectbox("Select MSCL Data File", df_files['file_name'])
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
-                uploaded_file_path = file_row['file_path']
+                # Construct the full file path
+                uploaded_file_path = get_full_path(file_row['file_path'])
             else:
                 st.warning("No MSCL file for this core.")
                 uploaded_file_path = None  # Ensure the variable is defined
@@ -42,7 +44,7 @@ def visualize_mscl_data():
             with st.expander("Plot Settings"):
                 try:
                     # Parse the selected MSCL file
-                    df = parse_mscl_out_file(uploaded_file_path, selected_file_label)
+                    df = parse_mscl_out_file(uploaded_file_path)
 
                     if df is not None:
                         # Toggle to show/hide parsed data preview
@@ -125,12 +127,12 @@ def visualize_mscl_data():
                         if not df_files_2.empty:
                             selected_file_label_2 = st.selectbox("Select MSCL Data File for Second Core", df_files_2['file_name'])
                             file_row_2 = df_files_2[df_files_2['file_name'] == selected_file_label_2].iloc[0]
-                            # Pass only the directory path
-                            uploaded_file_path_2 = file_row_2['file_path']
+                            # Construct the full file path
+                            uploaded_file_path_2 = get_full_path(file_row_2['file_path'])
 
                             try:
-                                # Pass the directory path and file name to the parsing function
-                                df2 = parse_mscl_out_file(uploaded_file_path_2, selected_file_label_2)
+                                # Parse the second MSCL file
+                                df2 = parse_mscl_out_file(uploaded_file_path_2)
                                 if df2 is not None:
                                     # Apply the same dropout filter to the second core if enabled
                                     if enable_dropout and filter_column in df2.columns:

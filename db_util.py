@@ -28,7 +28,11 @@ def get_rbr_core_files():
                 WHERE f.file_type = 'RBR Sensor';
             """
             df = pd.read_sql(query, connection)
+
+            # Group file paths by core name
             core_files = df.groupby('core_name')['file_path'].apply(list).to_dict()
+
+            # Return relative paths (full paths will be constructed in the calling script)
             return core_files
     except Exception as e:
         raise RuntimeError(f"Error fetching core/file data: {e}")

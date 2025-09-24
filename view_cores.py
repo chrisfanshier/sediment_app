@@ -20,6 +20,21 @@ def view_cores():
         core_types_df = pd.read_sql(query_core_types, conn)
         core_type_map = core_types_df.set_index('core_type_id')['core_type_name'].to_dict()
 
+        # Fetch file counts for each core
+        query_files = """
+            SELECT core_id, file_type, COUNT(*) AS file_count
+            FROM files
+            GROUP BY core_id, file_type
+        """
+        files_data = pd.read_sql(query_files, conn)
+
+        # Create columns for sensor data and MSCL data
+        sensor_data_map = files_data[files_data['file_type'] == 'RBR Sensor'].set_index('core_id')['file_count'].to_dict()
+        mscl_data_map = files_data[files_data['file_type'] == 'MSCL Data'].set_index('core_id')['file_count'].to_dict()
+
+        cores_data['has_sensor_data'] = cores_data['core_id'].map(lambda x: sensor_data_map.get(x, 0) > 0)
+        cores_data['has_mscl_data'] = cores_data['core_id'].map(lambda x: mscl_data_map.get(x, 0) > 0)
+
         # Replace IDs with names
         cores_data['vessel_name'] = cores_data['vessel_id'].map(vessel_map).fillna(cores_data['vessel_id'])
         cores_data['core_type_name'] = cores_data['core_type_id'].map(core_type_map).fillna(cores_data['core_type_id'])

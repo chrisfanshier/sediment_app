@@ -4,6 +4,7 @@ import streamlit as st  # For rendering plots in the Streamlit app
 import plotly.express as px
 from utils import downsample_data
 import pandas as pd
+from config import get_full_path
 
 def plot_mscl_data(df, x_col, y_col, core_name, x_min, x_max, y_min, y_max):
     fig = go.Figure()

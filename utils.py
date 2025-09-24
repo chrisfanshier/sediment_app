@@ -6,13 +6,13 @@ import numpy as np
 from pyrsktools import RSK
 from db_util import get_connection
 from db_util import get_dynamic_fields_metadata
+from config import get_full_path  # Import the utility function for constructing full paths
 
-def parse_mscl_out_file(file_path, file_name):
+def parse_mscl_out_file(relative_path):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
     try:
-
-        # Construct the full file path
-        full_path = os.path.join(file_path, file_name)
+        # Construct the full file path using the relative path
+        full_path = get_full_path(relative_path)
 
         # Open the file from the specified path
         with open(full_path, "r", encoding="utf-8") as file:
@@ -58,16 +58,19 @@ def parse_mscl_out_file(file_path, file_name):
         st.error(f"An error occurred while parsing the file: {e}")
         return None
 
-def process_rsk_data(file_path):
+def process_rsk_data(relative_path):
     """Process an RSK file and return a DataFrame."""
-
-    # Validate the file path
-    if not os.path.exists(file_path):
-        st.error(f"RSK file not found at path: {file_path}")
-        return None
-
     try:
-        with RSK(file_path) as rsk:
+        # Construct the full file path using the relative path
+        full_path = get_full_path(relative_path)
+
+        # Validate the file path
+        if not os.path.exists(full_path):
+            st.error(f"RSK file not found at path: {full_path}")
+            return None
+
+        # Process the RSK file
+        with RSK(full_path) as rsk:
             rsk.open()
             rsk.readdata()
             rsk.deriveseapressure()
@@ -80,8 +83,9 @@ def process_rsk_data(file_path):
             }
             df = pd.DataFrame(data_dict)
             return df
+
     except FileNotFoundError:
-        st.error(f"RSK file not found at path: {file_path}")
+        st.error(f"RSK file not found at path: {full_path}")
         return None
     except OSError as e:
         st.error(f"Error processing RSK file: {e}")
