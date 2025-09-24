@@ -63,8 +63,12 @@ def view_sensor_data():
                     [file for file in df_files['file_name'] if file != selected_file_label],
                     index=0 if len(df_files) > 1 else None
                 )
-                overlay_file_row = df_files[df_files['file_name'] == overlay_file_label].iloc[0]
-                overlay_file_path = get_full_path(overlay_file_row['file_path'])
+                overlay_file_row = df_files[df_files['file_name'] == overlay_file_label]
+                if not overlay_file_row.empty:
+                    relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
+                    overlay_file_path = get_full_path(relative_path)
+                else:
+                    st.warning("The selected overlay file could not be found.")
 
             elif overlay_option == "Different Core":
                 overlay_core_label = st.selectbox("Select Core for Overlay:", list(core_options.keys()))
@@ -74,8 +78,19 @@ def view_sensor_data():
                     overlay_df_files = pd.read_sql(overlay_query, conn, params=(overlay_core_id,))
                 if not overlay_df_files.empty:
                     overlay_file_label = st.selectbox("Select Overlay File", overlay_df_files['file_name'])
-                    overlay_file_row = overlay_df_files[overlay_df_files['file_name'] == overlay_file_label].iloc[0]
-                    overlay_file_path = get_full_path(overlay_file_row['file_path'])
+                    overlay_file_row = overlay_df_files[overlay_df_files['file_name'] == overlay_file_label]
+                    if not overlay_file_row.empty:
+                        relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
+                        overlay_file_path = get_full_path(relative_path)
+                    else:
+                        st.warning("The selected overlay file could not be found.")
+                else:
+                    st.warning("No sensor data files found for the selected core.")
+
+            # Debugging outputs for overlay file selection
+            st.write("Selected Overlay File Label:", overlay_file_label)
+            st.write("Filtered Overlay File Row:", overlay_file_row)
+            st.write("Overlay File Path:", overlay_file_path)
 
             # --- Third Trace Selection ---
             st.subheader("Add a Third Trace (Optional)")

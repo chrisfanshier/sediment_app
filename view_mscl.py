@@ -134,8 +134,15 @@ def visualize_mscl_data():
                         if not df_files_2.empty:
                             selected_file_label_2 = st.selectbox("Select MSCL Data File for Second Core", df_files_2['file_name'])
                             file_row_2 = df_files_2[df_files_2['file_name'] == selected_file_label_2].iloc[0]
-                            # Construct the full file path
-                            uploaded_file_path_2 = get_full_path(file_row_2['file_path'])
+                            # Combine file_path and file_name to create the full relative path
+                            relative_path_2 = os.path.join(file_row_2['file_path'], file_row_2['file_name'])
+                            uploaded_file_path_2 = get_full_path(relative_path_2)
+
+                            # Debugging information for second core
+                            st.write(f"File Path from Database (Second Core): {file_row_2['file_path']}")
+                            st.write(f"File Name from Database (Second Core): {file_row_2['file_name']}")
+                            st.write(f"Relative Path (Second Core): {relative_path_2}")
+                            st.write(f"Full Path (Second Core): {uploaded_file_path_2}")
 
                             try:
                                 # Parse the second MSCL file
