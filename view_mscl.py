@@ -34,8 +34,15 @@ def visualize_mscl_data():
             if not df_files.empty:
                 selected_file_label = st.selectbox("Select MSCL Data File", df_files['file_name'])
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
-                # Construct the full file path
-                uploaded_file_path = get_full_path(file_row['file_path'])
+                # Combine file_path and file_name to create the full relative path
+                relative_path = os.path.join(file_row['file_path'], file_row['file_name'])
+                uploaded_file_path = get_full_path(relative_path)
+
+                # Debugging information
+                st.write(f"File Path from Database: {file_row['file_path']}")
+                st.write(f"File Name from Database: {file_row['file_name']}")
+                st.write(f"Relative Path: {relative_path}")
+                st.write(f"Full Path: {uploaded_file_path}")
             else:
                 st.warning("No MSCL file for this core.")
                 uploaded_file_path = None  # Ensure the variable is defined
