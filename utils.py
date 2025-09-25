@@ -7,6 +7,7 @@ from pyrsktools import RSK
 from db_util import get_connection
 from db_util import get_dynamic_fields_metadata
 from config import get_full_path  # Import the utility function for constructing full paths
+from datetime import time
 
 def parse_mscl_out_file(relative_path):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
@@ -157,3 +158,16 @@ def render_dynamic_fields_from_metadata(core_type_id):
             dynamic_field_values[field] = st.text_input(f"{field_name} (default)")
 
     return dynamic_field_values
+
+# Custom Time Input Function
+def custom_time_input(label, default=""):
+    time_str = st.text_input(label, value=default, max_chars=5, placeholder="HH:MM")
+    if not time_str.strip():  # If the input is blank
+        return None
+    time_pattern = re.compile(r"^(2[0-3]|[01]?[0-9]):([0-5]?[0-9])$")  # Matches HH:MM format
+    if time_pattern.match(time_str):
+        hours, minutes = map(int, time_str.split(":"))
+        return time(hours, minutes)
+    else:
+        st.warning(f"Invalid time format for '{label}'. Please use HH:MM (e.g., 14:30).")
+        return None

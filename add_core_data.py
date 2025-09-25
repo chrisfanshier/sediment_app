@@ -3,9 +3,12 @@ import os
 import pandas as pd
 from db_util import get_connection
 from db_util import fetch_dropdown_values
+from db_util import fetch_last_record
 from utils import render_dynamic_fields_from_metadata
 from datetime import date, time
 from sqlalchemy import text
+import re
+from utils import custom_time_input
 
 # Force wide layout for Streamlit
 st.set_page_config(layout="wide")
@@ -34,27 +37,34 @@ st.markdown(
 # --- Add Core Data Page ---
 st.title("🧪 Add a New Sediment Core")
 
-    # Fetch dropdown values dynamically
+# Fetch dropdown values dynamically
 vessels, core_types = fetch_dropdown_values()
 
-    # --- Static Fields ---
+# Fetch the last record for carry-forward functionality
+last_record = fetch_last_record()
+
+# --- Static Fields ---
 st.subheader("Meta Data")
 core_name = st.text_input("Core Name*", max_chars=100)
 vessel_options = {v[1]: v[0] for v in vessels}  # Map vessel names to IDs
-vessel_choice = st.selectbox("Select Vessel", list(vessel_options.keys()))
-cruise = st.text_input("Cruise")
-leg = st.text_input("Leg")
+vessel_choice = st.selectbox(
+    "Select Vessel",
+    list(vessel_options.keys()),
+    index=list(vessel_options.values()).index(last_record['vessel_id']) if last_record else 0
+)
+cruise = st.text_input("Cruise", value=last_record['cruise'] if last_record else "")
+leg = st.text_input("Leg", value=last_record['leg'] if last_record else "")
 date_field = st.date_input("Date", value=date.today())
-station = st.text_input("Station")
+station = st.text_input("Station", value=last_record['station'] if last_record else "")
 
-    # Coordinate format selection
+# Coordinate format selection
 st.subheader("Coordinates")
-coord_format = st.selectbox("Coordinate Format", ["Decimal Degrees", "Degrees and Decimal Minutes"])
+coord_format = st.selectbox("Coordinate Format", ["Decimal Degrees", "Degrees and Decimal Minutes", "NULL entry"])
 
 if coord_format == "Decimal Degrees":
     latitude = st.number_input("Latitude (decimal degrees)", min_value=-90.0, max_value=90.0, step=0.000001, format="%.6f")
     longitude = st.number_input("Longitude (decimal degrees)", min_value=-180.0, max_value=180.0, step=0.000001, format="%.6f")
-else:  # Degrees and Decimal Minutes
+elif coord_format == "Degrees and Decimal Minutes":
     st.markdown("Enter coordinates in **degrees and decimal minutes** format:")
     
     # Latitude
@@ -78,8 +88,21 @@ else:  # Degrees and Decimal Minutes
 
     st.markdown(f"Converted Latitude: **{latitude:.6f}°**")
     st.markdown(f"Converted Longitude: **{longitude:.6f}°**")
+else:  # NULL entry
+    st.warning("Latitude and Longitude will be saved as NULL.")
+    latitude = None
+    longitude = None
 
-water_depth = st.number_input("Water Depth (meters)", min_value=0, step=1)
+# Water Depth
+st.subheader("Water Depth")
+water_depth_known = st.checkbox("Water Depth Known", value=True)
+
+if water_depth_known:
+    water_depth = st.number_input("Water Depth (meters)", min_value=0, step=1)
+else:
+    st.warning("Water Depth will be saved as NULL.")
+    water_depth = None
+
 observer = st.text_input("Observer")
 core_type_options = {ct[1]: (ct[0], ct[2]) for ct in core_types}  # Map core type names to IDs and required fields
 core_type_choice = st.selectbox("Select Core Type", ["Select Core Type"] + list(core_type_options.keys()))
@@ -92,68 +115,206 @@ if core_type_choice != "Select Core Type":
 
 # --- Post-Core Type Fields ---
 st.subheader("Deployment Details")
-time_launched = st.time_input("Time Launched", value=time(0, 0))
-time_on_bottom = st.time_input("Time on Bottom", value=time(0, 0))
-time_recovered = st.time_input("Time Recovered", value=time(0, 0))
-wire_out_on_bottom = st.number_input("Wire Out on Bottom (meters)", min_value=0, step=1)
-max_wire_out = st.number_input("Max Wire Out (meters)", min_value=0, step=1)
-impact_speed = st.number_input("Impact Speed (m/min)", min_value=0, step=1)
-tension_at_surface = st.number_input("Tension at Surface (lbs)", min_value=0, step=1)
-tension_near_bottom = st.number_input("Tension Near Bottom (lbs)", min_value=0, step=1)
-tension_at_bottom = st.number_input("Tension at Bottom (lbs)", min_value=0, step=1)
-pullout_tension = st.number_input("Pullout Tension (lbs)", min_value=0, step=1)
+
+# Time Fields
+st.subheader("Deployment Times")
+
+# Time Launched
+time_launched = custom_time_input("Time Launched", default="00:00")
+
+# Time on Bottom
+time_on_bottom = custom_time_input("Time on Bottom", default="00:00")
+
+# Time Recovered
+time_recovered = custom_time_input("Time Recovered", default="00:00")
+
+# Wire Out on Bottom
+wire_out_known = st.checkbox("Wire Out on Bottom Known", value=True)
+if wire_out_known:
+    wire_out_on_bottom = st.number_input("Wire Out on Bottom (meters)", min_value=0, step=1)
+else:
+    st.warning("Wire Out on Bottom will be saved as NULL.")
+    wire_out_on_bottom = None
+
+# Max Wire Out
+max_wire_out_known = st.checkbox("Max Wire Out Known", value=True)
+if max_wire_out_known:
+    max_wire_out = st.number_input("Max Wire Out (meters)", min_value=0, step=1)
+else:
+    st.warning("Max Wire Out will be saved as NULL.")
+    max_wire_out = None
+
+# Impact Speed
+impact_speed_known = st.checkbox("Impact Speed Known", value=True)
+if impact_speed_known:
+    impact_speed = st.number_input("Impact Speed (m/min)", min_value=0, step=1)
+else:
+    st.warning("Impact Speed will be saved as NULL.")
+    impact_speed = None
+
+# Tension at Surface
+tension_surface_known = st.checkbox("Tension at Surface Known", value=True)
+if tension_surface_known:
+    tension_at_surface = st.number_input("Tension at Surface (lbs)", min_value=0, step=1)
+else:
+    st.warning("Tension at Surface will be saved as NULL.")
+    tension_at_surface = None
+
+# Tension Near Bottom
+tension_near_bottom_known = st.checkbox("Tension Near Bottom Known", value=True)
+if tension_near_bottom_known:
+    tension_near_bottom = st.number_input("Tension Near Bottom (lbs)", min_value=0, step=1)
+else:
+    st.warning("Tension Near Bottom will be saved as NULL.")
+    tension_near_bottom = None
+
+# Tension at Bottom
+tension_bottom_known = st.checkbox("Tension at Bottom Known", value=True)
+if tension_bottom_known:
+    tension_at_bottom = st.number_input("Tension at Bottom (lbs)", min_value=0, step=1)
+else:
+    st.warning("Tension at Bottom will be saved as NULL.")
+    tension_at_bottom = None
+
+# Pullout Tension
+pullout_tension_known = st.checkbox("Pullout Tension Known", value=True)
+if pullout_tension_known:
+    pullout_tension = st.number_input("Pullout Tension (lbs)", min_value=0, step=1)
+else:
+    st.warning("Pullout Tension will be saved as NULL.")
+    pullout_tension = None
+
 notes = st.text_area("Notes", placeholder="Enter any additional notes or observations here...")
 
 if st.button("Save Core"):
-    # Validation: Check for required fields
+    # Validation: Check for missing fields
     missing_fields = []
 
-    if not core_name.strip():  # Check if core_name is blank
+    # Check if core_name is blank
+    if not core_name.strip():
         missing_fields.append("Core Name")
-    if core_type_choice == "Select Core Type":  # Check if core type is not selected
+
+    # Check if core_type is selected
+    if core_type_choice == "Select Core Type":
         missing_fields.append("Core Type")
 
+    # Check dynamic fields for missing values
     for field, value in dynamic_field_values.items():
         if value is None or (isinstance(value, str) and not value.strip()):
             missing_fields.append(field.replace("_", " ").capitalize())
 
+    # Check if date is missing
+    if not date_field:
+        missing_fields.append("Date")
+
+    # Display warning for missing fields
     if missing_fields:
-        st.error(f"The following fields are required and cannot be left blank: {', '.join(missing_fields)}")
+        st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
+        st.info("Please review the missing fields. If you still want to save the record, click the 'Confirm Save' button below.")
+
+        # Add a "Confirm Save" button to allow saving the record despite missing fields
+        if st.button("Confirm Save"):
+            try:
+                # Check for duplicate core_name
+                with get_connection() as conn:
+                    duplicate_check_query = "SELECT COUNT(*) FROM cores WHERE core_name = :core_name"
+                    result = conn.execute(text(duplicate_check_query), {"core_name": core_name}).scalar()
+                    if result > 0:
+                        st.error(f"A core with the name '{core_name}' already exists. Please use a different name.")
+                    else:
+                        # Proceed with insertion if no duplicate is found
+                        with get_connection() as conn:  # Open the database connection
+                            # Base query (static fields)
+                            base_query = """
+                                INSERT INTO cores (
+                                    core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
+                                    time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
+                                    tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes
+                                """
+                            base_values = [
+                                core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
+                                water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
+                                time_recovered, wire_out_on_bottom,  # Will be NULL if wire_out_known is False
+                                max_wire_out,  # Will be NULL if max_wire_out_known is False
+                                impact_speed,  # Will be NULL if impact_speed_known is False
+                                tension_at_surface,  # Will be NULL if tension_surface_known is False
+                                tension_near_bottom,  # Will be NULL if tension_near_bottom_known is False
+                                tension_at_bottom,  # Will be NULL if tension_bottom_known is False
+                                pullout_tension,  # Will be NULL if pullout_tension_known is False
+                                notes or None
+                            ]
+
+                            # Handle dynamic fields
+                            if dynamic_field_values:
+                                dynamic_columns = ", ".join(dynamic_field_values.keys())
+                                dynamic_placeholders = ", ".join([":{}".format(key) for key in dynamic_field_values.keys()])
+                                dynamic_values = {key: value for key, value in dynamic_field_values.items()}
+
+                                # Combine static and dynamic fields
+                                query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
+                                values = {**{str(i): value for i, value in enumerate(base_values)}, **dynamic_values}
+                            else:
+                                # Static fields only
+                                query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
+                                values = {str(i): value for i, value in enumerate(base_values)}
+
+                            # Execute the query
+                            conn.execute(text(query), values)
+                            conn.commit()  # Commit the transaction
+                        st.success("Core successfully saved!")
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
+                st.write("Error details:", e)
     else:
+        # No missing fields, proceed with saving
         try:
-            with get_connection() as conn:  # Open the database connection
-                # Base query (static fields)
-                base_query = """
-                    INSERT INTO cores (
-                        core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
-                        time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
-                        tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes
-                    """
-                base_values = [
-                    core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
-                    water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
-                    time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
-                    tension_at_bottom, pullout_tension, notes or None
-                ]
-
-                # Handle dynamic fields
-                if dynamic_field_values:
-                    dynamic_columns = ", ".join(dynamic_field_values.keys())
-                    dynamic_placeholders = ", ".join([":{}".format(key) for key in dynamic_field_values.keys()])
-                    dynamic_values = {key: value for key, value in dynamic_field_values.items()}
-
-                    # Combine static and dynamic fields
-                    query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
-                    values = {**{str(i): value for i, value in enumerate(base_values)}, **dynamic_values}
+            # Check for duplicate core_name
+            with get_connection() as conn:
+                duplicate_check_query = "SELECT COUNT(*) FROM cores WHERE core_name = :core_name"
+                result = conn.execute(text(duplicate_check_query), {"core_name": core_name}).scalar()
+                if result > 0:
+                    st.error(f"A core with the name '{core_name}' already exists. Please use a different name.")
                 else:
-                    # Static fields only
-                    query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
-                    values = {str(i): value for i, value in enumerate(base_values)}
+                    # Proceed with insertion if no duplicate is found
+                    with get_connection() as conn:  # Open the database connection
+                        # Base query (static fields)
+                        base_query = """
+                            INSERT INTO cores (
+                                core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
+                                time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
+                                tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes
+                            """
+                        base_values = [
+                            core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
+                            water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
+                            time_recovered, wire_out_on_bottom,  # Will be NULL if wire_out_known is False
+                            max_wire_out,  # Will be NULL if max_wire_out_known is False
+                            impact_speed,  # Will be NULL if impact_speed_known is False
+                            tension_at_surface,  # Will be NULL if tension_surface_known is False
+                            tension_near_bottom,  # Will be NULL if tension_near_bottom_known is False
+                            tension_at_bottom,  # Will be NULL if tension_bottom_known is False
+                            pullout_tension,  # Will be NULL if pullout_tension_known is False
+                            notes or None
+                        ]
 
-                # Execute the query
-                conn.execute(text(query), values)
-                conn.commit()  # Commit the transaction
-            st.success("Core successfully saved!")
+                        # Handle dynamic fields
+                        if dynamic_field_values:
+                            dynamic_columns = ", ".join(dynamic_field_values.keys())
+                            dynamic_placeholders = ", ".join([":{}".format(key) for key in dynamic_field_values.keys()])
+                            dynamic_values = {key: value for key, value in dynamic_field_values.items()}
+
+                            # Combine static and dynamic fields
+                            query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
+                            values = {**{str(i): value for i, value in enumerate(base_values)}, **dynamic_values}
+                        else:
+                            # Static fields only
+                            query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
+                            values = {str(i): value for i, value in enumerate(base_values)}
+
+                        # Execute the query
+                        conn.execute(text(query), values)
+                        conn.commit()  # Commit the transaction
+                    st.success("Core successfully saved!")
         except Exception as e:
             st.error(f"An error occurred: {e}")
             st.write("Error details:", e)

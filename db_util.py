@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine, text
 import pandas as pd
+from datetime import date
 
 # Database connection string
 DB_URL = "postgresql://postgres:madmaxfuryroad@localhost/sediment_cores"
@@ -63,4 +64,18 @@ def get_dynamic_fields_metadata(core_type_id):
             # Return the required fields (assuming it's stored as JSON or a string)
             return result[0]
     return []
+
+def fetch_last_record():
+    """Fetch the most recent record from the cores table."""
+    with get_connection() as conn:
+        query = """
+            SELECT cruise, vessel_id, leg, station
+            FROM cores
+            ORDER BY core_id DESC
+            LIMIT 1
+        """
+        result = conn.execute(text(query)).fetchone()
+        if result:
+            return result
+    return None
 
