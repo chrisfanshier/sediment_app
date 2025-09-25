@@ -71,7 +71,7 @@ def fetch_last_record():
         query = text("SELECT * FROM cores ORDER BY core_id DESC LIMIT 1")
         result = conn.execute(query).fetchone()
         if result:
-            # Convert the result to a dictionary
-            return dict(result)
+            # Use _asdict() to convert the Row object to a dictionary
+            return result._asdict()
         return None
 
