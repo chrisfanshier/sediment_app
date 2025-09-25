@@ -68,7 +68,7 @@ def get_dynamic_fields_metadata(core_type_id):
 def fetch_last_record():
     """Fetch the most recent record from the cores table."""
     with get_connection() as conn:
-        query = "SELECT * FROM cores ORDER BY core_id DESC LIMIT 1"
+        query = text("SELECT * FROM cores ORDER BY core_id DESC LIMIT 1")
         result = conn.execute(query).fetchone()
         if result:
             # Convert the result to a dictionary
