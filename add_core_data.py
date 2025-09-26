@@ -113,7 +113,32 @@ core_type_choice = st.selectbox("Select Core Type", ["Select Core Type"] + list(
 dynamic_field_values = {}
 if core_type_choice != "Select Core Type":
     core_type_id = core_type_options[core_type_choice][0]  # Fetch core type ID
-    dynamic_field_values = render_dynamic_fields_from_metadata(core_type_id)
+    dynamic_fields = render_dynamic_fields_from_metadata(core_type_id)
+
+    for field_name, field_type in dynamic_fields.items():
+        if field_type == "numeric":
+            # Handle numeric fields
+            field_value = st.text_input(
+                f"{field_name.replace('_', ' ').capitalize()} (numeric)",
+                value="",
+                placeholder=f"Enter {field_name.replace('_', ' ')} or leave blank for NULL"
+            )
+            if field_value.strip() == "":
+                dynamic_field_values[field_name] = None
+            else:
+                try:
+                    dynamic_field_values[field_name] = float(field_value)
+                except ValueError:
+                    st.warning(f"{field_name.replace('_', ' ').capitalize()} must be a numeric value.")
+                    dynamic_field_values[field_name] = None
+        else:
+            # Handle other field types (e.g., text)
+            field_value = st.text_input(
+                f"{field_name.replace('_', ' ').capitalize()}",
+                value="",
+                placeholder=f"Enter {field_name.replace('_', ' ')} or leave blank for NULL"
+            )
+            dynamic_field_values[field_name] = field_value.strip() or None
 
 # --- Post-Core Type Fields ---
 st.subheader("Deployment Details")
