@@ -120,13 +120,13 @@ st.subheader("Deployment Details")
 st.subheader("Deployment Times")
 
 # Time Launched
-time_launched = custom_time_input("Time Launched", default="00:00")
+time_launched = custom_time_input("Time Launched", default="")
 
 # Time on Bottom
-time_on_bottom = custom_time_input("Time on Bottom", default="00:00")
+time_on_bottom = custom_time_input("Time on Bottom", default="")
 
 # Time Recovered
-time_recovered = custom_time_input("Time Recovered", default="00:00")
+time_recovered = custom_time_input("Time Recovered", default="")
 
 # Wire Out on Bottom
 wire_out_known = st.checkbox("Wire Out on Bottom Known", value=True)
