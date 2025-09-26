@@ -221,61 +221,6 @@ if st.button("Save Core"):
     # Display warning for missing fields
     if missing_fields:
         st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
-        st.info("Please review the missing fields. If you still want to save the record, click the 'Confirm Save' button below.")
-
-        # Add a "Confirm Save" button to allow saving the record despite missing fields
-        if st.button("Confirm Save"):
-            try:
-                # Check for duplicate core_name
-                with get_connection() as conn:
-                    duplicate_check_query = "SELECT COUNT(*) FROM cores WHERE core_name = :core_name"
-                    result = conn.execute(text(duplicate_check_query), {"core_name": core_name}).scalar()
-                    if result > 0:
-                        st.error(f"A core with the name '{core_name}' already exists. Please use a different name.")
-                    else:
-                        # Proceed with insertion if no duplicate is found
-                        with get_connection() as conn:  # Open the database connection
-                            # Base query (static fields)
-                            base_query = """
-                                INSERT INTO cores (
-                                    core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
-                                    time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
-                                    tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes
-                                """
-                            base_values = [
-                                core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
-                                water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
-                                time_recovered, wire_out_on_bottom,  # Will be NULL if wire_out_known is False
-                                max_wire_out,  # Will be NULL if max_wire_out_known is False
-                                impact_speed,  # Will be NULL if impact_speed_known is False
-                                tension_at_surface,  # Will be NULL if tension_surface_known is False
-                                tension_near_bottom,  # Will be NULL if tension_near_bottom_known is False
-                                tension_at_bottom,  # Will be NULL if tension_bottom_known is False
-                                pullout_tension,  # Will be NULL if pullout_tension_known is False
-                                notes or None
-                            ]
-
-                            # Handle dynamic fields
-                            if dynamic_field_values:
-                                dynamic_columns = ", ".join(dynamic_field_values.keys())
-                                dynamic_placeholders = ", ".join([":{}".format(key) for key in dynamic_field_values.keys()])
-                                dynamic_values = {key: value for key, value in dynamic_field_values.items()}
-
-                                # Combine static and dynamic fields
-                                query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
-                                values = {**{str(i): value for i, value in enumerate(base_values)}, **dynamic_values}
-                            else:
-                                # Static fields only
-                                query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
-                                values = {str(i): value for i, value in enumerate(base_values)}
-
-                            # Execute the query
-                            conn.execute(text(query), values)
-                            conn.commit()  # Commit the transaction
-                        st.success("Core successfully saved!")
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
-                st.write("Error details:", e)
     else:
         # No missing fields, proceed with saving
         try:
@@ -298,14 +243,8 @@ if st.button("Save Core"):
                         base_values = [
                             core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
                             water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
-                            time_recovered, wire_out_on_bottom,  # Will be NULL if wire_out_known is False
-                            max_wire_out,  # Will be NULL if max_wire_out_known is False
-                            impact_speed,  # Will be NULL if impact_speed_known is False
-                            tension_at_surface,  # Will be NULL if tension_surface_known is False
-                            tension_near_bottom,  # Will be NULL if tension_near_bottom_known is False
-                            tension_at_bottom,  # Will be NULL if tension_bottom_known is False
-                            pullout_tension,  # Will be NULL if pullout_tension_known is False
-                            notes or None
+                            time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
+                            tension_at_bottom, pullout_tension, notes or None
                         ]
 
                         # Handle dynamic fields
