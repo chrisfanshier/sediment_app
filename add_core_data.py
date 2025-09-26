@@ -115,6 +115,7 @@ if core_type_choice != "Select Core Type":
     core_type_id = core_type_options[core_type_choice][0]  # Fetch core type ID
     dynamic_fields = render_dynamic_fields_from_metadata(core_type_id)
 
+    st.subheader("Dynamic Fields")
     for field_name, field_type in dynamic_fields.items():
         if field_type == "numeric":
             # Handle numeric fields
