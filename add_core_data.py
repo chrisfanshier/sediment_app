@@ -95,13 +95,15 @@ else:  # NULL entry
 
 # Water Depth
 st.subheader("Water Depth")
-water_depth_known = st.checkbox("Water Depth Known", value=True)
-
-if water_depth_known:
-    water_depth = st.number_input("Water Depth (meters)", min_value=0, step=1)
-else:
-    st.warning("Water Depth will be saved as NULL.")
+water_depth = st.text_input("Water Depth (meters)", value="", placeholder="Enter water depth or leave blank for NULL")
+if water_depth.strip() == "":
     water_depth = None
+else:
+    try:
+        water_depth = float(water_depth)
+    except ValueError:
+        st.warning("Water Depth must be a numeric value.")
+        water_depth = None
 
 observer = st.text_input("Observer")
 core_type_options = {ct[1]: (ct[0], ct[2]) for ct in core_types}  # Map core type names to IDs and required fields
@@ -129,28 +131,37 @@ time_on_bottom = custom_time_input("Time on Bottom", default="")
 time_recovered = custom_time_input("Time Recovered", default="")
 
 # Wire Out on Bottom
-wire_out_known = st.checkbox("Wire Out on Bottom Known", value=True)
-if wire_out_known:
-    wire_out_on_bottom = st.number_input("Wire Out on Bottom (meters)", min_value=0, step=1)
-else:
-    st.warning("Wire Out on Bottom will be saved as NULL.")
+wire_out_on_bottom = st.text_input("Wire Out on Bottom (meters)", value="", placeholder="Enter value or leave blank for NULL")
+if wire_out_on_bottom.strip() == "":
     wire_out_on_bottom = None
+else:
+    try:
+        wire_out_on_bottom = float(wire_out_on_bottom)
+    except ValueError:
+        st.warning("Wire Out on Bottom must be a numeric value.")
+        wire_out_on_bottom = None
 
 # Max Wire Out
-max_wire_out_known = st.checkbox("Max Wire Out Known", value=True)
-if max_wire_out_known:
-    max_wire_out = st.number_input("Max Wire Out (meters)", min_value=0, step=1)
-else:
-    st.warning("Max Wire Out will be saved as NULL.")
+max_wire_out = st.text_input("Max Wire Out (meters)", value="", placeholder="Enter value or leave blank for NULL")
+if max_wire_out.strip() == "":
     max_wire_out = None
+else:
+    try:
+        max_wire_out = float(max_wire_out)
+    except ValueError:
+        st.warning("Max Wire Out must be a numeric value.")
+        max_wire_out = None
 
 # Impact Speed
-impact_speed_known = st.checkbox("Impact Speed Known", value=True)
-if impact_speed_known:
-    impact_speed = st.number_input("Impact Speed (m/min)", min_value=0, step=1)
-else:
-    st.warning("Impact Speed will be saved as NULL.")
+impact_speed = st.text_input("Impact Speed (m/min)", value="", placeholder="Enter value or leave blank for NULL")
+if impact_speed.strip() == "":
     impact_speed = None
+else:
+    try:
+        impact_speed = float(impact_speed)
+    except ValueError:
+        st.warning("Impact Speed must be a numeric value.")
+        impact_speed = None
 
 # Tension at Surface
 tension_surface_known = st.checkbox("Tension at Surface Known", value=True)
