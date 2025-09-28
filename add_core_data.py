@@ -115,6 +115,18 @@ if core_type_choice != "Select Core Type":
     core_type_id = core_type_options[core_type_choice][0]  # Fetch core type ID
     dynamic_field_values = render_dynamic_fields_from_metadata(core_type_id)
 
+    # Process each dynamic field
+    for field_name, field_value in dynamic_field_values.items():
+        if field_value is None or (isinstance(field_value, str) and not field_value.strip()):
+            dynamic_field_values[field_name] = None  # Set blank fields to NULL
+        else:
+            try:
+                # Attempt to convert numeric fields to float
+                dynamic_field_values[field_name] = float(field_value)
+            except ValueError:
+                st.warning(f"The value for '{field_name}' must be numeric.")
+                dynamic_field_values[field_name] = None
+
 # --- Post-Core Type Fields ---
 st.subheader("Deployment Details")
 
@@ -164,36 +176,56 @@ else:
         impact_speed = None
 
 # Tension at Surface
-tension_surface_known = st.checkbox("Tension at Surface Known", value=True)
-if tension_surface_known:
-    tension_at_surface = st.number_input("Tension at Surface (lbs)", min_value=0, step=1)
-else:
-    st.warning("Tension at Surface will be saved as NULL.")
+tension_at_surface = st.text_input(
+    "Tension at Surface (lbs)", value="", placeholder="Enter value or leave blank for NULL"
+)
+if tension_at_surface.strip() == "":
     tension_at_surface = None
+else:
+    try:
+        tension_at_surface = float(tension_at_surface)
+    except ValueError:
+        st.warning("Tension at Surface must be a numeric value.")
+        tension_at_surface = None
 
 # Tension Near Bottom
-tension_near_bottom_known = st.checkbox("Tension Near Bottom Known", value=True)
-if tension_near_bottom_known:
-    tension_near_bottom = st.number_input("Tension Near Bottom (lbs)", min_value=0, step=1)
-else:
-    st.warning("Tension Near Bottom will be saved as NULL.")
+tension_near_bottom = st.text_input(
+    "Tension Near Bottom (lbs)", value="", placeholder="Enter value or leave blank for NULL"
+)
+if tension_near_bottom.strip() == "":
     tension_near_bottom = None
+else:
+    try:
+        tension_near_bottom = float(tension_near_bottom)
+    except ValueError:
+        st.warning("Tension Near Bottom must be a numeric value.")
+        tension_near_bottom = None
 
 # Tension at Bottom
-tension_bottom_known = st.checkbox("Tension at Bottom Known", value=True)
-if tension_bottom_known:
-    tension_at_bottom = st.number_input("Tension at Bottom (lbs)", min_value=0, step=1)
-else:
-    st.warning("Tension at Bottom will be saved as NULL.")
+tension_at_bottom = st.text_input(
+    "Tension at Bottom (lbs)", value="", placeholder="Enter value or leave blank for NULL"
+)
+if tension_at_bottom.strip() == "":
     tension_at_bottom = None
+else:
+    try:
+        tension_at_bottom = float(tension_at_bottom)
+    except ValueError:
+        st.warning("Tension at Bottom must be a numeric value.")
+        tension_at_bottom = None
 
 # Pullout Tension
-pullout_tension_known = st.checkbox("Pullout Tension Known", value=True)
-if pullout_tension_known:
-    pullout_tension = st.number_input("Pullout Tension (lbs)", min_value=0, step=1)
-else:
-    st.warning("Pullout Tension will be saved as NULL.")
+pullout_tension = st.text_input(
+    "Pullout Tension (lbs)", value="", placeholder="Enter value or leave blank for NULL"
+)
+if pullout_tension.strip() == "":
     pullout_tension = None
+else:
+    try:
+        pullout_tension = float(pullout_tension)
+    except ValueError:
+        st.warning("Pullout Tension must be a numeric value.")
+        pullout_tension = None
 
 notes = st.text_area("Notes", placeholder="Enter any additional notes or observations here...")
 

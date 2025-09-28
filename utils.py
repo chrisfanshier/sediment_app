@@ -140,14 +140,14 @@ def render_dynamic_fields_from_metadata(core_type_id):
         # Render inputs dynamically
         if input_metadata["input_type"] == "integer":
             dynamic_field_values[field] = st.number_input(
-                f"{field_name} (integer)", min_value=0, step=input_metadata["step"], format=input_metadata["format"]
+                f"{field_name} (integer)", min_value=0, step=input_metadata["step"], format=input_metadata["format"], help="Leave blank for NULL"
             )
         elif input_metadata["input_type"] == "float":
             dynamic_field_values[field] = st.number_input(
-                f"{field_name} (numeric)", min_value=0.0, step=input_metadata["step"], format=input_metadata["format"]
+                f"{field_name} (numeric)", min_value=0.0, step=input_metadata["step"], format=input_metadata["format"], help="Leave blank for NULL"
             )
         elif input_metadata["input_type"] == "text":
-            dynamic_field_values[field] = st.text_input(f"{field_name}")
+            dynamic_field_values[field] = st.text_input(f"{field_name} (default)", placeholder="Enter value or leave blank for NULL") 
         elif input_metadata["input_type"] == "boolean":
             dynamic_field_values[field] = st.checkbox(f"{field_name}")
         elif input_metadata["input_type"] == "date":
