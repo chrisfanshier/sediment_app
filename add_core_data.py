@@ -116,42 +116,9 @@ if core_type_choice != "Select Core Type":
     dynamic_fields = render_dynamic_fields_from_metadata(core_type_id)
 
     st.subheader("Dynamic Fields")
-    for field_name, field_type in dynamic_fields.items():
-        if field_type == "numeric":
-            # Handle numeric fields
-            field_value = st.text_input(
-                f"{field_name.replace('_', ' ').capitalize()} (numeric)",
-                value="",
-                placeholder=f"Enter {field_name.replace('_', ' ')} or leave blank for NULL"
-            )
-            if field_value.strip() == "":
-                dynamic_field_values[field_name] = None
-            else:
-                try:
-                    dynamic_field_values[field_name] = float(field_value)
-                except ValueError:
-                    st.warning(f"{field_name.replace('_', ' ').capitalize()} must be a numeric value.")
-                    dynamic_field_values[field_name] = None
-        else:
-            # Handle other field types (e.g., text)
-            field_value = st.text_input(
-                f"{field_name.replace('_', ' ').capitalize()}",
-                value="",
-                placeholder=f"Enter {field_name.replace('_', ' ')} or leave blank for NULL"
-            )
-            dynamic_field_values[field_name] = field_value.strip() or None
-
-    # Process each dynamic field
-    for field_name, field_value in dynamic_field_values.items():
-        if field_value is None or (isinstance(field_value, str) and not field_value.strip()):
-            dynamic_field_values[field_name] = None  # Set blank fields to NULL
-        else:
-            try:
-                # Attempt to convert numeric fields to float
-                dynamic_field_values[field_name] = float(field_value)
-            except ValueError:
-                st.warning(f"The value for '{field_name}' must be numeric.")
-                dynamic_field_values[field_name] = None
+    # DELETE this block from add_core_data.py:
+    # for field_name, field_type in dynamic_fields.items():
+    #     # ... all the manual rendering and value collection ...
 
 # --- Post-Core Type Fields ---
 st.subheader("Deployment Details")
