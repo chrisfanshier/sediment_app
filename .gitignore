@@ -1,0 +1,34 @@
+# Data files
+*.dat
+*.acc
+*.csv
+*.xlsx
+*.json
+*.rsk
+*.out
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit
+.streamlit/
+
+# Logs
+*.log
+
+# Data directories
+data/
+winch_metadata/
+uploaded_files/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*_backup.py
+
+# IDE files
+.vscode/
+.idea/
