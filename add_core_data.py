@@ -176,8 +176,7 @@ core_type_choice = st.selectbox("Select Core Type", ["Select Core Type"] + list(
 # --- Dynamic Fields ---
 if core_type_choice != "Select Core Type":
     core_type_id = core_type_options[core_type_choice][0]  # Fetch core type ID
-    dynamic_field_values = {}  # Initialize empty dict
-    dynamic_fields = render_dynamic_fields_from_metadata(core_type_id)  # Just render, don't collect values
+    dynamic_field_values = render_dynamic_fields_from_metadata(core_type_id)  # Render AND collect values
 else:
     dynamic_field_values = {}
     core_type_id = None
@@ -380,13 +379,20 @@ if st.session_state.show_confirmation:
 
                             # Handle dynamic fields
                             if dynamic_field_values:
-                                dynamic_columns = ", ".join(dynamic_field_values.keys())
-                                dynamic_placeholders = ", ".join([":{}".format(key) for key in dynamic_field_values.keys()])
-                                dynamic_values = {key: value for key, value in dynamic_field_values.items()}
+                                # Convert empty strings to None for database insertion
+                                cleaned_dynamic_values = {}
+                                for key, value in dynamic_field_values.items():
+                                    if isinstance(value, str) and value.strip() == "":
+                                        cleaned_dynamic_values[key] = None
+                                    else:
+                                        cleaned_dynamic_values[key] = value
+                                
+                                dynamic_columns = ", ".join(cleaned_dynamic_values.keys())
+                                dynamic_placeholders = ", ".join([":{}".format(key) for key in cleaned_dynamic_values.keys()])
 
                                 # Combine static and dynamic fields
                                 query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
-                                values = {**{str(i): value for i, value in enumerate(base_values)}, **dynamic_values}
+                                values = {**{str(i): value for i, value in enumerate(base_values)}, **cleaned_dynamic_values}
                             else:
                                 # Static fields only
                                 query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
