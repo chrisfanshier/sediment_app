@@ -170,6 +170,21 @@ else:
         water_depth = None
 
 observer = st.text_input("Observer")
+
+# Wire Type - Dropdown selection
+with get_connection() as conn:
+    wire_query = "SELECT wire_type_id, wire_type FROM wire ORDER BY wire_type"
+    wire_types = conn.execute(text(wire_query)).fetchall()
+
+wire_options = {wt[1]: wt[0] for wt in wire_types}  # Map wire type names to IDs
+wire_choice = st.selectbox("Wire Type", ["Select Wire Type"] + list(wire_options.keys()))
+
+if wire_choice == "Select Wire Type":
+    wire_type_id = None
+else:
+    wire_type_id = wire_options[wire_choice]
+
+# Continue with core type selection
 core_type_options = {ct[1]: (ct[0], ct[2]) for ct in core_types}  # Map core type names to IDs and required fields
 core_type_choice = st.selectbox("Select Core Type", ["Select Core Type"] + list(core_type_options.keys()))
 
@@ -325,6 +340,7 @@ if st.session_state.show_confirmation:
     if longitude is None: null_values.append("Longitude")
     if water_depth is None: null_values.append("Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
+    if wire_type_id is None: null_values.append("Wire Type")  # ADD THIS LINE
     if time_launched is None: null_values.append("Time Launched")
     if time_on_bottom is None: null_values.append("Time on Bottom")
     if time_recovered is None: null_values.append("Time Recovered")
@@ -368,13 +384,13 @@ if st.session_state.show_confirmation:
                                 INSERT INTO cores (
                                     core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
                                     time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
-                                    tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes
+                                    tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id
                                 """
                             base_values = [
                                 core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
                                 water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
                                 time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
-                                tension_at_bottom, pullout_tension, notes or None
+                                tension_at_bottom, pullout_tension, notes or None, wire_type_id
                             ]
 
                             # Handle dynamic fields
