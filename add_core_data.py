@@ -188,6 +188,17 @@ else:
 core_type_options = {ct[1]: (ct[0], ct[2]) for ct in core_types}  # Map core type names to IDs and required fields
 core_type_choice = st.selectbox("Select Core Type", ["Select Core Type"] + list(core_type_options.keys()))
 
+# Check if this is a Jumbo Piston Core (core_type_id = 1) and offer TC option
+create_trigger_core = False
+if core_type_choice != "Select Core Type":
+    selected_core_type_id = core_type_options[core_type_choice][0]  # Get the core_type_id
+    if selected_core_type_id == 1:  # Jumbo Piston (4") - JC
+        create_trigger_core = st.checkbox(
+            "Also create Trigger Core (TC) record", 
+            value=True,  # Default to checked
+            help="Creates a companion TC record with the same metadata but separate core length from trigger_core_length field"
+        )
+
 # --- Dynamic Fields ---
 if core_type_choice != "Select Core Type":
     core_type_id = core_type_options[core_type_choice][0]  # Fetch core type ID
@@ -329,6 +340,14 @@ if st.button("Save Core"):
 if st.session_state.show_confirmation:
     st.warning("⚠️ **Confirm Save Operation**")
     
+    # Show what will be created
+    if create_trigger_core:
+        tc_core_name = core_name.replace("JC", "TC")
+        st.info(f"**Two cores will be created:**")
+        st.markdown(f"1. **{core_name}** (Jumbo Piston Core)")
+        st.markdown(f"2. **{tc_core_name}** (Trigger Core)")
+        st.markdown("---")
+    
     # Collect all NULL values that will be saved
     null_values = []
     
@@ -362,67 +381,125 @@ if st.session_state.show_confirmation:
         st.markdown("**The following fields will be saved as NULL:**")
         for null_field in null_values:
             st.markdown(f"• {null_field}")
+        
+        if create_trigger_core:
+            st.markdown("**Additional NULL fields for Trigger Core:**")
+            st.markdown("• Tension at Surface")
+            st.markdown("• Tension Near Bottom") 
+            st.markdown("• Tension at Bottom")
+            st.markdown("• Pullout Tension")
+            
+            # Check if trigger_core_length exists for TC core_length
+            trigger_length = dynamic_field_values.get('trigger_core_length') if dynamic_field_values else None
+            if not trigger_length or (isinstance(trigger_length, str) and not trigger_length.strip()):
+                st.markdown("• Core Length (no trigger_core_length found)")
+            else:
+                st.markdown(f"✓ Core Length will be: **{trigger_length}** (from trigger_core_length)")
         st.markdown("---")
     
     col1, col2 = st.columns(2)
     
     with col1:
         if st.button("✅ Confirm Save", type="primary"):
-            # Proceed with the actual save logic (your existing code)
             try:
-                # Check for duplicate core_name
+                # Check for duplicate core_name(s)
                 with get_connection() as conn:
-                    duplicate_check_query = "SELECT COUNT(*) FROM cores WHERE core_name = :core_name"
-                    result = conn.execute(text(duplicate_check_query), {"core_name": core_name}).scalar()
-                    if result > 0:
-                        st.error(f"A core with the name '{core_name}' already exists. Please use a different name.")
-                    else:
-                        # Proceed with insertion if no duplicate is found
-                        with get_connection() as conn:  # Open the database connection
-                            # Base query (static fields)
-                            base_query = """
-                                INSERT INTO cores (
-                                    core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
-                                    time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
-                                    tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id
-                                """
-                            base_values = [
-                                core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
-                                water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
-                                time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
-                                tension_at_bottom, pullout_tension, notes or None, wire_type_id
+                    cores_to_check = [core_name]
+                    if create_trigger_core:
+                        tc_core_name = core_name.replace("JC", "TC")
+                        cores_to_check.append(tc_core_name)
+                    
+                    # Check for duplicates
+                    duplicate_found = False
+                    for check_name in cores_to_check:
+                        duplicate_check_query = "SELECT COUNT(*) FROM cores WHERE core_name = :core_name"
+                        result = conn.execute(text(duplicate_check_query), {"core_name": check_name}).scalar()
+                        if result > 0:
+                            st.error(f"A core with the name '{check_name}' already exists. Please use a different name.")
+                            duplicate_found = True
+                            break
+                    
+                    if not duplicate_found:
+                        # === CREATE JC CORE (original logic) ===
+                        base_query = """
+                            INSERT INTO cores (
+                                core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
+                                time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
+                                tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id
+                        """
+                        base_values = [
+                            core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
+                            water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
+                            time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
+                            tension_at_bottom, pullout_tension, notes or None, wire_type_id
+                        ]
+
+                        # Handle dynamic fields for JC core
+                        if dynamic_field_values:
+                            cleaned_dynamic_values = {}
+                            for key, value in dynamic_field_values.items():
+                                if isinstance(value, str) and value.strip() == "":
+                                    cleaned_dynamic_values[key] = None
+                                else:
+                                    cleaned_dynamic_values[key] = value
+                            
+                            dynamic_columns = ", ".join(cleaned_dynamic_values.keys())
+                            dynamic_placeholders = ", ".join([":{}".format(key) for key in cleaned_dynamic_values.keys()])
+                            query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
+                            values = {**{str(i): value for i, value in enumerate(base_values)}, **cleaned_dynamic_values}
+                        else:
+                            query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
+                            values = {str(i): value for i, value in enumerate(base_values)}
+
+                        # Execute JC core insertion
+                        conn.execute(text(query), values)
+                        
+                        # === CREATE TC CORE if requested ===
+                        if create_trigger_core:
+                            tc_core_name = core_name.replace("JC", "TC")
+                            tc_core_type_id = 3  # Trigger - TC core type ID
+                            
+                            # TC core values (same as JC but with different name, core_type, and NULL tensions)
+                            tc_base_values = [
+                                tc_core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
+                                water_depth, latitude, longitude, observer or None, tc_core_type_id, time_launched, time_on_bottom, 
+                                time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
+                                None, None, notes or None, wire_type_id  # tensions = NULL
                             ]
-
-                            # Handle dynamic fields
-                            if dynamic_field_values:
-                                # Convert empty strings to None for database insertion
-                                cleaned_dynamic_values = {}
-                                for key, value in dynamic_field_values.items():
-                                    if isinstance(value, str) and value.strip() == "":
-                                        cleaned_dynamic_values[key] = None
-                                    else:
-                                        cleaned_dynamic_values[key] = value
-                                
-                                dynamic_columns = ", ".join(cleaned_dynamic_values.keys())
-                                dynamic_placeholders = ", ".join([":{}".format(key) for key in cleaned_dynamic_values.keys()])
-
-                                # Combine static and dynamic fields
-                                query = f"{base_query}, {dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])}, {dynamic_placeholders})"
-                                values = {**{str(i): value for i, value in enumerate(base_values)}, **cleaned_dynamic_values}
+                            
+                            # TC dynamic fields: use trigger_core_length as core_length
+                            tc_dynamic_values = {}
+                            if dynamic_field_values and 'trigger_core_length' in dynamic_field_values:
+                                trigger_length = dynamic_field_values['trigger_core_length']
+                                if trigger_length and (not isinstance(trigger_length, str) or trigger_length.strip()):
+                                    tc_dynamic_values['core_length'] = trigger_length
+                            
+                            # Build TC query
+                            if tc_dynamic_values:
+                                tc_dynamic_columns = ", ".join(tc_dynamic_values.keys())
+                                tc_dynamic_placeholders = ", ".join([":{}".format(key) for key in tc_dynamic_values.keys()])
+                                tc_query = f"{base_query}, {tc_dynamic_columns}) VALUES ({', '.join([':{}'.format(i) for i in range(len(tc_base_values))])}, {tc_dynamic_placeholders})"
+                                tc_values = {**{str(i): value for i, value in enumerate(tc_base_values)}, **tc_dynamic_values}
                             else:
-                                # Static fields only
-                                query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(base_values))])})"
-                                values = {str(i): value for i, value in enumerate(base_values)}
+                                tc_query = f"{base_query}) VALUES ({', '.join([':{}'.format(i) for i in range(len(tc_base_values))])})"
+                                tc_values = {str(i): value for i, value in enumerate(tc_base_values)}
+                            
 
-                            # Execute the query
-                            conn.execute(text(query), values)
-                            conn.commit()  # Commit the transaction
-                        st.success("Core successfully saved!")
-                        st.session_state.show_confirmation = False  # Reset confirmation state
+                            # Execute TC core insertion
+                            conn.execute(text(tc_query), tc_values)
+                        
+                        conn.commit()
+                        
+                        if create_trigger_core:
+                            st.success(f"Successfully created both **{core_name}** and **{tc_core_name}**!")
+                        else:
+                            st.success("Core successfully saved!")
+                            
+                        st.session_state.show_confirmation = False
+            
             except Exception as e:
                 st.error(f"An error occurred: {e}")
-                st.write("Error details:", e)
-                st.session_state.show_confirmation = False  # Reset on error
+                st.session_state.show_confirmation = False
     
     with col2:
         if st.button("❌ Cancel"):
