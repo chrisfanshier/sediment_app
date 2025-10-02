@@ -11,7 +11,7 @@ import re
 from utils import custom_time_input
 
 # Force wide layout for Streamlit
-st.set_page_config(layout="wide")
+#st.set_page_config(layout="wide")
 
 # Custom CSS to reduce blank space
 st.markdown(

@@ -121,41 +121,89 @@ def map_data_type_to_input(data_type):
     else:
         return {"input_type": "text"}  # Default to text input
 
-def render_dynamic_fields_from_metadata(core_type_id):
+def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
     """
     Render dynamic fields based on metadata from the database.
+    
+    Args:
+        core_type_id: The core type ID to get fields for
+        existing_values: Optional dict of existing field values to pre-populate
     """
     # Fetch dynamic fields metadata
     dynamic_fields = get_dynamic_fields_metadata(core_type_id) or []  # Ensure it's a list, even if None is returned
 
     dynamic_field_values = {}
+    
+    # Use existing values if provided, otherwise empty dict
+    existing = existing_values or {}
 
     # Render input fields based on the metadata
     for field in dynamic_fields:
         field_name = field.replace("_", " ").capitalize()  # Clean up field names for display
+        
+        # Get existing value for this field
+        existing_value = existing.get(field, None)
 
         # Map the data type to Streamlit input type
         input_metadata = map_data_type_to_input(field)
 
-        # Render inputs dynamically
+        # Render inputs dynamically with existing values
         if input_metadata["input_type"] == "integer":
+            default_value = int(existing_value) if existing_value is not None else 0
             dynamic_field_values[field] = st.number_input(
-                f"{field_name} (integer)", min_value=0, step=input_metadata["step"], format=input_metadata["format"], help="Leave blank for NULL"
+                f"{field_name} (integer)", 
+                value=default_value,
+                min_value=0, 
+                step=input_metadata["step"], 
+                format=input_metadata["format"], 
+                help="Leave blank for NULL"
             )
+            # Convert 0 to None if it was originally None
+            if existing_value is None and dynamic_field_values[field] == 0:
+                dynamic_field_values[field] = None
+                
         elif input_metadata["input_type"] == "float":
+            default_value = float(existing_value) if existing_value is not None else 0.0
             dynamic_field_values[field] = st.number_input(
-                f"{field_name} (numeric)", min_value=0.0, step=input_metadata["step"], format=input_metadata["format"], help="Leave blank for NULL"
+                f"{field_name} (numeric)", 
+                value=default_value,
+                min_value=0.0, 
+                step=input_metadata["step"], 
+                format=input_metadata["format"], 
+                help="Leave blank for NULL"
             )
+            # Convert 0.0 to None if it was originally None
+            if existing_value is None and dynamic_field_values[field] == 0.0:
+                dynamic_field_values[field] = None
+                
         elif input_metadata["input_type"] == "text":
-            dynamic_field_values[field] = st.text_input(f"{field_name} (default)", placeholder="Enter value or leave blank for NULL") 
+            default_value = str(existing_value) if existing_value is not None else ""
+            dynamic_field_values[field] = st.text_input(
+                f"{field_name} (default)", 
+                value=default_value,
+                placeholder="Enter value or leave blank for NULL"
+            )
+            
         elif input_metadata["input_type"] == "boolean":
-            dynamic_field_values[field] = st.checkbox(f"{field_name}")
+            default_value = bool(existing_value) if existing_value is not None else False
+            dynamic_field_values[field] = st.checkbox(f"{field_name}", value=default_value)
+            
         elif input_metadata["input_type"] == "date":
-            dynamic_field_values[field] = st.date_input(f"{field_name}")
+            # Handle date existing values
+            if existing_value is not None:
+                dynamic_field_values[field] = st.date_input(f"{field_name}", value=existing_value)
+            else:
+                dynamic_field_values[field] = st.date_input(f"{field_name}")
+                
         elif input_metadata["input_type"] == "time":
-            dynamic_field_values[field] = st.time_input(f"{field_name}")
+            # Handle time existing values
+            if existing_value is not None:
+                dynamic_field_values[field] = st.time_input(f"{field_name}", value=existing_value)
+            else:
+                dynamic_field_values[field] = st.time_input(f"{field_name}")
         else:
-            dynamic_field_values[field] = st.text_input(f"{field_name} (default)")
+            default_value = str(existing_value) if existing_value is not None else ""
+            dynamic_field_values[field] = st.text_input(f"{field_name} (default)", value=default_value)
 
     return dynamic_field_values
 
