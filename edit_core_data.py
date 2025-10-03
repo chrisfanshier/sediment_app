@@ -132,7 +132,10 @@ else:
 
 # Other basic fields
 leg = st.text_input("Leg", value=core_data.leg or "")
-date_field = st.date_input("Date", value=core_data.date if core_data.date else date.today())
+date_field = st.date_input("Date", 
+                          value=core_data.date if core_data.date else date.today(),
+                          min_value=date(1900, 1, 1),  # Allow dates back to 1900
+                          max_value=date(2050, 12, 31))  # Future limit
 station = st.text_input("Station", value=core_data.station or "")
 
 # Coordinates
@@ -279,6 +282,9 @@ pullout_tension = create_numeric_field("Pullout Tension (lbs)", core_data.pullou
 # Notes
 notes = st.text_area("Notes", value=core_data.notes or "", placeholder="Enter any additional notes or observations here...")
 
+# Add this after the notes field:
+data_entry_remarks = st.text_area("Data Entry Remarks", value=core_data.data_entry_remarks or "", placeholder="Enter any remarks about the data entry process, corrections, or data quality notes here...")
+
 # --- Save Button ---
 if st.button("Update Core"):
     # Validation: Check for missing required fields
@@ -365,7 +371,8 @@ if st.session_state.show_confirmation:
                             wire_out_on_bottom = :wire_out_on_bottom, max_wire_out = :max_wire_out,
                             impact_speed = :impact_speed, tension_at_surface = :tension_at_surface,
                             tension_near_bottom = :tension_near_bottom, tension_on_bottom = :tension_on_bottom,
-                            pullout_tension = :pullout_tension, notes = :notes, wire_type_id = :wire_type_id
+                            pullout_tension = :pullout_tension, notes = :notes, wire_type_id = :wire_type_id,
+                            data_entry_remarks = :data_entry_remarks
                     """
                     
                     base_values = {

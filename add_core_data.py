@@ -92,7 +92,10 @@ if cruise_input and cruise != cruise_input:
     st.caption("Cruise will be automatically capitalized. Only letters, numbers, and hyphens (-) are allowed.")
 
 leg = st.text_input("Leg", value=last_record['leg'] if last_record else "")
-date_field = st.date_input("Date", value=date.today())
+date_field = st.date_input("Date", 
+                          value=date.today(),
+                          min_value=date(1900, 1, 1),  # Allow dates back to 1900
+                          max_value=date(2050, 12, 31))  # Future limit
 station = st.text_input("Station", value=last_record['station'] if last_record else "")
 
 # Coordinate format selection
@@ -308,6 +311,7 @@ else:
         pullout_tension = None
 
 notes = st.text_area("Notes", placeholder="Enter any additional notes or observations here...")
+data_entry_remarks = st.text_area("Data Entry Remarks", placeholder="Enter any remarks about the data entry process, corrections, or data quality notes here...")
 
 # Add this after the existing session state checks
 if "show_confirmation" not in st.session_state:
@@ -371,7 +375,8 @@ if st.session_state.show_confirmation:
     if tension_at_bottom is None: null_values.append("Tension at Bottom")
     if pullout_tension is None: null_values.append("Pullout Tension")
     if not notes or not notes.strip(): null_values.append("Notes")
-    
+    if not data_entry_remarks or not data_entry_remarks.strip(): null_values.append("Data Entry Remarks")
+
     # Check dynamic fields for NULLs
     for field, value in dynamic_field_values.items():
         if value is None or (isinstance(value, str) and not value.strip()):
@@ -425,13 +430,13 @@ if st.session_state.show_confirmation:
                             INSERT INTO cores (
                                 core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
                                 time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
-                                tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id
+                                tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id, data_entry_remarks
                         """
                         base_values = [
                             core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
                             water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
                             time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
-                            tension_at_bottom, pullout_tension, notes or None, wire_type_id
+                            tension_at_bottom, pullout_tension, notes or None, wire_type_id, data_entry_remarks or None
                         ]
 
                         # Handle dynamic fields for JC core
@@ -464,7 +469,7 @@ if st.session_state.show_confirmation:
                                 tc_core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
                                 water_depth, latitude, longitude, observer or None, tc_core_type_id, time_launched, time_on_bottom, 
                                 time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
-                                None, None, notes or None, wire_type_id  # tensions = NULL
+                                None, None, notes or None, wire_type_id, data_entry_remarks or None  # tensions = NULL, include data_entry_remarks
                             ]
                             
                             # TC dynamic fields: use trigger_core_length as core_length
