@@ -7,7 +7,8 @@ ROOT_DIRECTORY = os.getenv("FILE_STORAGE_ROOT", "/home/server/project/marssam/ma
 SUBDIRECTORIES = {
     "MSCL Data": "MSCL_Data",
     "RBR Sensor": "Sensor_Data",
-    "Star-Oddi Sensor": "Sensor_Data"
+    "Star-Oddi Sensor": "Sensor_Data",
+    "Winch Data": "winch_data"
 }
 
 # Function to construct full paths

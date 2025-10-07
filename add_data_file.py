@@ -114,8 +114,6 @@ else:
             "Weight Stand",
             "Release Device", 
             "Trigger Core/Weight",
-            "Core Barrel",
-            "External Mount",
             "Other Location"
         ]
         sensor_location = st.selectbox("Sensor Location", ["Select Location..."] + sensor_location_options)
