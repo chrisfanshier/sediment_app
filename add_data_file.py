@@ -31,36 +31,34 @@ def upload_file(file, file_type):
     return subdirectory
 
 # Define the insert functions for specialized tables
-def insert_mscl_file(core_id, file_name, file_path, file_type, notes, remarks):
+def insert_mscl_file(core_id, file_name, file_path, file_type, remarks):
     with get_connection() as conn:
         query = text("""
-            INSERT INTO mscl_files (core_id, file_name, file_path, file_type, notes, remarks)
-            VALUES (:core_id, :file_name, :file_path, :file_type, :notes, :remarks)
+            INSERT INTO mscl_files (core_id, file_name, file_path, file_type, remarks)
+            VALUES (:core_id, :file_name, :file_path, :file_type, :remarks)
         """)
         conn.execute(query, {
             "core_id": core_id,
             "file_name": file_name,
             "file_path": file_path,
             "file_type": file_type,
-            "notes": notes or None,
             "remarks": remarks or None
         })
         conn.commit()
 
-def insert_sensor_file(core_id, file_name, file_path, file_type, notes, sensor_location, sensor_type, remarks):
+def insert_sensor_file(core_id, file_name, file_path, file_type, sensor_location, sensor_type, remarks):
     with get_connection() as conn:
         query = text("""
-            INSERT INTO sensor_files (core_id, file_name, file_path, file_type, notes, sensor_location, sensor_type, remarks)
-            VALUES (:core_id, :file_name, :file_path, :file_type, :notes, :sensor_location, :sensor_type, :remarks)
+            INSERT INTO sensor_files (core_id, file_name, file_path, file_type, sensor_location, sensor_type, remarks)
+            VALUES (:core_id, :file_name, :file_path, :file_type, :sensor_location, :sensor_type, :remarks)
         """)
         conn.execute(query, {
             "core_id": core_id,
             "file_name": file_name,
             "file_path": file_path,
-            "file_type": file_type,  # This will be "RBR Sensor" or "Star-Oddi Sensor"
-            "notes": notes or None,
+            "file_type": file_type,
             "sensor_location": sensor_location or None,
-            "sensor_type": sensor_type or None,  # This will be the measurements like "Temperature, Depth"
+            "sensor_type": sensor_type or None,
             "remarks": remarks or None
         })
         conn.commit()
@@ -88,18 +86,16 @@ else:
         # File upload
         uploaded_file = st.file_uploader("Upload MSCL Data File", type=["out", "csv", "txt"], key="mscl_uploader")
         
-        # MSCL specific fields
-        notes = st.text_area("Notes", placeholder="Enter any notes about this MSCL data file...")
-        remarks = st.text_area("MSCL Remarks", placeholder="Enter MSCL-specific remarks (measurement conditions, calibration notes, etc.)...")
+        # MSCL remarks field
+        remarks = st.text_area("MSCL Remarks", placeholder="Enter MSCL-specific remarks...")
         
         # Process MSCL file upload
         if uploaded_file is not None:
             if st.button("Save MSCL File"):
                 with st.spinner(f"Processing MSCL file '{uploaded_file.name}'..."):
                     uploaded_file_path = upload_file(uploaded_file, "MSCL Data")
-                    insert_mscl_file(selected_core_id, uploaded_file.name, uploaded_file_path, file_type, notes, remarks)
+                    insert_mscl_file(selected_core_id, uploaded_file.name, uploaded_file_path, file_type, remarks)
                     st.success(f"MSCL file '{uploaded_file.name}' saved successfully!")
-                    st.write(f"File saved at: {uploaded_file_path}")
 
     elif file_category == "Sensor Data":
         st.subheader("🌡️ Sensor Data File")
@@ -134,29 +130,21 @@ else:
             "Temperature": st.checkbox("Temperature"),
             "Depth/Pressure": st.checkbox("Depth/Pressure"),
             "Acceleration": st.checkbox("Acceleration"),
-            "Tilt": st.checkbox("Tilt"),
-            "Conductivity": st.checkbox("Conductivity"),
-            "pH": st.checkbox("pH"),
-            "Dissolved Oxygen": st.checkbox("Dissolved Oxygen")
+            "Tilt": st.checkbox("Tilt")
         }
         
         # Build sensor_type string from selected measurements
         selected_measurements = [measurement for measurement, selected in measurements.items() if selected]
         if selected_measurements:
-            sensor_type = ", ".join(selected_measurements)  # e.g., "Temperature, Depth/Pressure"
+            sensor_type = ", ".join(selected_measurements)
         else:
             sensor_type = None
-        
-        # Show what will be saved
-        if selected_measurements:
-            st.info(f"Sensor Type will be saved as: **{sensor_type}**")
         
         # File upload
         uploaded_file = st.file_uploader("Upload Sensor Data File", type=file_extensions, key="sensor_uploader")
         
-        # Sensor specific fields
-        notes = st.text_area("Notes", placeholder="Enter any notes about this sensor data file...")
-        remarks = st.text_area("Sensor Remarks", placeholder="Enter sensor-specific remarks (deployment notes, data quality, issues, etc.)...")
+        # Sensor remarks field
+        remarks = st.text_area("Sensor Remarks", placeholder="Enter sensor-specific remarks...")
         
         # Validation and save
         missing_fields = []
@@ -172,19 +160,14 @@ else:
             else:
                 if st.button("Save Sensor File"):
                     with st.spinner(f"Processing sensor file '{uploaded_file.name}'..."):
-                        uploaded_file_path = upload_file(uploaded_file, file_type)  # Use file_type for subdirectory
+                        uploaded_file_path = upload_file(uploaded_file, file_type)
                         insert_sensor_file(
                             selected_core_id, 
                             uploaded_file.name, 
                             uploaded_file_path, 
-                            file_type,  # "RBR Sensor" or "Star-Oddi Sensor"
-                            notes, 
+                            file_type,
                             sensor_location, 
-                            sensor_type,  # "Temperature, Depth/Pressure" etc.
+                            sensor_type,
                             remarks
                         )
                         st.success(f"Sensor file '{uploaded_file.name}' saved successfully!")
-                        st.write(f"File saved at: {uploaded_file_path}")
-                        st.write(f"Sensor Brand: {file_type}")
-                        st.write(f"Sensor Location: {sensor_location}")
-                        st.write(f"Measurements: {sensor_type}")
