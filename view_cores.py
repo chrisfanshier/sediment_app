@@ -7,9 +7,6 @@ def view_cores():
 
     # Fetch the cores table from the database
     with get_connection() as conn:
-        query_cores = "SELECT * FROM cores ORDER BY core_name"
-        cores_data = pd.read_sql(query_cores, conn)
-
         # Fetch vessel names
         query_vessels = "SELECT vessel_id, vessel_name FROM vessels"
         vessels_df = pd.read_sql(query_vessels, conn)
@@ -20,22 +17,28 @@ def view_cores():
         core_types_df = pd.read_sql(query_core_types, conn)
         core_type_map = core_types_df.set_index('core_type_id')['core_type_name'].to_dict()
 
-        # Fetch file counts for each core
-        query_files = """
-            SELECT core_id, file_type, COUNT(*) AS file_count
-            FROM files
-            GROUP BY core_id, file_type
+        # Get cores data WITH file counts in one query
+        query_cores_with_files = """
+            SELECT c.*, 
+                   COALESCE(mscl_count, 0) as mscl_file_count,
+                   COALESCE(sensor_count, 0) as sensor_file_count,
+                   COALESCE(mscl_count, 0) + COALESCE(sensor_count, 0) as total_file_count
+            FROM cores c 
+            LEFT JOIN (
+                SELECT core_id, COUNT(*) as mscl_count 
+                FROM mscl_files 
+                GROUP BY core_id
+            ) m ON c.core_id = m.core_id
+            LEFT JOIN (
+                SELECT core_id, COUNT(*) as sensor_count 
+                FROM sensor_files 
+                GROUP BY core_id
+            ) s ON c.core_id = s.core_id
+            ORDER BY c.core_name
         """
-        files_data = pd.read_sql(query_files, conn)
+        cores_data = pd.read_sql(query_cores_with_files, conn)
 
-        # Create columns for sensor data and MSCL data
-        sensor_data_map = files_data[files_data['file_type'] == 'RBR Sensor'].set_index('core_id')['file_count'].to_dict()
-        mscl_data_map = files_data[files_data['file_type'] == 'MSCL Data'].set_index('core_id')['file_count'].to_dict()
-
-        cores_data['has_sensor_data'] = cores_data['core_id'].map(lambda x: sensor_data_map.get(x, 0) > 0)
-        cores_data['has_mscl_data'] = cores_data['core_id'].map(lambda x: mscl_data_map.get(x, 0) > 0)
-
-        # Replace IDs with names
+        # Replace IDs with names (keep this part)
         cores_data['vessel_name'] = cores_data['vessel_id'].map(vessel_map).fillna(cores_data['vessel_id'])
         cores_data['core_type_name'] = cores_data['core_type_id'].map(core_type_map).fillna(cores_data['core_type_id'])
 

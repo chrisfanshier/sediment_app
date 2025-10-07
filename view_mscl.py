@@ -28,7 +28,7 @@ def visualize_mscl_data():
 
             # Fetch associated MSCL files for the selected core
             with get_connection() as conn:
-                query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'MSCL Data'"
+                query = "SELECT file_name, file_path, remarks FROM mscl_files WHERE core_id = %s"
                 df_files = pd.read_sql(query, conn, params=(selected_core_id,))
 
             if not df_files.empty:
@@ -46,6 +46,12 @@ def visualize_mscl_data():
             else:
                 st.warning("No MSCL file for this core.")
                 uploaded_file_path = None  # Ensure the variable is defined
+
+            # Then display remarks in the UI if they exist:
+            if not df_files.empty and 'remarks' in df_files.columns:
+                for _, row in df_files.iterrows():
+                    if row['remarks']:
+                        st.info(f"File remarks: {row['remarks']}")
 
         if uploaded_file_path:
             with st.expander("Plot Settings"):
@@ -129,7 +135,7 @@ def visualize_mscl_data():
                         second_core_label = st.selectbox("Select Second Core", list(other_core_options.keys()))
                         second_core_id = other_core_options[second_core_label]
                         with get_connection() as conn:
-                            query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'MSCL Data'"
+                            query = "SELECT file_name, file_path FROM mscl_files WHERE core_id = %s"
                             df_files_2 = pd.read_sql(query, conn, params=(second_core_id,))
                         if not df_files_2.empty:
                             selected_file_label_2 = st.selectbox("Select MSCL Data File for Second Core", df_files_2['file_name'])

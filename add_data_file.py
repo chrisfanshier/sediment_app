@@ -30,18 +30,38 @@ def upload_file(file, file_type):
     # Return only the relative directory (not the full path)
     return subdirectory
 
-# Define the insert_file function
-def insert_file(core_id, file_name, file_path, file_type):
+# Define the insert functions for specialized tables
+def insert_mscl_file(core_id, file_name, file_path, file_type, notes, remarks):
     with get_connection() as conn:
         query = text("""
-            INSERT INTO files (core_id, file_name, file_path, file_type)
-            VALUES (:core_id, :file_name, :file_path, :file_type)
+            INSERT INTO mscl_files (core_id, file_name, file_path, file_type, notes, remarks)
+            VALUES (:core_id, :file_name, :file_path, :file_type, :notes, :remarks)
         """)
         conn.execute(query, {
             "core_id": core_id,
             "file_name": file_name,
-            "file_path": file_path,  # Only the relative directory
-            "file_type": file_type
+            "file_path": file_path,
+            "file_type": file_type,
+            "notes": notes or None,
+            "remarks": remarks or None
+        })
+        conn.commit()
+
+def insert_sensor_file(core_id, file_name, file_path, file_type, notes, sensor_location, sensor_type, remarks):
+    with get_connection() as conn:
+        query = text("""
+            INSERT INTO sensor_files (core_id, file_name, file_path, file_type, notes, sensor_location, sensor_type, remarks)
+            VALUES (:core_id, :file_name, :file_path, :file_type, :notes, :sensor_location, :sensor_type, :remarks)
+        """)
+        conn.execute(query, {
+            "core_id": core_id,
+            "file_name": file_name,
+            "file_path": file_path,
+            "file_type": file_type,  # This will be "RBR Sensor" or "Star-Oddi Sensor"
+            "notes": notes or None,
+            "sensor_location": sensor_location or None,
+            "sensor_type": sensor_type or None,  # This will be the measurements like "Temperature, Depth"
+            "remarks": remarks or None
         })
         conn.commit()
 
@@ -56,31 +76,115 @@ else:
     selected_core_label = st.selectbox("Select Core to Associate File With", list(core_options.keys()))
     selected_core_id = core_options[selected_core_label]
 
-    # File type selection
-    file_type = st.selectbox("Select File Type", ["MSCL Data", "RBR Sensor", "Star-Oddi Sensor"])
+    # File category selection
+    file_category = st.selectbox("Select File Category", ["MSCL Data", "Sensor Data"])
 
-    # Dynamically set allowed file extensions based on file type
-    allowed_extensions = {"MSCL Data": ["out"], "RBR Sensor": ["rsk"], "Star-Oddi Sensor": []}
-    file_extensions = allowed_extensions[file_type]
+    if file_category == "MSCL Data":
+        st.subheader("📊 MSCL Data File")
+        
+        # File type for MSCL is always "MSCL Data"
+        file_type = "MSCL Data"
+        
+        # File upload
+        uploaded_file = st.file_uploader("Upload MSCL Data File", type=["out", "csv", "txt"], key="mscl_uploader")
+        
+        # MSCL specific fields
+        notes = st.text_area("Notes", placeholder="Enter any notes about this MSCL data file...")
+        remarks = st.text_area("MSCL Remarks", placeholder="Enter MSCL-specific remarks (measurement conditions, calibration notes, etc.)...")
+        
+        # Process MSCL file upload
+        if uploaded_file is not None:
+            if st.button("Save MSCL File"):
+                with st.spinner(f"Processing MSCL file '{uploaded_file.name}'..."):
+                    uploaded_file_path = upload_file(uploaded_file, "MSCL Data")
+                    insert_mscl_file(selected_core_id, uploaded_file.name, uploaded_file_path, file_type, notes, remarks)
+                    st.success(f"MSCL file '{uploaded_file.name}' saved successfully!")
+                    st.write(f"File saved at: {uploaded_file_path}")
 
-    # Initialize session state for uploaded file tracking
-    if "last_uploaded_file" not in st.session_state:
-        st.session_state.last_uploaded_file = None
+    elif file_category == "Sensor Data":
+        st.subheader("🌡️ Sensor Data File")
+        
+        # File type selection (RBR vs Star-Oddi)
+        file_type = st.selectbox("Sensor Brand", ["RBR Sensor", "Star-Oddi Sensor"])
+        
+        # Set file extensions based on sensor brand
+        if file_type == "RBR Sensor":
+            file_extensions = ["rsk"]
+        elif file_type == "Star-Oddi Sensor":
+            file_extensions = ["dat", "txt", "csv"]
+        
+        # Sensor location dropdown
+        sensor_location_options = [
+            "Weight Stand",
+            "Release Device", 
+            "Trigger Core/Weight",
+            "Core Barrel",
+            "External Mount",
+            "Other Location"
+        ]
+        sensor_location = st.selectbox("Sensor Location", ["Select Location..."] + sensor_location_options)
+        if sensor_location == "Select Location...":
+            sensor_location = None
+        elif sensor_location == "Other Location":
+            sensor_location = st.text_input("Specify Other Location")
 
-    # Upload file
-    uploaded_file = st.file_uploader("Upload Data File", type=file_extensions, key="file_uploader")
-
-    # Process the uploaded file only if it's new
-    if uploaded_file is not None and uploaded_file != st.session_state.last_uploaded_file:
-        # Save the file to session state to prevent duplicate processing
-        st.session_state.last_uploaded_file = uploaded_file
-
-        # Ensure only the current file is processed
-        with st.spinner(f"Processing file '{uploaded_file.name}'..."):
-            # Save the file to the 'uploaded_files' directory
-            uploaded_file_path = upload_file(uploaded_file, file_type)
-            st.success(f"File '{uploaded_file.name}' uploaded successfully!")
-            st.write(f"File saved at: {uploaded_file_path}")
-
-            # Insert the uploaded file into the database with the selected file type
-            insert_file(selected_core_id, uploaded_file.name, uploaded_file_path, file_type)
+        # Sensor type - what measurements the sensor takes
+        st.write("**Sensor Measurements (select all that apply):**")
+        measurements = {
+            "Temperature": st.checkbox("Temperature"),
+            "Depth/Pressure": st.checkbox("Depth/Pressure"),
+            "Acceleration": st.checkbox("Acceleration"),
+            "Tilt": st.checkbox("Tilt"),
+            "Conductivity": st.checkbox("Conductivity"),
+            "pH": st.checkbox("pH"),
+            "Dissolved Oxygen": st.checkbox("Dissolved Oxygen")
+        }
+        
+        # Build sensor_type string from selected measurements
+        selected_measurements = [measurement for measurement, selected in measurements.items() if selected]
+        if selected_measurements:
+            sensor_type = ", ".join(selected_measurements)  # e.g., "Temperature, Depth/Pressure"
+        else:
+            sensor_type = None
+        
+        # Show what will be saved
+        if selected_measurements:
+            st.info(f"Sensor Type will be saved as: **{sensor_type}**")
+        
+        # File upload
+        uploaded_file = st.file_uploader("Upload Sensor Data File", type=file_extensions, key="sensor_uploader")
+        
+        # Sensor specific fields
+        notes = st.text_area("Notes", placeholder="Enter any notes about this sensor data file...")
+        remarks = st.text_area("Sensor Remarks", placeholder="Enter sensor-specific remarks (deployment notes, data quality, issues, etc.)...")
+        
+        # Validation and save
+        missing_fields = []
+        if not sensor_location:
+            missing_fields.append("Sensor Location")
+        if not selected_measurements:
+            missing_fields.append("Sensor Measurements")
+        
+        # Process sensor file upload
+        if uploaded_file is not None:
+            if missing_fields:
+                st.warning(f"Please complete the following fields: {', '.join(missing_fields)}")
+            else:
+                if st.button("Save Sensor File"):
+                    with st.spinner(f"Processing sensor file '{uploaded_file.name}'..."):
+                        uploaded_file_path = upload_file(uploaded_file, file_type)  # Use file_type for subdirectory
+                        insert_sensor_file(
+                            selected_core_id, 
+                            uploaded_file.name, 
+                            uploaded_file_path, 
+                            file_type,  # "RBR Sensor" or "Star-Oddi Sensor"
+                            notes, 
+                            sensor_location, 
+                            sensor_type,  # "Temperature, Depth/Pressure" etc.
+                            remarks
+                        )
+                        st.success(f"Sensor file '{uploaded_file.name}' saved successfully!")
+                        st.write(f"File saved at: {uploaded_file_path}")
+                        st.write(f"Sensor Brand: {file_type}")
+                        st.write(f"Sensor Location: {sensor_location}")
+                        st.write(f"Measurements: {sensor_type}")

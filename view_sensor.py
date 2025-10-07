@@ -29,12 +29,21 @@ def view_sensor_data():
 
             # Fetch associated Sensor files for the selected core
             with get_connection() as conn:
-                query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
+                query = "SELECT file_name, file_path, sensor_type, sensor_location, remarks FROM sensor_files WHERE core_id = %s"
                 df_files = pd.read_sql(query, conn, params=(selected_core_id,))
 
             if not df_files.empty:
-                selected_file_label = st.selectbox("Select Primary Sensor Data File", df_files['file_name'])
+                selected_file_label = st.selectbox("Select Sensor Data File", df_files['file_name'])
                 file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
+                
+                # Display sensor metadata
+                if file_row['sensor_type']:
+                    st.info(f"**Sensor Type:** {file_row['sensor_type']}")
+                if file_row['sensor_location']:
+                    st.info(f"**Sensor Location:** {file_row['sensor_location']}")
+                if file_row['remarks']:
+                    st.info(f"**File Remarks:** {file_row['remarks']}")
+                
                 # Combine file_path and file_name to create the full relative path
                 relative_path = os.path.join(file_row['file_path'], file_row['file_name'])
                 primary_file_path = get_full_path(relative_path)
@@ -72,7 +81,7 @@ def view_sensor_data():
                 overlay_core_label = st.selectbox("Select Core for Overlay:", list(core_options.keys()))
                 overlay_core_id = core_options[overlay_core_label]
                 with get_connection() as conn:
-                    overlay_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
+                    overlay_query = "SELECT file_name, file_path, sensor_type, sensor_location, remarks FROM sensor_files WHERE core_id = %s"
                     overlay_df_files = pd.read_sql(overlay_query, conn, params=(overlay_core_id,))
                 if not overlay_df_files.empty:
                     overlay_file_label = st.selectbox("Select Overlay File", overlay_df_files['file_name'])
@@ -93,12 +102,26 @@ def view_sensor_data():
                 third_core_label = st.selectbox("Select Core for Third Trace:", list(core_options.keys()))
                 third_core_id = core_options[third_core_label]
                 with get_connection() as conn:
-                    third_query = "SELECT file_name, file_path FROM files WHERE core_id = %s AND file_type = 'RBR Sensor'"
+                    third_query = "SELECT file_name, file_path, sensor_type, sensor_location, remarks FROM sensor_files WHERE core_id = %s"
                     third_df_files = pd.read_sql(third_query, conn, params=(third_core_id,))
                 if not third_df_files.empty:
                     third_file_label = st.selectbox("Select Third Trace File", third_df_files['file_name'])
                     third_file_row = third_df_files[third_df_files['file_name'] == third_file_label].iloc[0]
                     third_file_path = get_full_path(os.path.join(third_file_row['file_path'], third_file_row['file_name']))
+
+    # Display sensor information if available
+    if not df_files.empty:
+        selected_file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
+        
+        # Display sensor type and location if available
+        if 'sensor_type' in df_files.columns and selected_file_row['sensor_type']:
+            st.info(f"**Sensor Type:** {selected_file_row['sensor_type']}")
+        
+        if 'sensor_location' in df_files.columns and selected_file_row['sensor_location']:
+            st.info(f"**Sensor Location:** {selected_file_row['sensor_location']}")
+        
+        if 'remarks' in df_files.columns and selected_file_row['remarks']:
+            st.info(f"**File Remarks:** {selected_file_row['remarks']}")
 
     # --- Plotting in the Right Column ---
     with col2:

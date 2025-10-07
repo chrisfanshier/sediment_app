@@ -23,10 +23,10 @@ def get_rbr_core_files():
     try:
         with engine.connect() as connection:
             query = """
-                SELECT c.core_name, f.file_path
+                SELECT c.core_name, s.file_path
                 FROM cores c
-                JOIN files f ON c.core_id = f.core_id
-                WHERE f.file_type = 'RBR Sensor';
+                JOIN sensor_files s ON c.core_id = s.core_id
+                WHERE s.sensor_type ILIKE '%RBR%';
             """
             df = pd.read_sql(query, connection)
 
@@ -74,4 +74,49 @@ def fetch_last_record():
             # Use _asdict() to convert the Row object to a dictionary
             return result._asdict()
         return None
+
+def get_mscl_core_files():
+    """Fetch MSCL core files from the database."""
+    try:
+        with engine.connect() as connection:
+            query = """
+                SELECT c.core_name, m.file_path, m.file_name, m.remarks
+                FROM cores c
+                JOIN mscl_files m ON c.core_id = m.core_id
+                ORDER BY c.core_name, m.file_name;
+            """
+            df = pd.read_sql(query, connection)
+            return df
+    except Exception as e:
+        raise RuntimeError(f"Error fetching MSCL file data: {e}")
+
+def get_sensor_core_files():
+    """Fetch all sensor core files from the database."""
+    try:
+        with engine.connect() as connection:
+            query = """
+                SELECT c.core_name, s.file_path, s.file_name, s.sensor_type, s.sensor_location, s.remarks
+                FROM cores c
+                JOIN sensor_files s ON c.core_id = s.core_id
+                ORDER BY c.core_name, s.file_name;
+            """
+            df = pd.read_sql(query, connection)
+            return df
+    except Exception as e:
+        raise RuntimeError(f"Error fetching sensor file data: {e}")
+
+def get_star_oddi_core_files():
+    """Fetch Star Oddi sensor core files from the database."""
+    try:
+        with engine.connect() as connection:
+            query = """
+                SELECT c.core_name, s.file_path, s.file_name, s.sensor_location, s.remarks
+                FROM cores c
+                JOIN sensor_files s ON c.core_id = s.core_id
+                WHERE s.sensor_type ILIKE '%Star%Oddi%';
+            """
+            df = pd.read_sql(query, connection)
+            return df
+    except Exception as e:
+        raise RuntimeError(f"Error fetching Star Oddi file data: {e}")
 
