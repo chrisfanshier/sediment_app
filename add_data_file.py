@@ -107,7 +107,7 @@ else:
         if file_type == "RBR Sensor":
             file_extensions = ["rsk"]
         elif file_type == "Star-Oddi Sensor":
-            file_extensions = ["dat", "txt", "csv"]
+            file_extensions = ["dat", "acc", "txt", "csv"]  # Added "acc" for acceleration files
         
         # Sensor location dropdown
         sensor_location_options = [

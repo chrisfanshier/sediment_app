@@ -126,11 +126,17 @@ def view_sensor_data():
                     else:
                         temp_primary_df = process_rsk_data(primary_file_path)
                     
-                    if temp_primary_df is not None and "Depth (m)" in temp_primary_df.columns:
+                    # Only calculate depth-based defaults if depth data exists and has valid values
+                    if (temp_primary_df is not None and 
+                        "Depth (m)" in temp_primary_df.columns and 
+                        not temp_primary_df["Depth (m)"].isna().all()):
+                        
                         max_depth_row = temp_primary_df.loc[temp_primary_df["Depth (m)"].idxmax()]
                         max_depth_time = max_depth_row["Timestamp"]
                         default_start_time = (max_depth_time - pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
                         default_end_time = (max_depth_time + pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                    # If no depth data, leave defaults as empty strings
+                        
                 except:
                     # If there's any error, just use empty defaults
                     default_start_time = ""
@@ -208,66 +214,122 @@ def view_sensor_data():
                     available_columns = primary_df.columns.tolist()
                     st.write(f"Available columns: {available_columns}")  # Debug info
                     
-                    # Standard options that work for both RBR and Star Oddi
-                    y_axis_options = ["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"]
+                    # Helper function to check if a column has actual data (not all NaN)
+                    def has_valid_data(df, column):
+                        return column in df.columns and not df[column].isna().all()
                     
-                    # Add Star Oddi specific options if available
-                    star_oddi_options = []
-                    if "Tilt X" in available_columns:
-                        star_oddi_options = ["Tilt X", "Tilt Y", "Tilt Z", "Roll", "EAL"]
-                        y_axis_options.extend(star_oddi_options)
+                    # Build available options based on what's actually in the data with valid values
+                    y_axis_options = []
                     
-                    # Add acceleration options if available
-                    acceleration_options = []
-                    if "X_Acceleration" in available_columns:
-                        acceleration_options = ["X_Acceleration", "Y_Acceleration", "Z_Acceleration", "Total_G"]
-                        y_axis_options.extend(acceleration_options)
+                    # Only add depth/pressure options if they have actual data
+                    if has_valid_data(primary_df, "Depth (m)"):
+                        y_axis_options.append("Depth (m)")
+                    if has_valid_data(primary_df, "Pressure (dbar)"):
+                        y_axis_options.append("Pressure (dbar)")
+                    if has_valid_data(primary_df, "Sea Pressure (dbar)"):
+                        y_axis_options.append("Sea Pressure (dbar)")
                     
-                    if "Temperature (°C)" in available_columns:
+                    # Add temperature if available and has data
+                    if has_valid_data(primary_df, "Temperature (°C)"):
                         y_axis_options.append("Temperature (°C)")
+                    
+                    # Add Star Oddi tilt options if available and have data
+                    tilt_options = []
+                    for tilt_col in ["Tilt X", "Tilt Y", "Tilt Z", "Roll", "EAL"]:
+                        if has_valid_data(primary_df, tilt_col):
+                            tilt_options.append(tilt_col)
+                            y_axis_options.append(tilt_col)
+                    
+                    # Add acceleration options if available and have data
+                    acceleration_options = []
+                    for acc_col in ["X_Acceleration", "Y_Acceleration", "Z_Acceleration", "Total_G"]:
+                        if has_valid_data(primary_df, acc_col):
+                            acceleration_options.append(acc_col)
+                            y_axis_options.append(acc_col)
+                    
+                    # Show info about what type of data is available
+                    data_types = []
+                    if any(has_valid_data(primary_df, col) for col in ["Depth (m)", "Pressure (dbar)", "Sea Pressure (dbar)"]):
+                        data_types.append("Depth/Pressure")
+                    if tilt_options:
+                        data_types.append("Tilt")
+                    if acceleration_options:
+                        data_types.append("Acceleration")
+                    if has_valid_data(primary_df, "Temperature (°C)"):
+                        data_types.append("Temperature")
+                    
+                    st.info(f"📊 **Available data types:** {', '.join(data_types) if data_types else 'None detected'}")
+                    
+                    # Error handling if no valid options
+                    if not y_axis_options:
+                        st.error("❌ No plottable parameters with valid data found in this file.")
+                        st.write("**Possible issues:**")
+                        st.write("- File may be corrupted or in wrong format")
+                        st.write("- All data columns contain only NaN values")
+                        st.write("- File parsing may have failed")
+                        return
                     
                     # Dual plotting option
                     dual_plot_mode = st.checkbox("Enable Dual Parameter Plotting (Stacked)", 
                                                 help="Plot two different parameters in vertically stacked plots sharing the same time axis")
                     
                     if dual_plot_mode:
-                        # Two parameter selection
-                        col_param1, col_param2 = st.columns(2)
-                        
-                        with col_param1:
-                            y_axis_1 = st.selectbox("Primary Parameter (Top Plot):", 
-                                                   options=y_axis_options, 
-                                                   index=2,  # Default to Depth (m)
-                                                   key="param1")
-                        
-                        with col_param2:
-                            # Filter out the already selected parameter
-                            secondary_options = [opt for opt in y_axis_options if opt != y_axis_1]
-                            default_secondary = 0
-                            # Smart default: if we have tilt data, default to Tilt X
-                            if "Tilt X" in secondary_options:
-                                default_secondary = secondary_options.index("Tilt X")
-                            elif acceleration_options and acceleration_options[0] in secondary_options:
-                                default_secondary = secondary_options.index(acceleration_options[0])
+                        # Only show dual plotting if we have at least 2 parameters
+                        if len(y_axis_options) < 2:
+                            st.warning("⚠️ Need at least 2 parameters with valid data for dual plotting. Only single plotting available.")
+                            dual_plot_mode = False
+                        else:
+                            # Two parameter selection
+                            col_param1, col_param2 = st.columns(2)
                             
-                            y_axis_2 = st.selectbox("Secondary Parameter (Bottom Plot):", 
-                                                   options=secondary_options,
-                                                   index=default_secondary,
-                                                   key="param2")
-                        
-                        # Generate dual plot
-                        fig = plot_rbr_dual_stacked(
-                            primary_df, overlay_df, third_df, 
-                            y_axis_1=y_axis_1, y_axis_2=y_axis_2,
-                            max_points=max_points, primary_core_name=selected_core_label,
-                            overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
-                            third_x_offset=third_x_offset, third_y_offset=third_y_offset
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                    else:
+                            with col_param1:
+                                # Smart default for primary parameter
+                                default_primary = 0
+                                if "Depth (m)" in y_axis_options:
+                                    default_primary = y_axis_options.index("Depth (m)")
+                                
+                                y_axis_1 = st.selectbox("Primary Parameter (Top Plot):", 
+                                                       options=y_axis_options, 
+                                                       index=default_primary,
+                                                       key="param1")
+                            
+                            with col_param2:
+                                # Filter out the already selected parameter
+                                secondary_options = [opt for opt in y_axis_options if opt != y_axis_1]
+                                
+                                # Smart default for secondary parameter
+                                default_secondary = 0
+                                if tilt_options and tilt_options[0] in secondary_options:
+                                    default_secondary = secondary_options.index(tilt_options[0])
+                                elif acceleration_options and acceleration_options[0] in secondary_options:
+                                    default_secondary = secondary_options.index(acceleration_options[0])
+                                
+                                y_axis_2 = st.selectbox("Secondary Parameter (Bottom Plot):", 
+                                                       options=secondary_options,
+                                                       index=default_secondary,
+                                                       key="param2")
+                            
+                            # Generate dual plot
+                            fig = plot_rbr_dual_stacked(
+                                primary_df, overlay_df, third_df, 
+                                y_axis_1=y_axis_1, y_axis_2=y_axis_2,
+                                max_points=max_points, primary_core_name=selected_core_label,
+                                overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
+                                third_x_offset=third_x_offset, third_y_offset=third_y_offset
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                    
+                    if not dual_plot_mode:
                         # Single parameter plotting (existing functionality)
-                        y_axis = st.selectbox("Select Parameter to Plot:", options=y_axis_options, index=2)
+                        # Smart default selection
+                        default_index = 0
+                        if "Depth (m)" in y_axis_options:
+                            default_index = y_axis_options.index("Depth (m)")
+                        
+                        y_axis = st.selectbox("Select Parameter to Plot:", 
+                                             options=y_axis_options, 
+                                             index=default_index,
+                                             key="y_axis_single")
                         
                         fig = plot_rbr_downsampled(
                             primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label
@@ -281,12 +343,22 @@ def view_sensor_data():
                     if generate_high_res:
                         if start_time and end_time:
                             try:
-                                high_res_fig = plot_rbr_high_resolution(
-                                    primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time,
-                                    primary_core_name=selected_core_label,
-                                    overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
-                                    third_x_offset=third_x_offset, third_y_offset=third_y_offset
-                                )
+                                if dual_plot_mode and len(y_axis_options) >= 2:
+                                    # Use dual plotting function for high-res (you'll need to create this)
+                                    st.info("High-resolution dual plotting not yet implemented. Using single plot of primary parameter.")
+                                    high_res_fig = plot_rbr_high_resolution(
+                                        primary_df, overlay_df, third_df, y_axis=y_axis_1, start_time=start_time, end_time=end_time,
+                                        primary_core_name=selected_core_label,
+                                        overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
+                                        third_x_offset=third_x_offset, third_y_offset=third_y_offset
+                                    )
+                                else:
+                                    high_res_fig = plot_rbr_high_resolution(
+                                        primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time,
+                                        primary_core_name=selected_core_label,
+                                        overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
+                                        third_x_offset=third_x_offset, third_y_offset=third_y_offset
+                                    )
                                 st.plotly_chart(high_res_fig, use_container_width=True)
                             except Exception as e:
                                 st.error(f"An error occurred while generating the high-resolution plot: {e}")
@@ -298,4 +370,9 @@ def view_sensor_data():
             except Exception as e:
                 st.error(f"An error occurred while processing the files: {e}")
                 import traceback
-                st.error(traceback.format_exc())  # Add full error traceback for debugging
+                st.error(traceback.format_exc())
+
+# Call the function to make it work as a page
+if __name__ == "__main__":
+    view_sensor_data()
+

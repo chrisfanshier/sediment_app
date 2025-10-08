@@ -125,6 +125,16 @@ else:
                     ["RBR Sensor", "Star-Oddi Sensor"],
                     index=["RBR Sensor", "Star-Oddi Sensor"].index(file_data.file_type) if file_data.file_type in ["RBR Sensor", "Star-Oddi Sensor"] else 0)
                 
+                # Add file extension validation/info
+                file_extension = os.path.splitext(file_data.file_name)[1].lower()
+                if file_extension in ['.dat', '.acc'] and new_file_type != "Star-Oddi Sensor":
+                    st.warning(f"File has extension '{file_extension}' which is typically used by Star-Oddi sensors. Consider selecting 'Star-Oddi Sensor' as the sensor brand.")
+                elif file_extension == '.rsk' and new_file_type != "RBR Sensor":
+                    st.warning(f"File has extension '{file_extension}' which is used by RBR sensors. Consider selecting 'RBR Sensor' as the sensor brand.")
+                
+                # Show file extension info
+                st.info(f"**File Extension:** {file_extension}")
+                
                 # Sensor location dropdown
                 sensor_location_options = [
                     "Weight Stand",
