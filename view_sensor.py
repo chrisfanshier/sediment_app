@@ -53,12 +53,26 @@ def view_sensor_data():
 
             # Process the primary file
             if primary_file_path:
-                # Determine sensor type and use appropriate parser
+                # Determine sensor type by database field AND/OR file extension
                 sensor_type = file_row['sensor_type'].lower() if file_row['sensor_type'] else ''
+                file_extension = os.path.splitext(primary_file_path)[1].lower()
                 
-                if 'star' in sensor_type or 'oddi' in sensor_type:
+                # Debug info (you can remove this later)
+                st.write("**Debug Info:**")
+                st.write(f"Sensor type from DB: '{file_row['sensor_type']}'")
+                st.write(f"File extension: {file_extension}")
+                
+                # Use Star Oddi parser if:
+                # 1. sensor_type contains "star" AND "oddi" (handles "Star-Oddi Sensor")
+                # 2. OR file extension is .dat or .acc
+                is_star_oddi = (('star' in sensor_type and 'oddi' in sensor_type) or 
+                               file_extension in ['.dat', '.acc'])
+                
+                if is_star_oddi:
+                    st.write("✅ Using Star Oddi parser")
                     primary_df = process_star_oddi_data(relative_path)
                 else:
+                    st.write("✅ Using RBR parser")
                     primary_df = process_rsk_data(primary_file_path)  # Default to RBR
 
             # --- Secondary File Selection ---
