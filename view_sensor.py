@@ -106,9 +106,39 @@ def view_sensor_data():
 
         # --- High-Resolution Plot Controls (Moved to sidebar) ---
         with st.expander("High-Resolution Plot Controls", expanded=False):
-            # Input fields for start and end times  
-            start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):", value="", key="start_time")
-            end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):", value="", key="end_time")
+            # Calculate default start and end times based on the greatest depth
+            default_start_time = ""
+            default_end_time = ""
+            
+            # We need to process the primary file first to get the depth data
+            if primary_file_path:
+                try:
+                    # Helper function to determine if file is Star Oddi (moved up)
+                    def is_star_oddi_file(file_path, sensor_type=None):
+                        file_extension = os.path.splitext(file_path)[1].lower()
+                        sensor_type_lower = sensor_type.lower() if sensor_type else ''
+                        return (file_extension in ['.dat', '.acc'] or 
+                               ('star' in sensor_type_lower and 'oddi' in sensor_type_lower))
+                    
+                    # Process primary file to get default times
+                    if is_star_oddi_file(primary_file_path, file_row['sensor_type']):
+                        temp_primary_df = process_star_oddi_data(relative_path)
+                    else:
+                        temp_primary_df = process_rsk_data(primary_file_path)
+                    
+                    if temp_primary_df is not None and "Depth (m)" in temp_primary_df.columns:
+                        max_depth_row = temp_primary_df.loc[temp_primary_df["Depth (m)"].idxmax()]
+                        max_depth_time = max_depth_row["Timestamp"]
+                        default_start_time = (max_depth_time - pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                        default_end_time = (max_depth_time + pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+                except:
+                    # If there's any error, just use empty defaults
+                    default_start_time = ""
+                    default_end_time = ""
+            
+            # Input fields for start and end times with calculated defaults
+            start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):", value=default_start_time, key="start_time")
+            end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):", value=default_end_time, key="end_time")
 
             # Add number inputs for x and y offsets
             st.write("**Adjust Overlay Offsets:**")
