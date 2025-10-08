@@ -674,16 +674,17 @@ def plot_rbr_dual_comprehensive_high_res(plot_config, start_time, end_time):
 
 def plot_rbr_dual_simple(top_primary_df, top_overlay_df, top_third_df, top_y_axis,
                         bottom_primary_df, bottom_overlay_df, bottom_third_df, bottom_y_axis,
-                        max_points=1000, top_name="Top Plot", bottom_name="Bottom Plot"):
+                        max_points=1000, top_name="Top Plot", bottom_name="Bottom Plot",
+                        top_metadata=None, bottom_metadata=None):
     """Create simple dual stacked plot with separate file selections for top and bottom"""
     import plotly.subplots as sp
     import plotly.graph_objects as go
     
-    # Create subplots with shared x-axis
+    # Create subplots with shared x-axis - cleaner titles without "Top" and "Bottom"
     fig = sp.make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        subplot_titles=(f"{top_name} - {top_y_axis}", f"{bottom_name} - {bottom_y_axis}"),
+        subplot_titles=(f"{top_name}: {top_y_axis}", f"{bottom_name}: {bottom_y_axis}"),
         vertical_spacing=0.08,
         specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
     )
@@ -695,53 +696,90 @@ def plot_rbr_dual_simple(top_primary_df, top_overlay_df, top_third_df, top_y_axi
         step = len(df) // max_points
         return df.iloc[::step]
     
+    # Helper function to create legend name
+    def create_legend_name(core_name, sensor_location, trace_type="Primary"):
+        if sensor_location:
+            return f"{core_name} - {sensor_location}"
+        else:
+            return f"{core_name} - {trace_type}"
+    
     # Add top plot traces
     if top_primary_df is not None and top_y_axis in top_primary_df.columns:
         top_primary_downsampled = downsample_data_local(top_primary_df, max_points)
+        legend_name = create_legend_name(
+            top_name, 
+            top_metadata.get('primary_sensor_location') if top_metadata else None,
+            "Primary"
+        )
         fig.add_trace(
             go.Scatter(x=top_primary_downsampled["Timestamp"], y=top_primary_downsampled[top_y_axis],
-                      mode='lines', name=f"Top Primary", line=dict(color='blue')),
+                      mode='lines', name=legend_name, line=dict(color='blue')),
             row=1, col=1
         )
     
     if top_overlay_df is not None and top_y_axis in top_overlay_df.columns:
         top_overlay_downsampled = downsample_data_local(top_overlay_df, max_points)
+        legend_name = create_legend_name(
+            top_metadata.get('overlay_core_name', top_name) if top_metadata else top_name,
+            top_metadata.get('overlay_sensor_location') if top_metadata else None,
+            "Overlay"
+        )
         fig.add_trace(
             go.Scatter(x=top_overlay_downsampled["Timestamp"], y=top_overlay_downsampled[top_y_axis],
-                      mode='lines', name=f"Top Overlay", line=dict(color='red')),
+                      mode='lines', name=legend_name, line=dict(color='red')),
             row=1, col=1
         )
     
     if top_third_df is not None and top_y_axis in top_third_df.columns:
         top_third_downsampled = downsample_data_local(top_third_df, max_points)
+        legend_name = create_legend_name(
+            top_metadata.get('third_core_name', top_name) if top_metadata else top_name,
+            top_metadata.get('third_sensor_location') if top_metadata else None,
+            "Third"
+        )
         fig.add_trace(
             go.Scatter(x=top_third_downsampled["Timestamp"], y=top_third_downsampled[top_y_axis],
-                      mode='lines', name=f"Top Third", line=dict(color='green')),
+                      mode='lines', name=legend_name, line=dict(color='green')),
             row=1, col=1
         )
     
     # Add bottom plot traces
     if bottom_primary_df is not None and bottom_y_axis in bottom_primary_df.columns:
         bottom_primary_downsampled = downsample_data_local(bottom_primary_df, max_points)
+        legend_name = create_legend_name(
+            bottom_name,
+            bottom_metadata.get('primary_sensor_location') if bottom_metadata else None,
+            "Primary"
+        )
         fig.add_trace(
             go.Scatter(x=bottom_primary_downsampled["Timestamp"], y=bottom_primary_downsampled[bottom_y_axis],
-                      mode='lines', name=f"Bottom Primary", line=dict(color='blue', dash='dot')),
+                      mode='lines', name=legend_name, line=dict(color='blue', dash='dot')),
             row=2, col=1
         )
     
     if bottom_overlay_df is not None and bottom_y_axis in bottom_overlay_df.columns:
         bottom_overlay_downsampled = downsample_data_local(bottom_overlay_df, max_points)
+        legend_name = create_legend_name(
+            bottom_metadata.get('overlay_core_name', bottom_name) if bottom_metadata else bottom_name,
+            bottom_metadata.get('overlay_sensor_location') if bottom_metadata else None,
+            "Overlay"
+        )
         fig.add_trace(
             go.Scatter(x=bottom_overlay_downsampled["Timestamp"], y=bottom_overlay_downsampled[bottom_y_axis],
-                      mode='lines', name=f"Bottom Overlay", line=dict(color='red', dash='dot')),
+                      mode='lines', name=legend_name, line=dict(color='red', dash='dot')),
             row=2, col=1
         )
     
     if bottom_third_df is not None and bottom_y_axis in bottom_third_df.columns:
         bottom_third_downsampled = downsample_data_local(bottom_third_df, max_points)
+        legend_name = create_legend_name(
+            bottom_metadata.get('third_core_name', bottom_name) if bottom_metadata else bottom_name,
+            bottom_metadata.get('third_sensor_location') if bottom_metadata else None,
+            "Third"
+        )
         fig.add_trace(
             go.Scatter(x=bottom_third_downsampled["Timestamp"], y=bottom_third_downsampled[bottom_y_axis],
-                      mode='lines', name=f"Bottom Third", line=dict(color='green', dash='dot')),
+                      mode='lines', name=legend_name, line=dict(color='green', dash='dot')),
             row=2, col=1
         )
     
@@ -751,7 +789,7 @@ def plot_rbr_dual_simple(top_primary_df, top_overlay_df, top_third_df, top_y_axi
     bottom_y_reversed = bottom_y_axis in depth_pressure_params
     
     # Update layout
-    fig.update_layout(height=800, showlegend=True, title="Dual Stacked Time Series")
+    fig.update_layout(height=800, showlegend=True, title="Dual Parameter Time Series")
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text=top_y_axis, row=1, col=1, autorange="reversed" if top_y_reversed else True)
     fig.update_yaxes(title_text=bottom_y_axis, row=2, col=1, autorange="reversed" if bottom_y_reversed else True)
@@ -761,7 +799,8 @@ def plot_rbr_dual_simple(top_primary_df, top_overlay_df, top_third_df, top_y_axi
 def plot_rbr_dual_simple_high_res(top_primary_df, top_overlay_df, top_third_df, top_y_axis,
                                  bottom_primary_df, bottom_overlay_df, bottom_third_df, bottom_y_axis,
                                  start_time=None, end_time=None,
-                                 top_name="Top Plot", bottom_name="Bottom Plot"):
+                                 top_name="Top Plot", bottom_name="Bottom Plot",
+                                 top_metadata=None, bottom_metadata=None):
     """Create high-resolution dual stacked plot"""
     import plotly.subplots as sp
     import plotly.graph_objects as go
@@ -771,41 +810,82 @@ def plot_rbr_dual_simple_high_res(top_primary_df, top_overlay_df, top_third_df, 
     start_dt = pd.to_datetime(start_time)
     end_dt = pd.to_datetime(end_time)
     
-    # Create subplots with shared x-axis
+    # Create subplots with shared x-axis - cleaner titles
     fig = sp.make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        subplot_titles=(f"{top_name} - {top_y_axis} (High Resolution)", 
-                       f"{bottom_name} - {bottom_y_axis} (High Resolution)"),
+        subplot_titles=(f"{top_name}: {top_y_axis} (High Resolution)", 
+                       f"{bottom_name}: {bottom_y_axis} (High Resolution)"),
         vertical_spacing=0.08,
         specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
     )
     
+    # Helper function to create legend name
+    def create_legend_name(core_name, sensor_location, trace_type="Primary"):
+        if sensor_location:
+            return f"{core_name} - {sensor_location}"
+        else:
+            return f"{core_name} - {trace_type}"
+    
     # Add top plot traces with time filtering
-    for df, name, color, style in [(top_primary_df, "Top Primary", 'blue', 'solid'),
-                                   (top_overlay_df, "Top Overlay", 'red', 'solid'),
-                                   (top_third_df, "Top Third", 'green', 'solid')]:
+    trace_configs = [
+        (top_primary_df, "primary", 'blue', 'solid'),
+        (top_overlay_df, "overlay", 'red', 'solid'),
+        (top_third_df, "third", 'green', 'solid')
+    ]
+    
+    for df, trace_type, color, style in trace_configs:
         if df is not None and top_y_axis in df.columns:
             filtered_df = df[(df["Timestamp"] >= start_dt) & (df["Timestamp"] <= end_dt)]
             if not filtered_df.empty:
+                # Get metadata for this trace
+                if trace_type == "primary":
+                    core_name = top_name
+                    sensor_location = top_metadata.get('primary_sensor_location') if top_metadata else None
+                elif trace_type == "overlay":
+                    core_name = top_metadata.get('overlay_core_name', top_name) if top_metadata else top_name
+                    sensor_location = top_metadata.get('overlay_sensor_location') if top_metadata else None
+                else:  # third
+                    core_name = top_metadata.get('third_core_name', top_name) if top_metadata else top_name
+                    sensor_location = top_metadata.get('third_sensor_location') if top_metadata else None
+                
+                legend_name = create_legend_name(core_name, sensor_location, trace_type.title())
+                
                 fig.add_trace(
                     go.Scatter(x=filtered_df["Timestamp"], y=filtered_df[top_y_axis],
-                              mode='lines+markers', name=name, 
+                              mode='lines+markers', name=legend_name, 
                               line=dict(color=color, dash=style),
                               marker=dict(size=2)),
                     row=1, col=1
                 )
     
     # Add bottom plot traces with time filtering
-    for df, name, color, style in [(bottom_primary_df, "Bottom Primary", 'blue', 'dot'),
-                                   (bottom_overlay_df, "Bottom Overlay", 'red', 'dot'),
-                                   (bottom_third_df, "Bottom Third", 'green', 'dot')]:
+    bottom_trace_configs = [
+        (bottom_primary_df, "primary", 'blue', 'dot'),
+        (bottom_overlay_df, "overlay", 'red', 'dot'),
+        (bottom_third_df, "third", 'green', 'dot')
+    ]
+    
+    for df, trace_type, color, style in bottom_trace_configs:
         if df is not None and bottom_y_axis in df.columns:
             filtered_df = df[(df["Timestamp"] >= start_dt) & (df["Timestamp"] <= end_dt)]
             if not filtered_df.empty:
+                # Get metadata for this trace
+                if trace_type == "primary":
+                    core_name = bottom_name
+                    sensor_location = bottom_metadata.get('primary_sensor_location') if bottom_metadata else None
+                elif trace_type == "overlay":
+                    core_name = bottom_metadata.get('overlay_core_name', bottom_name) if bottom_metadata else bottom_name
+                    sensor_location = bottom_metadata.get('overlay_sensor_location') if bottom_metadata else None
+                else:  # third
+                    core_name = bottom_metadata.get('third_core_name', bottom_name) if bottom_metadata else bottom_name
+                    sensor_location = bottom_metadata.get('third_sensor_location') if bottom_metadata else None
+                
+                legend_name = create_legend_name(core_name, sensor_location, trace_type.title())
+                
                 fig.add_trace(
                     go.Scatter(x=filtered_df["Timestamp"], y=filtered_df[bottom_y_axis],
-                              mode='lines+markers', name=name, 
+                              mode='lines+markers', name=legend_name, 
                               line=dict(color=color, dash=style),
                               marker=dict(size=2)),
                     row=2, col=1
