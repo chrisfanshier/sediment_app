@@ -4,7 +4,7 @@ import pandas as pd
 from db_util import get_connection, fetch_cores
 from utils import process_rsk_data, process_star_oddi_data
 from plotting import plot_rbr_downsampled, plot_rbr_high_resolution
-from config import get_full_path  # Import the utility function for constructing full paths
+from config import get_full_path
 
 # --- Visualize Sensor Data Page ---
 def view_sensor_data():
@@ -18,7 +18,7 @@ def view_sensor_data():
     cores = fetch_cores()
     core_options = {f"{name} (ID: {id})": id for id, name in zip(cores['core_id'], cores['core_name'])}
 
-    col1, col2 = st.columns([1, 3])  # Left column for controls, right column for plotting
+    col1, col2 = st.columns([1, 3])
 
     with col1:
         st.header("Controls")
@@ -51,47 +51,20 @@ def view_sensor_data():
                 st.warning("No sensor data file for this core.")
                 primary_file_path = None
 
-            # Process the primary file
-            if primary_file_path:
-                # Determine sensor type by database field AND/OR file extension
-                sensor_type = file_row['sensor_type'].lower() if file_row['sensor_type'] else ''
-                file_extension = os.path.splitext(primary_file_path)[1].lower()
-                
-                # Debug info (you can remove this later)
-                st.write("**Debug Info:**")
-                st.write(f"Sensor type from DB: '{file_row['sensor_type']}'")
-                st.write(f"File extension: {file_extension}")
-                
-                # Use Star Oddi parser if:
-                # 1. sensor_type contains "star" AND "oddi" (handles "Star-Oddi Sensor")
-                # 2. OR file extension is .dat or .acc
-                is_star_oddi = (('star' in sensor_type and 'oddi' in sensor_type) or 
-                               file_extension in ['.dat', '.acc'])
-                
-                if is_star_oddi:
-                    st.write("✅ Using Star Oddi parser")
-                    primary_df = process_star_oddi_data(relative_path)
-                else:
-                    st.write("✅ Using RBR parser")
-                    primary_df = process_rsk_data(primary_file_path)  # Default to RBR
-
             # --- Secondary File Selection ---
             st.subheader("Overlay Plot")
             overlay_option = st.radio("Select overlay data source:", ["None", "Same Core", "Different Core"])
             overlay_file_path = None
+            overlay_relative_path = None
 
             if overlay_option == "Same Core":
                 other_files = [file for file in df_files['file_name'] if file != selected_file_label]
                 if other_files:
-                    overlay_file_label = st.selectbox(
-                        "Select a file to overlay from the same core:",
-                        other_files,
-                        index=0
-                    )
+                    overlay_file_label = st.selectbox("Select a file to overlay from the same core:", other_files, index=0)
                     overlay_file_row = df_files[df_files['file_name'] == overlay_file_label]
                     if not overlay_file_row.empty:
-                        relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
-                        overlay_file_path = get_full_path(relative_path)
+                        overlay_relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
+                        overlay_file_path = get_full_path(overlay_relative_path)
                     else:
                         st.warning("The selected overlay file could not be found.")
                 else:
@@ -107,8 +80,8 @@ def view_sensor_data():
                     overlay_file_label = st.selectbox("Select Overlay File", overlay_df_files['file_name'])
                     overlay_file_row = overlay_df_files[overlay_df_files['file_name'] == overlay_file_label]
                     if not overlay_file_row.empty:
-                        relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
-                        overlay_file_path = get_full_path(relative_path)
+                        overlay_relative_path = os.path.join(overlay_file_row.iloc[0]['file_path'], overlay_file_row.iloc[0]['file_name'])
+                        overlay_file_path = get_full_path(overlay_relative_path)
                     else:
                         st.warning("The selected overlay file could not be found.")
                 else:
@@ -118,6 +91,7 @@ def view_sensor_data():
             st.subheader("Add a Third Trace (Optional)")
             third_trace_option = st.radio("Add a third data source?", ["None", "Select Core and File"])
             third_file_path = None
+            third_relative_path = None
             if third_trace_option == "Select Core and File":
                 third_core_label = st.selectbox("Select Core for Third Trace:", list(core_options.keys()))
                 third_core_id = core_options[third_core_label]
@@ -127,29 +101,74 @@ def view_sensor_data():
                 if not third_df_files.empty:
                     third_file_label = st.selectbox("Select Third Trace File", third_df_files['file_name'])
                     third_file_row = third_df_files[third_df_files['file_name'] == third_file_label].iloc[0]
-                    third_file_path = get_full_path(os.path.join(third_file_row['file_path'], third_file_row['file_name']))
+                    third_relative_path = os.path.join(third_file_row['file_path'], third_file_row['file_name'])
+                    third_file_path = get_full_path(third_relative_path)
 
-    # Display sensor information if available
-    if not df_files.empty:
-        selected_file_row = df_files[df_files['file_name'] == selected_file_label].iloc[0]
-        
-        # Display sensor type and location if available
-        if 'sensor_type' in df_files.columns and selected_file_row['sensor_type']:
-            st.info(f"**Sensor Type:** {selected_file_row['sensor_type']}")
-        
-        if 'sensor_location' in df_files.columns and selected_file_row['sensor_location']:
-            st.info(f"**Sensor Location:** {selected_file_row['sensor_location']}")
-        
-        if 'remarks' in df_files.columns and selected_file_row['remarks']:
-            st.info(f"**File Remarks:** {selected_file_row['remarks']}")
+        # --- High-Resolution Plot Controls (Moved to sidebar) ---
+        with st.expander("High-Resolution Plot Controls", expanded=False):
+            # Input fields for start and end times  
+            start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):", value="", key="start_time")
+            end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):", value="", key="end_time")
+
+            # Add number inputs for x and y offsets
+            st.write("**Adjust Overlay Offsets:**")
+            overlay_x_offset = st.number_input("Overlay X Offset", value=0.0, step=0.1)
+            overlay_y_offset = st.number_input("Overlay Y Offset", value=0.0, step=0.1)
+            
+            st.write("**Adjust Third Trace Offsets:**")
+            third_x_offset = st.number_input("Third Trace X Offset", value=0.0, step=0.1)
+            third_y_offset = st.number_input("Third Trace Y Offset", value=0.0, step=0.1)
+
+            # Generate high-resolution plot button
+            generate_high_res = st.button("Generate High-Resolution Plot", type="primary")
 
     # --- Plotting in the Right Column ---
     with col2:
         if primary_file_path:
             try:
-                primary_df = process_rsk_data(primary_file_path)
-                overlay_df = process_rsk_data(overlay_file_path) if overlay_file_path else None
-                third_df = process_rsk_data(third_file_path) if third_file_path else None
+                # Helper function to determine if file is Star Oddi
+                def is_star_oddi_file(file_path, sensor_type=None):
+                    file_extension = os.path.splitext(file_path)[1].lower()
+                    sensor_type_lower = sensor_type.lower() if sensor_type else ''
+                    return (file_extension in ['.dat', '.acc'] or 
+                           ('star' in sensor_type_lower and 'oddi' in sensor_type_lower))
+
+                # Process primary file
+                st.write("**Debug Info:**")
+                st.write(f"Sensor type from DB: '{file_row['sensor_type']}'")
+                st.write(f"File extension: {os.path.splitext(primary_file_path)[1].lower()}")
+                
+                if is_star_oddi_file(primary_file_path, file_row['sensor_type']):
+                    st.write("✅ Using Star Oddi parser for primary file")
+                    primary_df = process_star_oddi_data(relative_path)
+                else:
+                    st.write("✅ Using RBR parser for primary file")
+                    primary_df = process_rsk_data(primary_file_path)
+
+                # Process overlay file
+                overlay_df = None
+                if overlay_file_path and overlay_relative_path:
+                    if overlay_option == "Same Core":
+                        overlay_sensor_type = overlay_file_row.iloc[0]['sensor_type']
+                    elif overlay_option == "Different Core":
+                        overlay_sensor_type = overlay_file_row.iloc[0]['sensor_type']
+                    
+                    if is_star_oddi_file(overlay_file_path, overlay_sensor_type):
+                        st.write("✅ Using Star Oddi parser for overlay file")
+                        overlay_df = process_star_oddi_data(overlay_relative_path)
+                    else:
+                        st.write("✅ Using RBR parser for overlay file")
+                        overlay_df = process_rsk_data(overlay_file_path)
+
+                # Process third file
+                third_df = None
+                if third_file_path and third_relative_path:
+                    if is_star_oddi_file(third_file_path, third_file_row['sensor_type']):
+                        st.write("✅ Using Star Oddi parser for third file")
+                        third_df = process_star_oddi_data(third_relative_path)
+                    else:
+                        st.write("✅ Using RBR parser for third file")
+                        third_df = process_rsk_data(third_file_path)
 
                 if primary_df is not None:
                     st.subheader("Interactive Plotting")
@@ -157,6 +176,7 @@ def view_sensor_data():
                     
                     # Check what columns are available in the DataFrame
                     available_columns = primary_df.columns.tolist()
+                    st.write(f"Available columns: {available_columns}")  # Debug info
                     
                     # Standard options that work for both RBR and Star Oddi
                     y_axis_options = ["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"]
@@ -168,11 +188,8 @@ def view_sensor_data():
                     if "Temperature (°C)" in available_columns:
                         y_axis_options.append("Temperature (°C)")
                     
-                    y_axis = st.selectbox(
-                        "Select Parameter to Plot:",
-                        options=y_axis_options,
-                        index=2,  # Default to "Depth (m)"
-                    )
+                    y_axis = st.selectbox("Select Parameter to Plot:", options=y_axis_options, index=2)
+                    
                     fig = plot_rbr_downsampled(
                         primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label
                     )
@@ -180,30 +197,9 @@ def view_sensor_data():
 
                     # --- High-Resolution Plotting ---
                     st.subheader("High-Resolution Plot")
-
-                    # Calculate default start and end times based on the greatest depth
-                    if primary_df is not None and "Depth (m)" in primary_df.columns:
-                        max_depth_row = primary_df.loc[primary_df["Depth (m)"].idxmax()]
-                        max_depth_time = max_depth_row["Timestamp"]
-                        default_start_time = (max_depth_time - pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-                        default_end_time = (max_depth_time + pd.Timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
-                    else:
-                        default_start_time = ""
-                        default_end_time = ""
-
-                    # Input fields for start and end times
-                    start_time = st.text_input("Start Time (YYYY-MM-DD HH:MM:SS):", value=default_start_time, key="start_time")
-                    end_time = st.text_input("End Time (YYYY-MM-DD HH:MM:SS):", value=default_end_time, key="end_time")
-
-                    # Add number inputs for x and y offsets
-                    st.subheader("Adjust Overlay and Third Trace (Offsets)")
-                    overlay_x_offset = st.number_input("Overlay X Offset", value=0.0, step=0.1)
-                    overlay_y_offset = st.number_input("Overlay Y Offset", value=0.0, step=0.1)
-                    third_x_offset = st.number_input("Third Trace X Offset", value=0.0, step=0.1)
-                    third_y_offset = st.number_input("Third Trace Y Offset", value=0.0, step=0.1)
-
-                    # Generate high-resolution plot
-                    if st.button("Generate High-Resolution Plot"):
+                    
+                    # Generate high-resolution plot when button is clicked
+                    if generate_high_res:
                         if start_time and end_time:
                             try:
                                 high_res_fig = plot_rbr_high_resolution(
@@ -217,5 +213,10 @@ def view_sensor_data():
                                 st.error(f"An error occurred while generating the high-resolution plot: {e}")
                         else:
                             st.warning("Please provide both Start Time and End Time for high-resolution plotting.")
+                    else:
+                        st.info("Use the controls in the left sidebar to configure and generate a high-resolution plot.")
+                        
             except Exception as e:
                 st.error(f"An error occurred while processing the files: {e}")
+                import traceback
+                st.error(traceback.format_exc())  # Add full error traceback for debugging
