@@ -363,3 +363,139 @@ def plot_rbr_dual_stacked(primary_df, overlay_df=None, third_df=None,
     fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
     
     return fig
+
+def plot_rbr_dual_stacked_flexible(param1_df, param2_df, 
+                                  y_axis_1="Depth (m)", y_axis_2="Tilt X",
+                                  max_points=1000, 
+                                  param1_name="Parameter 1", param2_name="Parameter 2"):
+    """Create vertically stacked subplots with different parameters from potentially different DataFrames"""
+    import plotly.subplots as sp
+    import plotly.graph_objects as go
+    
+    # Create subplots with shared x-axis
+    fig = sp.make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=(param1_name, param2_name),
+        vertical_spacing=0.08,
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # Downsample data for performance
+    def downsample_data(df, max_points):
+        if len(df) <= max_points:
+            return df
+        step = len(df) // max_points
+        return df.iloc[::step]
+    
+    # Process first parameter
+    if param1_df is not None and y_axis_1 in param1_df.columns:
+        param1_downsampled = downsample_data(param1_df, max_points)
+        fig.add_trace(
+            go.Scatter(
+                x=param1_downsampled["Timestamp"], 
+                y=param1_downsampled[y_axis_1],
+                mode='lines', 
+                name=param1_name,
+                line=dict(color='blue')
+            ),
+            row=1, col=1
+        )
+    
+    # Process second parameter
+    if param2_df is not None and y_axis_2 in param2_df.columns:
+        param2_downsampled = downsample_data(param2_df, max_points)
+        fig.add_trace(
+            go.Scatter(
+                x=param2_downsampled["Timestamp"], 
+                y=param2_downsampled[y_axis_2],
+                mode='lines', 
+                name=param2_name,
+                line=dict(color='red')
+            ),
+            row=2, col=1
+        )
+    
+    # Update layout
+    fig.update_layout(
+        height=800, 
+        showlegend=True,
+        title="Dual Parameter Time Series Comparison"
+    )
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text=y_axis_1, row=1, col=1)
+    fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
+    
+    return fig
+
+def plot_rbr_dual_high_resolution(param1_df, param2_df, 
+                                 y_axis_1="Depth (m)", y_axis_2="Tilt X",
+                                 start_time=None, end_time=None,
+                                 param1_name="Parameter 1", param2_name="Parameter 2"):
+    """Create high-resolution vertically stacked subplots for specified time range"""
+    import plotly.subplots as sp
+    import plotly.graph_objects as go
+    import pandas as pd
+    
+    # Parse time range
+    start_dt = pd.to_datetime(start_time)
+    end_dt = pd.to_datetime(end_time)
+    
+    # Create subplots with shared x-axis
+    fig = sp.make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=(f"{param1_name} (High Resolution)", f"{param2_name} (High Resolution)"),
+        vertical_spacing=0.08,
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # Filter and plot first parameter
+    if param1_df is not None and y_axis_1 in param1_df.columns:
+        param1_filtered = param1_df[
+            (param1_df["Timestamp"] >= start_dt) & 
+            (param1_df["Timestamp"] <= end_dt)
+        ]
+        
+        fig.add_trace(
+            go.Scatter(
+                x=param1_filtered["Timestamp"], 
+                y=param1_filtered[y_axis_1],
+                mode='lines+markers', 
+                name=param1_name,
+                line=dict(color='blue'),
+                marker=dict(size=2)
+            ),
+            row=1, col=1
+        )
+    
+    # Filter and plot second parameter
+    if param2_df is not None and y_axis_2 in param2_df.columns:
+        param2_filtered = param2_df[
+            (param2_df["Timestamp"] >= start_dt) & 
+            (param2_df["Timestamp"] <= end_dt)
+        ]
+        
+        fig.add_trace(
+            go.Scatter(
+                x=param2_filtered["Timestamp"], 
+                y=param2_filtered[y_axis_2],
+                mode='lines+markers', 
+                name=param2_name,
+                line=dict(color='red'),
+                marker=dict(size=2)
+            ),
+            row=2, col=1
+        )
+    
+    # Update layout
+    fig.update_layout(
+        height=800, 
+        showlegend=True,
+        title=f"High-Resolution Dual Plot: {start_time} to {end_time}"
+    )
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text=y_axis_1, row=1, col=1)
+    fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
+    
+    return fig
