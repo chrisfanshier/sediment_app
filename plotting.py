@@ -499,3 +499,167 @@ def plot_rbr_dual_high_resolution(param1_df, param2_df,
     fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
     
     return fig
+
+def plot_rbr_dual_comprehensive(plot_config, max_points=1000):
+    """Create comprehensive dual stacked plot with full file/parameter control per trace"""
+    import plotly.subplots as sp
+    import plotly.graph_objects as go
+    
+    # Create subplots with shared x-axis
+    fig = sp.make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=("Top Plot", "Bottom Plot"),
+        vertical_spacing=0.08,
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # Color mapping for consistency
+    colors = {'primary': 'blue', 'overlay': 'red', 'third': 'green'}
+    
+    # Downsample function
+    def downsample_data_local(df, max_points):
+        if len(df) <= max_points:
+            return df
+        step = len(df) // max_points
+        return df.iloc[::step]
+    
+    # Process top plot
+    for trace_type, trace_config in plot_config['top'].items():
+        if trace_config and 'df' in trace_config:
+            df = trace_config['df']
+            param = trace_config['param']
+            name = trace_config['name']
+            
+            if df is not None and param in df.columns:
+                downsampled_df = downsample_data_local(df, max_points)
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=downsampled_df["Timestamp"], 
+                        y=downsampled_df[param],
+                        mode='lines', 
+                        name=f"Top: {name} - {param}",
+                        line=dict(color=colors[trace_type])
+                    ),
+                    row=1, col=1
+                )
+    
+    # Process bottom plot
+    for trace_type, trace_config in plot_config['bottom'].items():
+        if trace_config and 'df' in trace_config:
+            df = trace_config['df']
+            param = trace_config['param']
+            name = trace_config['name']
+            
+            if df is not None and param in df.columns:
+                downsampled_df = downsample_data_local(df, max_points)
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=downsampled_df["Timestamp"], 
+                        y=downsampled_df[param],
+                        mode='lines', 
+                        name=f"Bottom: {name} - {param}",
+                        line=dict(color=colors[trace_type], dash='dot' if trace_type != 'primary' else 'solid')
+                    ),
+                    row=2, col=1
+                )
+    
+    # Update layout
+    fig.update_layout(
+        height=800, 
+        showlegend=True,
+        title="Comprehensive Dual Parameter Time Series"
+    )
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text="Parameter Value", row=1, col=1)
+    fig.update_yaxes(title_text="Parameter Value", row=2, col=1)
+    
+    return fig
+
+def plot_rbr_dual_comprehensive_high_res(plot_config, start_time, end_time):
+    """Create high-resolution comprehensive dual stacked plot"""
+    import plotly.subplots as sp
+    import plotly.graph_objects as go
+    import pandas as pd
+    
+    # Parse time range
+    start_dt = pd.to_datetime(start_time)
+    end_dt = pd.to_datetime(end_time)
+    
+    # Create subplots with shared x-axis
+    fig = sp.make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=("Top Plot (High Resolution)", "Bottom Plot (High Resolution)"),
+        vertical_spacing=0.08,
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # Color mapping for consistency
+    colors = {'primary': 'blue', 'overlay': 'red', 'third': 'green'}
+    
+    # Process top plot
+    for trace_type, trace_config in plot_config['top'].items():
+        if trace_config and 'df' in trace_config:
+            df = trace_config['df']
+            param = trace_config['param']
+            name = trace_config['name']
+            
+            if df is not None and param in df.columns:
+                # Filter for time range
+                filtered_df = df[
+                    (df["Timestamp"] >= start_dt) & 
+                    (df["Timestamp"] <= end_dt)
+                ]
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=filtered_df["Timestamp"], 
+                        y=filtered_df[param],
+                        mode='lines+markers', 
+                        name=f"Top: {name} - {param}",
+                        line=dict(color=colors[trace_type]),
+                        marker=dict(size=2)
+                    ),
+                    row=1, col=1
+                )
+    
+    # Process bottom plot
+    for trace_type, trace_config in plot_config['bottom'].items():
+        if trace_config and 'df' in trace_config:
+            df = trace_config['df']
+            param = trace_config['param']
+            name = trace_config['name']
+            
+            if df is not None and param in df.columns:
+                # Filter for time range
+                filtered_df = df[
+                    (df["Timestamp"] >= start_dt) & 
+                    (df["Timestamp"] <= end_dt)
+                ]
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=filtered_df["Timestamp"], 
+                        y=filtered_df[param],
+                        mode='lines+markers', 
+                        name=f"Bottom: {name} - {param}",
+                        line=dict(color=colors[trace_type]),
+                        marker=dict(size=2)
+                    ),
+                    row=2, col=1
+                )
+    
+    # Update layout
+    fig.update_layout(
+        height=800, 
+        showlegend=True,
+        title=f"High-Resolution Comprehensive Dual Plot: {start_time} to {end_time}"
+    )
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text="Parameter Value", row=1, col=1)
+    fig.update_yaxes(title_text="Parameter Value", row=2, col=1)
+    
+    return fig
