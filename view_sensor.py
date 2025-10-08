@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import pandas as pd
 from db_util import get_connection, fetch_cores
-from utils import process_rsk_data
+from utils import process_rsk_data, process_star_oddi_data
 from plotting import plot_rbr_downsampled, plot_rbr_high_resolution
 from config import get_full_path  # Import the utility function for constructing full paths
 
@@ -53,7 +53,13 @@ def view_sensor_data():
 
             # Process the primary file
             if primary_file_path:
-                primary_df = process_rsk_data(primary_file_path)
+                # Determine sensor type and use appropriate parser
+                sensor_type = file_row['sensor_type'].lower() if file_row['sensor_type'] else ''
+                
+                if 'star' in sensor_type or 'oddi' in sensor_type:
+                    primary_df = process_star_oddi_data(relative_path)
+                else:
+                    primary_df = process_rsk_data(primary_file_path)  # Default to RBR
 
             # --- Secondary File Selection ---
             st.subheader("Overlay Plot")
@@ -134,10 +140,24 @@ def view_sensor_data():
                 if primary_df is not None:
                     st.subheader("Interactive Plotting")
                     max_points = st.slider("Max Points for Plotting", min_value=100, max_value=5000, value=1000, step=100)
+                    
+                    # Check what columns are available in the DataFrame
+                    available_columns = primary_df.columns.tolist()
+                    
+                    # Standard options that work for both RBR and Star Oddi
+                    y_axis_options = ["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"]
+                    
+                    # Add Star Oddi specific options if available
+                    if "Tilt X" in available_columns:
+                        y_axis_options.extend(["Tilt X", "Tilt Y", "Tilt Z", "Roll", "EAL"])
+                    
+                    if "Temperature (°C)" in available_columns:
+                        y_axis_options.append("Temperature (°C)")
+                    
                     y_axis = st.selectbox(
                         "Select Parameter to Plot:",
-                        options=["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"],
-                        index=2,
+                        options=y_axis_options,
+                        index=2,  # Default to "Depth (m)"
                     )
                     fig = plot_rbr_downsampled(
                         primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label

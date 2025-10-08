@@ -3,6 +3,7 @@ import re
 import pandas as pd
 import streamlit as st
 import numpy as np
+import io  # Add this missing import
 from pyrsktools import RSK
 from db_util import get_connection
 from db_util import get_dynamic_fields_metadata
@@ -219,3 +220,116 @@ def custom_time_input(label, default=""):
     else:
         st.warning(f"Invalid time format for '{label}'. Please use HH:MM (e.g., 14:30).")
         return None
+    
+def parse_staroddi_dat(file_path):
+    """Parse Star Oddi .dat file and return DataFrame compatible with RBR plotting functions"""
+    try:
+        with open(file_path, 'rb') as file:
+            lines = file.read().decode("latin1").splitlines()
+        
+        data_start = next(i for i, line in enumerate(lines) if line and line[0].isdigit())
+        colnames = ["index", "datetime", "temp", "press", "tilt_x", "tilt_y", "tilt_z", "EAL", "roll"]
+        
+        df = pd.read_csv(
+            io.StringIO('\n'.join(lines[data_start:])),
+            sep="\t",
+            names=colnames,
+            header=None,
+            na_values="____",
+            decimal=",",
+        )
+        
+        # Clean up datetime and numeric columns
+        df["datetime"] = df["datetime"].str.replace(",", ".", regex=False)
+        for col in ["temp", "press", "tilt_x", "tilt_y", "tilt_z", "EAL", "roll"]:
+            df[col] = df[col].astype(str).str.replace(",", ".", regex=False)
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        df["datetime"] = pd.to_datetime(df["datetime"], format="%d.%m.%Y %H:%M:%S.%f", errors="coerce")
+        
+        # Standardize to match RBR format for plotting compatibility + include all Star Oddi columns
+        standardized_df = pd.DataFrame({
+            "Timestamp": df["datetime"],
+            "Pressure (dbar)": df["press"],  # Star Oddi pressure
+            "Sea Pressure (dbar)": df["press"],  # Use same for sea pressure 
+            "Depth (m)": df["press"],  # Star Oddi press column represents depth
+            "Temperature (°C)": df["temp"],  # Include temperature
+            # Add all Star Oddi specific columns
+            "Tilt X": df["tilt_x"],
+            "Tilt Y": df["tilt_y"], 
+            "Tilt Z": df["tilt_z"],
+            "EAL": df["EAL"],
+            "Roll": df["roll"],
+            "Index": df["index"]
+        })
+        
+        return standardized_df
+        
+    except Exception as e:
+        st.error(f"Error parsing Star Oddi .dat file: {e}")
+        return None
+
+def parse_staroddi_acc(file_path):
+    """Parse Star Oddi .acc file and return DataFrame (acceleration data)"""
+    try:
+        with open(file_path, 'rb') as file:
+            lines = file.read().decode("latin1").splitlines()
+        
+        data_start = next(i for i, line in enumerate(lines) if line and line[0].isdigit())
+        colnames = ["rownum", "datetime", "g", "x_acc", "y_acc", "z_acc"]
+        
+        df = pd.read_csv(
+            io.StringIO('\n'.join(lines[data_start:])),
+            sep="\t",
+            names=colnames,
+            header=None,
+            na_values="____"
+        )
+        
+        df["datetime"] = df["datetime"].astype(str).str.replace(",", ".", regex=False)
+        df["datetime"] = pd.to_datetime(df["datetime"], format="%d.%m.%Y %H:%M:%S.%f", errors="coerce")
+        
+        for col in ["g", "x_acc", "y_acc", "z_acc"]:
+            df[col] = df[col].astype(str).str.replace(",", ".", regex=False)
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        
+        # For acceleration files, we don't have depth data
+        # Return standardized format but with acceleration data
+        standardized_df = pd.DataFrame({
+            "Timestamp": df["datetime"],
+            "X_Acceleration": df["x_acc"],
+            "Y_Acceleration": df["y_acc"],
+            "Z_Acceleration": df["z_acc"],
+            "Total_G": df["g"]
+        })
+        
+        return standardized_df
+        
+    except Exception as e:
+        st.error(f"Error parsing Star Oddi .acc file: {e}")
+        return None
+
+def process_star_oddi_data(relative_path):
+    """Process Star Oddi data files and return standardized DataFrame"""
+    try:
+        # Construct the full file path using the relative path
+        full_path = get_full_path(relative_path)
+        
+        # Validate the file path
+        if not os.path.exists(full_path):
+            st.error(f"Star Oddi file not found at path: {full_path}")
+            return None
+        
+        # Determine file type and parse accordingly
+        if full_path.lower().endswith('.dat'):
+            return parse_staroddi_dat(full_path)
+        elif full_path.lower().endswith('.acc'):
+            return parse_staroddi_acc(full_path)
+        else:
+            st.error(f"Unsupported Star Oddi file format: {full_path}")
+            return None
+            
+    except Exception as e:
+        st.error(f"An error occurred while processing Star Oddi file: {e}")
+        return None
+
