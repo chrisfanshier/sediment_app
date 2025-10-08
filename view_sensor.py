@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from db_util import get_connection, fetch_cores
 from utils import process_rsk_data, process_star_oddi_data
-from plotting import plot_rbr_downsampled, plot_rbr_high_resolution
+from plotting import plot_rbr_downsampled, plot_rbr_high_resolution, plot_rbr_dual_stacked
 from config import get_full_path
 
 # --- Visualize Sensor Data Page ---
@@ -212,18 +212,67 @@ def view_sensor_data():
                     y_axis_options = ["Pressure (dbar)", "Sea Pressure (dbar)", "Depth (m)"]
                     
                     # Add Star Oddi specific options if available
+                    star_oddi_options = []
                     if "Tilt X" in available_columns:
-                        y_axis_options.extend(["Tilt X", "Tilt Y", "Tilt Z", "Roll", "EAL"])
+                        star_oddi_options = ["Tilt X", "Tilt Y", "Tilt Z", "Roll", "EAL"]
+                        y_axis_options.extend(star_oddi_options)
+                    
+                    # Add acceleration options if available
+                    acceleration_options = []
+                    if "X_Acceleration" in available_columns:
+                        acceleration_options = ["X_Acceleration", "Y_Acceleration", "Z_Acceleration", "Total_G"]
+                        y_axis_options.extend(acceleration_options)
                     
                     if "Temperature (°C)" in available_columns:
                         y_axis_options.append("Temperature (°C)")
                     
-                    y_axis = st.selectbox("Select Parameter to Plot:", options=y_axis_options, index=2)
+                    # Dual plotting option
+                    dual_plot_mode = st.checkbox("Enable Dual Parameter Plotting (Stacked)", 
+                                                help="Plot two different parameters in vertically stacked plots sharing the same time axis")
                     
-                    fig = plot_rbr_downsampled(
-                        primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                    if dual_plot_mode:
+                        # Two parameter selection
+                        col_param1, col_param2 = st.columns(2)
+                        
+                        with col_param1:
+                            y_axis_1 = st.selectbox("Primary Parameter (Top Plot):", 
+                                                   options=y_axis_options, 
+                                                   index=2,  # Default to Depth (m)
+                                                   key="param1")
+                        
+                        with col_param2:
+                            # Filter out the already selected parameter
+                            secondary_options = [opt for opt in y_axis_options if opt != y_axis_1]
+                            default_secondary = 0
+                            # Smart default: if we have tilt data, default to Tilt X
+                            if "Tilt X" in secondary_options:
+                                default_secondary = secondary_options.index("Tilt X")
+                            elif acceleration_options and acceleration_options[0] in secondary_options:
+                                default_secondary = secondary_options.index(acceleration_options[0])
+                            
+                            y_axis_2 = st.selectbox("Secondary Parameter (Bottom Plot):", 
+                                                   options=secondary_options,
+                                                   index=default_secondary,
+                                                   key="param2")
+                        
+                        # Generate dual plot
+                        fig = plot_rbr_dual_stacked(
+                            primary_df, overlay_df, third_df, 
+                            y_axis_1=y_axis_1, y_axis_2=y_axis_2,
+                            max_points=max_points, primary_core_name=selected_core_label,
+                            overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
+                            third_x_offset=third_x_offset, third_y_offset=third_y_offset
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                    else:
+                        # Single parameter plotting (existing functionality)
+                        y_axis = st.selectbox("Select Parameter to Plot:", options=y_axis_options, index=2)
+                        
+                        fig = plot_rbr_downsampled(
+                            primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
 
                     # --- High-Resolution Plotting ---
                     st.subheader("High-Resolution Plot")

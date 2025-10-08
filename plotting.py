@@ -235,3 +235,131 @@ def plot_rbr_high_resolution(
         height=600,
     )
     return fig
+
+def plot_rbr_dual_stacked(primary_df, overlay_df=None, third_df=None, 
+                         y_axis_1="Depth (m)", y_axis_2="Tilt X",
+                         max_points=1000, primary_core_name="Primary Core",
+                         overlay_x_offset=0, overlay_y_offset=0,
+                         third_x_offset=0, third_y_offset=0):
+    """Create vertically stacked subplots with different parameters sharing time axis"""
+    import plotly.subplots as sp
+    import plotly.graph_objects as go
+    
+    # Create subplots with shared x-axis
+    fig = sp.make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=(f'{y_axis_1}', f'{y_axis_2}'),
+        vertical_spacing=0.08,
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # Downsample data for performance
+    def downsample_data(df, max_points):
+        if len(df) <= max_points:
+            return df
+        step = len(df) // max_points
+        return df.iloc[::step]
+    
+    primary_downsampled = downsample_data(primary_df, max_points)
+    
+    # Add primary traces
+    fig.add_trace(
+        go.Scatter(
+            x=primary_downsampled["Timestamp"], 
+            y=primary_downsampled[y_axis_1],
+            mode='lines', 
+            name=f'{primary_core_name} - {y_axis_1}',
+            line=dict(color='blue')
+        ),
+        row=1, col=1
+    )
+    
+    fig.add_trace(
+        go.Scatter(
+            x=primary_downsampled["Timestamp"], 
+            y=primary_downsampled[y_axis_2],
+            mode='lines', 
+            name=f'{primary_core_name} - {y_axis_2}',
+            line=dict(color='blue')
+        ),
+        row=2, col=1
+    )
+    
+    # Add overlay traces if available
+    if overlay_df is not None:
+        overlay_downsampled = downsample_data(overlay_df, max_points)
+        
+        # Apply offsets
+        overlay_x_adjusted = overlay_downsampled["Timestamp"] + pd.Timedelta(seconds=overlay_x_offset)
+        
+        if y_axis_1 in overlay_downsampled.columns:
+            overlay_y1_adjusted = overlay_downsampled[y_axis_1] + overlay_y_offset
+            fig.add_trace(
+                go.Scatter(
+                    x=overlay_x_adjusted,
+                    y=overlay_y1_adjusted,
+                    mode='lines',
+                    name=f'Overlay - {y_axis_1}',
+                    line=dict(color='red')
+                ),
+                row=1, col=1
+            )
+        
+        if y_axis_2 in overlay_downsampled.columns:
+            overlay_y2_adjusted = overlay_downsampled[y_axis_2] + overlay_y_offset
+            fig.add_trace(
+                go.Scatter(
+                    x=overlay_x_adjusted,
+                    y=overlay_y2_adjusted,
+                    mode='lines',
+                    name=f'Overlay - {y_axis_2}',
+                    line=dict(color='red')
+                ),
+                row=2, col=1
+            )
+    
+    # Add third traces if available
+    if third_df is not None:
+        third_downsampled = downsample_data(third_df, max_points)
+        
+        # Apply offsets
+        third_x_adjusted = third_downsampled["Timestamp"] + pd.Timedelta(seconds=third_x_offset)
+        
+        if y_axis_1 in third_downsampled.columns:
+            third_y1_adjusted = third_downsampled[y_axis_1] + third_y_offset
+            fig.add_trace(
+                go.Scatter(
+                    x=third_x_adjusted,
+                    y=third_y1_adjusted,
+                    mode='lines',
+                    name=f'Third - {y_axis_1}',
+                    line=dict(color='green')
+                ),
+                row=1, col=1
+            )
+        
+        if y_axis_2 in third_downsampled.columns:
+            third_y2_adjusted = third_downsampled[y_axis_2] + third_y_offset
+            fig.add_trace(
+                go.Scatter(
+                    x=third_x_adjusted,
+                    y=third_y2_adjusted,
+                    mode='lines',
+                    name=f'Third - {y_axis_2}',
+                    line=dict(color='green')
+                ),
+                row=2, col=1
+            )
+    
+    # Update layout
+    fig.update_layout(
+        height=800, 
+        showlegend=True,
+        title="Dual Parameter Time Series Comparison"
+    )
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text=y_axis_1, row=1, col=1)
+    fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
+    
+    return fig
