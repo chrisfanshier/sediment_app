@@ -120,3 +120,92 @@ def get_star_oddi_core_files():
     except Exception as e:
         raise RuntimeError(f"Error fetching Star Oddi file data: {e}")
 
+def get_existing_sections(core_id):
+    """Get existing sections for a core"""
+    with get_connection() as conn:
+        query = text("""
+            SELECT section_number, section_length, top_cum_length, bottom_cum_length 
+            FROM sections 
+            WHERE core_id = :core_id 
+            ORDER BY section_number
+        """)
+        result = conn.execute(query, {"core_id": core_id})
+        return result.fetchall()
+
+def get_cores_with_sections():
+    """Get cores that have sections"""
+    with get_connection() as conn:
+        query = text("""
+            SELECT DISTINCT c.core_id, c.core_name, c.cruise, COUNT(s.section_id) as section_count
+            FROM cores c
+            JOIN sections s ON c.core_id = s.core_id
+            GROUP BY c.core_id, c.core_name, c.cruise
+            ORDER BY c.cruise, c.core_name
+        """)
+        result = conn.execute(query)
+        return result.fetchall()
+
+def get_sections_for_core(core_id):
+    """Get all sections for a specific core"""
+    with get_connection() as conn:
+        query = text("""
+            SELECT section_id, section_number, section_length, top_cum_length, bottom_cum_length 
+            FROM sections 
+            WHERE core_id = :core_id 
+            ORDER BY section_number
+        """)
+        result = conn.execute(query, {"core_id": core_id})
+        return result.fetchall()
+
+def insert_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length):
+    """Insert a new section into the database"""
+    with get_connection() as conn:
+        query = text("""
+            INSERT INTO sections (core_id, section_number, section_length, top_cum_length, bottom_cum_length)
+            VALUES (:core_id, :section_number, :section_length, :top_cum_length, :bottom_cum_length)
+        """)
+        conn.execute(query, {
+            "core_id": core_id,
+            "section_number": section_number,
+            "section_length": section_length,
+            "top_cum_length": top_cum_length,
+            "bottom_cum_length": bottom_cum_length
+        })
+        conn.commit()
+
+def update_section(section_id, section_length, top_cum_length, bottom_cum_length):
+    """Update a section in the database"""
+    with get_connection() as conn:
+        query = text("""
+            UPDATE sections 
+            SET section_length = :section_length, 
+                top_cum_length = :top_cum_length, 
+                bottom_cum_length = :bottom_cum_length
+            WHERE section_id = :section_id
+        """)
+        conn.execute(query, {
+            "section_id": section_id,
+            "section_length": section_length,
+            "top_cum_length": top_cum_length,
+            "bottom_cum_length": bottom_cum_length
+        })
+        conn.commit()
+
+def delete_section(section_id):
+    """Delete a section from the database"""
+    with get_connection() as conn:
+        query = text("DELETE FROM sections WHERE section_id = :section_id")
+        conn.execute(query, {"section_id": section_id})
+        conn.commit()
+
+def add_new_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length):
+    """Add a new section to existing core (alias for insert_section for clarity)"""
+    insert_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length)
+
+def delete_all_sections_for_core(core_id):
+    """Delete all sections for a specific core"""
+    with get_connection() as conn:
+        query = text("DELETE FROM sections WHERE core_id = :core_id")
+        conn.execute(query, {"core_id": core_id})
+        conn.commit()
+
