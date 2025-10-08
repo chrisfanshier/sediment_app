@@ -663,3 +663,149 @@ def plot_rbr_dual_comprehensive_high_res(plot_config, start_time, end_time):
     fig.update_yaxes(title_text="Parameter Value", row=2, col=1)
     
     return fig
+
+def plot_rbr_dual_simple(top_primary_df, top_overlay_df, top_third_df, top_y_axis,
+                        bottom_primary_df, bottom_overlay_df, bottom_third_df, bottom_y_axis,
+                        max_points=1000, top_name="Top Plot", bottom_name="Bottom Plot"):
+    """Create simple dual stacked plot with separate file selections for top and bottom"""
+    import plotly.subplots as sp
+    import plotly.graph_objects as go
+    
+    # Create subplots with shared x-axis
+    fig = sp.make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=(f"{top_name} - {top_y_axis}", f"{bottom_name} - {bottom_y_axis}"),
+        vertical_spacing=0.08,
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # Downsample function
+    def downsample_data_local(df, max_points):
+        if len(df) <= max_points:
+            return df
+        step = len(df) // max_points
+        return df.iloc[::step]
+    
+    # Add top plot traces
+    if top_primary_df is not None and top_y_axis in top_primary_df.columns:
+        top_primary_downsampled = downsample_data_local(top_primary_df, max_points)
+        fig.add_trace(
+            go.Scatter(x=top_primary_downsampled["Timestamp"], y=top_primary_downsampled[top_y_axis],
+                      mode='lines', name=f"Top Primary", line=dict(color='blue')),
+            row=1, col=1
+        )
+    
+    if top_overlay_df is not None and top_y_axis in top_overlay_df.columns:
+        top_overlay_downsampled = downsample_data_local(top_overlay_df, max_points)
+        fig.add_trace(
+            go.Scatter(x=top_overlay_downsampled["Timestamp"], y=top_overlay_downsampled[top_y_axis],
+                      mode='lines', name=f"Top Overlay", line=dict(color='red')),
+            row=1, col=1
+        )
+    
+    if top_third_df is not None and top_y_axis in top_third_df.columns:
+        top_third_downsampled = downsample_data_local(top_third_df, max_points)
+        fig.add_trace(
+            go.Scatter(x=top_third_downsampled["Timestamp"], y=top_third_downsampled[top_y_axis],
+                      mode='lines', name=f"Top Third", line=dict(color='green')),
+            row=1, col=1
+        )
+    
+    # Add bottom plot traces
+    if bottom_primary_df is not None and bottom_y_axis in bottom_primary_df.columns:
+        bottom_primary_downsampled = downsample_data_local(bottom_primary_df, max_points)
+        fig.add_trace(
+            go.Scatter(x=bottom_primary_downsampled["Timestamp"], y=bottom_primary_downsampled[bottom_y_axis],
+                      mode='lines', name=f"Bottom Primary", line=dict(color='blue', dash='dot')),
+            row=2, col=1
+        )
+    
+    if bottom_overlay_df is not None and bottom_y_axis in bottom_overlay_df.columns:
+        bottom_overlay_downsampled = downsample_data_local(bottom_overlay_df, max_points)
+        fig.add_trace(
+            go.Scatter(x=bottom_overlay_downsampled["Timestamp"], y=bottom_overlay_downsampled[bottom_y_axis],
+                      mode='lines', name=f"Bottom Overlay", line=dict(color='red', dash='dot')),
+            row=2, col=1
+        )
+    
+    if bottom_third_df is not None and bottom_y_axis in bottom_third_df.columns:
+        bottom_third_downsampled = downsample_data_local(bottom_third_df, max_points)
+        fig.add_trace(
+            go.Scatter(x=bottom_third_downsampled["Timestamp"], y=bottom_third_downsampled[bottom_y_axis],
+                      mode='lines', name=f"Bottom Third", line=dict(color='green', dash='dot')),
+            row=2, col=1
+        )
+    
+    # Update layout
+    fig.update_layout(height=800, showlegend=True, title="Dual Stacked Time Series")
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text=top_y_axis, row=1, col=1)
+    fig.update_yaxes(title_text=bottom_y_axis, row=2, col=1)
+    
+    return fig
+
+def plot_rbr_dual_simple_high_res(top_primary_df, top_overlay_df, top_third_df, top_y_axis,
+                                 bottom_primary_df, bottom_overlay_df, bottom_third_df, bottom_y_axis,
+                                 start_time=None, end_time=None,
+                                 top_name="Top Plot", bottom_name="Bottom Plot"):
+    """Create high-resolution dual stacked plot"""
+    import plotly.subplots as sp
+    import plotly.graph_objects as go
+    import pandas as pd
+    
+    # Parse time range
+    start_dt = pd.to_datetime(start_time)
+    end_dt = pd.to_datetime(end_time)
+    
+    # Create subplots with shared x-axis
+    fig = sp.make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        subplot_titles=(f"{top_name} - {top_y_axis} (High Resolution)", 
+                       f"{bottom_name} - {bottom_y_axis} (High Resolution)"),
+        vertical_spacing=0.08,
+        specs=[[{"secondary_y": False}], [{"secondary_y": False}]]
+    )
+    
+    # Add top plot traces with time filtering
+    for df, name, color, style in [(top_primary_df, "Top Primary", 'blue', 'solid'),
+                                   (top_overlay_df, "Top Overlay", 'red', 'solid'),
+                                   (top_third_df, "Top Third", 'green', 'solid')]:
+        if df is not None and top_y_axis in df.columns:
+            filtered_df = df[(df["Timestamp"] >= start_dt) & (df["Timestamp"] <= end_dt)]
+            if not filtered_df.empty:
+                fig.add_trace(
+                    go.Scatter(x=filtered_df["Timestamp"], y=filtered_df[top_y_axis],
+                              mode='lines+markers', name=name, 
+                              line=dict(color=color, dash=style),
+                              marker=dict(size=2)),
+                    row=1, col=1
+                )
+    
+    # Add bottom plot traces with time filtering
+    for df, name, color, style in [(bottom_primary_df, "Bottom Primary", 'blue', 'dot'),
+                                   (bottom_overlay_df, "Bottom Overlay", 'red', 'dot'),
+                                   (bottom_third_df, "Bottom Third", 'green', 'dot')]:
+        if df is not None and bottom_y_axis in df.columns:
+            filtered_df = df[(df["Timestamp"] >= start_dt) & (df["Timestamp"] <= end_dt)]
+            if not filtered_df.empty:
+                fig.add_trace(
+                    go.Scatter(x=filtered_df["Timestamp"], y=filtered_df[bottom_y_axis],
+                              mode='lines+markers', name=name, 
+                              line=dict(color=color, dash=style),
+                              marker=dict(size=2)),
+                    row=2, col=1
+                )
+    
+    # Update layout
+    fig.update_layout(
+        height=800, 
+        showlegend=True,
+        title=f"High-Resolution Dual Plot: {start_time} to {end_time}"
+    )
+    fig.update_xaxes(title_text="Time", row=2, col=1)
+    fig.update_yaxes(title_text=top_y_axis, row=1, col=1)
+    fig.update_yaxes(title_text=bottom_y_axis, row=2, col=1)
+    
+    return fig

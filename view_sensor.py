@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from db_util import get_connection, fetch_cores
 from utils import process_rsk_data, process_star_oddi_data
-from plotting import plot_rbr_downsampled, plot_rbr_high_resolution, plot_rbr_dual_stacked, plot_rbr_dual_comprehensive, plot_rbr_dual_comprehensive_high_res
+from plotting import plot_rbr_downsampled, plot_rbr_high_resolution, plot_rbr_dual_simple, plot_rbr_dual_simple_high_res
 from config import get_full_path
 
 # --- Visualize Sensor Data Page ---
@@ -104,6 +104,11 @@ def view_sensor_data():
                     third_relative_path = os.path.join(third_file_row['file_path'], third_file_row['file_name'])
                     third_file_path = get_full_path(third_relative_path)
 
+        # --- Dual Plot Configuration ---
+        st.divider()
+        dual_plot_mode = st.checkbox("🔄 Enable Dual Stacked Plotting", 
+                                    help="Create two vertically stacked plots with shared time axis")
+
         # --- High-Resolution Plot Controls (Moved to sidebar) ---
         with st.expander("High-Resolution Plot Controls", expanded=False):
             # Calculate default start and end times based on the greatest depth
@@ -158,386 +163,349 @@ def view_sensor_data():
             # Generate high-resolution plot button
             generate_high_res = st.button("Generate High-Resolution Plot", type="primary")
 
-    # --- Plotting in the Right Column ---
-    with col2:
-        if primary_file_path:
-            try:
-                # Helper function to determine if file is Star Oddi
-                def is_star_oddi_file(file_path, sensor_type=None):
-                    file_extension = os.path.splitext(file_path)[1].lower()
-                    sensor_type_lower = sensor_type.lower() if sensor_type else ''
-                    return (file_extension in ['.dat', '.acc'] or 
-                           ('star' in sensor_type_lower and 'oddi' in sensor_type_lower))
-
-                # Process primary file
-                st.write("**Debug Info:**")
-                st.write(f"Sensor type from DB: '{file_row['sensor_type']}'")
-                st.write(f"File extension: {os.path.splitext(primary_file_path)[1].lower()}")
+        # --- Bottom Plot Configuration (only shown if dual plotting is enabled) ---
+        if dual_plot_mode:
+            with st.expander("Bottom Plot Configuration", expanded=True):
+                st.write("**Configure data sources for the bottom stacked plot:**")
                 
-                if is_star_oddi_file(primary_file_path, file_row['sensor_type']):
-                    st.write("✅ Using Star Oddi parser for primary file")
-                    primary_df = process_star_oddi_data(relative_path)
+                # --- Bottom Primary File Selection ---
+                bottom_selected_core_label = st.selectbox("Select Core for Bottom Plot:", list(core_options.keys()), key="bottom_core")
+                bottom_selected_core_id = core_options[bottom_selected_core_label]
+
+                # Fetch associated Sensor files for the bottom plot core
+                with get_connection() as conn:
+                    bottom_query = "SELECT file_name, file_path, sensor_type, sensor_location, remarks FROM sensor_files WHERE core_id = %s"
+                    bottom_df_files = pd.read_sql(bottom_query, conn, params=(bottom_selected_core_id,))
+
+                if not bottom_df_files.empty:
+                    bottom_selected_file_label = st.selectbox("Select Bottom Plot Data File", bottom_df_files['file_name'], key="bottom_file")
+                    bottom_file_row = bottom_df_files[bottom_df_files['file_name'] == bottom_selected_file_label].iloc[0]
+                    
+                    # Display bottom file metadata
+                    if bottom_file_row['sensor_type']:
+                        st.info(f"**Bottom File Sensor Type:** {bottom_file_row['sensor_type']}")
+                    
+                    # Combine file_path and file_name to create the full relative path
+                    bottom_relative_path = os.path.join(bottom_file_row['file_path'], bottom_file_row['file_name'])
+                    bottom_primary_file_path = get_full_path(bottom_relative_path)
                 else:
-                    st.write("✅ Using RBR parser for primary file")
-                    primary_df = process_rsk_data(primary_file_path)
+                    st.warning("No sensor data file for this core.")
+                    bottom_primary_file_path = None
 
-                # Process overlay file
-                overlay_df = None
-                if overlay_file_path and overlay_relative_path:
-                    if overlay_option == "Same Core":
-                        overlay_sensor_type = overlay_file_row.iloc[0]['sensor_type']
-                    elif overlay_option == "Different Core":
-                        overlay_sensor_type = overlay_file_row.iloc[0]['sensor_type']
-                    
-                    if is_star_oddi_file(overlay_file_path, overlay_sensor_type):
-                        st.write("✅ Using Star Oddi parser for overlay file")
-                        overlay_df = process_star_oddi_data(overlay_relative_path)
-                    else:
-                        st.write("✅ Using RBR parser for overlay file")
-                        overlay_df = process_rsk_data(overlay_file_path)
+                # --- Bottom Secondary File Selection ---
+                st.subheader("Bottom Plot Overlay")
+                bottom_overlay_option = st.radio("Select bottom overlay data source:", ["None", "Same Core", "Different Core"], key="bottom_overlay_option")
+                bottom_overlay_file_path = None
+                bottom_overlay_relative_path = None
 
-                # Process third file
-                third_df = None
-                if third_file_path and third_relative_path:
-                    if is_star_oddi_file(third_file_path, third_file_row['sensor_type']):
-                        st.write("✅ Using Star Oddi parser for third file")
-                        third_df = process_star_oddi_data(third_relative_path)
-                    else:
-                        st.write("✅ Using RBR parser for third file")
-                        third_df = process_rsk_data(third_file_path)
-
-                if primary_df is not None:
-                    st.subheader("Interactive Plotting")
-                    max_points = st.slider("Max Points for Plotting", min_value=100, max_value=5000, value=1000, step=100)
-                    
-                    # Check what columns are available in the DataFrame
-                    available_columns = primary_df.columns.tolist()
-                    st.write(f"Available columns: {available_columns}")  # Debug info
-                    
-                    # Helper function to check if a column has actual data (not all NaN)
-                    def has_valid_data(df, column):
-                        return column in df.columns and not df[column].isna().all()
-                    
-                    # Build available options based on what's actually in the data with valid values
-                    y_axis_options = []
-                    
-                    # Only add depth/pressure options if they have actual data
-                    if has_valid_data(primary_df, "Depth (m)"):
-                        y_axis_options.append("Depth (m)")
-                    if has_valid_data(primary_df, "Pressure (dbar)"):
-                        y_axis_options.append("Pressure (dbar)")
-                    if has_valid_data(primary_df, "Sea Pressure (dbar)"):
-                        y_axis_options.append("Sea Pressure (dbar)")
-                    
-                    # Add temperature if available and has data
-                    if has_valid_data(primary_df, "Temperature (°C)"):
-                        y_axis_options.append("Temperature (°C)")
-                    
-                    # Add Star Oddi tilt options if available and have data
-                    tilt_options = []
-                    for tilt_col in ["Tilt X", "Tilt Y", "Tilt Z", "Roll", "EAL"]:
-                        if has_valid_data(primary_df, tilt_col):
-                            tilt_options.append(tilt_col)
-                            y_axis_options.append(tilt_col)
-                    
-                    # Add acceleration options if available and have data
-                    acceleration_options = []
-                    for acc_col in ["X_Acceleration", "Y_Acceleration", "Z_Acceleration", "Total_G"]:
-                        if has_valid_data(primary_df, acc_col):
-                            acceleration_options.append(acc_col)
-                            y_axis_options.append(acc_col)
-                    
-                    # Show info about what type of data is available
-                    data_types = []
-                    if any(has_valid_data(primary_df, col) for col in ["Depth (m)", "Pressure (dbar)", "Sea Pressure (dbar)"]):
-                        data_types.append("Depth/Pressure")
-                    if tilt_options:
-                        data_types.append("Tilt")
-                    if acceleration_options:
-                        data_types.append("Acceleration")
-                    if has_valid_data(primary_df, "Temperature (°C)"):
-                        data_types.append("Temperature")
-                    
-                    st.info(f"📊 **Available data types:** {', '.join(data_types) if data_types else 'None detected'}")
-                    
-                    # Error handling if no valid options
-                    if not y_axis_options:
-                        st.error("❌ No plottable parameters with valid data found in this file.")
-                        st.write("**Possible issues:**")
-                        st.write("- File may be corrupted or in wrong format")
-                        st.write("- All data columns contain only NaN values")
-                        st.write("- File parsing may have failed")
-                        return
-                    
-                    # Dual plotting option
-                    dual_plot_mode = st.checkbox("Enable Dual Parameter Plotting (Stacked)", 
-                                                help="Plot two different parameters in vertically stacked plots sharing the same time axis")
-                    
-                    if dual_plot_mode:
-                        st.write("**Configure Dual Stacked Plot:**")
-                        st.write("Select file and parameter for each trace in each subplot")
-                        
-                        # Create configuration for top and bottom plots
-                        tab1, tab2 = st.tabs(["📈 Top Plot Configuration", "📊 Bottom Plot Configuration"])
-                        
-                        # Dictionary to store all configurations
-                        plot_config = {
-                            'top': {'primary': {}, 'overlay': {}, 'third': {}},
-                            'bottom': {'primary': {}, 'overlay': {}, 'third': {}}
-                        }
-                        
-                        with tab1:
-                            st.write("**Top Plot - Configure each trace:**")
-                            
-                            # Primary trace for top plot
-                            col_p1, col_p2 = st.columns(2)
-                            with col_p1:
-                                st.write("🔵 **Primary Trace:**")
-                                primary_top_source = st.selectbox(
-                                    "File source:", 
-                                    ["Primary File", "Overlay File", "Third File"], 
-                                    key="primary_top_source"
-                                )
-                                # Get the appropriate DataFrame
-                                if primary_top_source == "Primary File":
-                                    primary_top_df = primary_df
-                                elif primary_top_source == "Overlay File" and overlay_df is not None:
-                                    primary_top_df = overlay_df
-                                elif primary_top_source == "Third File" and third_df is not None:
-                                    primary_top_df = third_df
-                                else:
-                                    primary_top_df = primary_df
-                                    if primary_top_source != "Primary File":
-                                        st.warning(f"⚠️ {primary_top_source} not available, using Primary File")
-                                
-                                # Get available parameters
-                                if primary_top_df is not None:
-                                    primary_top_options = [col for col in y_axis_options if has_valid_data(primary_top_df, col)]
-                                    if primary_top_options:
-                                        primary_top_param = st.selectbox(
-                                            "Parameter:", 
-                                            primary_top_options,
-                                            index=0 if "Depth (m)" not in primary_top_options else primary_top_options.index("Depth (m)"),
-                                            key="primary_top_param"
-                                        )
-                                        plot_config['top']['primary'] = {'df': primary_top_df, 'param': primary_top_param, 'name': f"Primary ({primary_top_source})"}
-                                    else:
-                                        st.error("No valid parameters available")
-                            
-                            with col_p2:
-                                st.write("🔴 **Overlay Trace:**")
-                                if overlay_df is not None:
-                                    overlay_top_source = st.selectbox(
-                                        "File source:", 
-                                        ["Primary File", "Overlay File", "Third File"], 
-                                        index=1,  # Default to Overlay File
-                                        key="overlay_top_source"
-                                    )
-                                    # Get the appropriate DataFrame
-                                    if overlay_top_source == "Primary File":
-                                        overlay_top_df = primary_df
-                                    elif overlay_top_source == "Overlay File":
-                                        overlay_top_df = overlay_df
-                                    elif overlay_top_source == "Third File" and third_df is not None:
-                                        overlay_top_df = third_df
-                                    else:
-                                        overlay_top_df = overlay_df
-                                    
-                                    # Get available parameters
-                                    overlay_top_options = [col for col in y_axis_options if has_valid_data(overlay_top_df, col)]
-                                    if overlay_top_options:
-                                        overlay_top_param = st.selectbox(
-                                            "Parameter:", 
-                                            overlay_top_options,
-                                            key="overlay_top_param"
-                                        )
-                                        plot_config['top']['overlay'] = {'df': overlay_top_df, 'param': overlay_top_param, 'name': f"Overlay ({overlay_top_source})"}
-                                else:
-                                    st.info("No overlay file available")
-                            
-                            # Third trace for top plot
-                            if third_df is not None:
-                                st.write("🟢 **Third Trace:**")
-                                col_t1, col_t2 = st.columns(2)
-                                with col_t1:
-                                    third_top_source = st.selectbox(
-                                        "File source:", 
-                                        ["Primary File", "Overlay File", "Third File"], 
-                                        index=2,  # Default to Third File
-                                        key="third_top_source"
-                                    )
-                                with col_t2:
-                                    # Get the appropriate DataFrame
-                                    if third_top_source == "Primary File":
-                                        third_top_df = primary_df
-                                    elif third_top_source == "Overlay File" and overlay_df is not None:
-                                        third_top_df = overlay_df
-                                    else:
-                                        third_top_df = third_df
-                                    
-                                    # Get available parameters
-                                    third_top_options = [col for col in y_axis_options if has_valid_data(third_top_df, col)]
-                                    if third_top_options:
-                                        third_top_param = st.selectbox(
-                                            "Parameter:", 
-                                            third_top_options,
-                                            key="third_top_param"
-                                        )
-                                        plot_config['top']['third'] = {'df': third_top_df, 'param': third_top_param, 'name': f"Third ({third_top_source})"}
-                        
-                        with tab2:
-                            st.write("**Bottom Plot - Configure each trace:**")
-                            
-                            # Primary trace for bottom plot
-                            col_p1, col_p2 = st.columns(2)
-                            with col_p1:
-                                st.write("🔵 **Primary Trace:**")
-                                primary_bottom_source = st.selectbox(
-                                    "File source:", 
-                                    ["Primary File", "Overlay File", "Third File"], 
-                                    key="primary_bottom_source"
-                                )
-                                # Get the appropriate DataFrame
-                                if primary_bottom_source == "Primary File":
-                                    primary_bottom_df = primary_df
-                                elif primary_bottom_source == "Overlay File" and overlay_df is not None:
-                                    primary_bottom_df = overlay_df
-                                elif primary_bottom_source == "Third File" and third_df is not None:
-                                    primary_bottom_df = third_df
-                                else:
-                                    primary_bottom_df = primary_df
-                                
-                                # Get available parameters
-                                if primary_bottom_df is not None:
-                                    primary_bottom_options = [col for col in y_axis_options if has_valid_data(primary_bottom_df, col)]
-                                    if primary_bottom_options:
-                                        # Smart default for bottom plot
-                                        default_idx = 0
-                                        if acceleration_options and acceleration_options[0] in primary_bottom_options:
-                                            default_idx = primary_bottom_options.index(acceleration_options[0])
-                                        elif tilt_options and tilt_options[0] in primary_bottom_options:
-                                            default_idx = primary_bottom_options.index(tilt_options[0])
-                                        
-                                        primary_bottom_param = st.selectbox(
-                                            "Parameter:", 
-                                            primary_bottom_options,
-                                            index=default_idx,
-                                            key="primary_bottom_param"
-                                        )
-                                        plot_config['bottom']['primary'] = {'df': primary_bottom_df, 'param': primary_bottom_param, 'name': f"Primary ({primary_bottom_source})"}
-                            
-                            with col_p2:
-                                st.write("🔴 **Overlay Trace:**")
-                                if overlay_df is not None:
-                                    overlay_bottom_source = st.selectbox(
-                                        "File source:", 
-                                        ["Primary File", "Overlay File", "Third File"], 
-                                        index=1,  # Default to Overlay File
-                                        key="overlay_bottom_source"
-                                    )
-                                    # Get the appropriate DataFrame
-                                    if overlay_bottom_source == "Primary File":
-                                        overlay_bottom_df = primary_df
-                                    elif overlay_bottom_source == "Overlay File":
-                                        overlay_bottom_df = overlay_df
-                                    elif overlay_bottom_source == "Third File" and third_df is not None:
-                                        overlay_bottom_df = third_df
-                                    else:
-                                        overlay_bottom_df = overlay_df
-                                    
-                                    # Get available parameters
-                                    overlay_bottom_options = [col for col in y_axis_options if has_valid_data(overlay_bottom_df, col)]
-                                    if overlay_bottom_options:
-                                        overlay_bottom_param = st.selectbox(
-                                            "Parameter:", 
-                                            overlay_bottom_options,
-                                            key="overlay_bottom_param"
-                                        )
-                                        plot_config['bottom']['overlay'] = {'df': overlay_bottom_df, 'param': overlay_bottom_param, 'name': f"Overlay ({overlay_bottom_source})"}
-                            
-                            # Third trace for bottom plot
-                            if third_df is not None:
-                                st.write("🟢 **Third Trace:**")
-                                col_t1, col_t2 = st.columns(2)
-                                with col_t1:
-                                    third_bottom_source = st.selectbox(
-                                        "File source:", 
-                                        ["Primary File", "Overlay File", "Third File"], 
-                                        index=2,  # Default to Third File
-                                        key="third_bottom_source"
-                                    )
-                                with col_t2:
-                                    # Get the appropriate DataFrame
-                                    if third_bottom_source == "Primary File":
-                                        third_bottom_df = primary_df
-                                    elif third_bottom_source == "Overlay File" and overlay_df is not None:
-                                        third_bottom_df = overlay_df
-                                    else:
-                                        third_bottom_df = third_df
-                                    
-                                    # Get available parameters
-                                    third_bottom_options = [col for col in y_axis_options if has_valid_data(third_bottom_df, col)]
-                                    if third_bottom_options:
-                                        third_bottom_param = st.selectbox(
-                                            "Parameter:", 
-                                            third_bottom_options,
-                                            key="third_bottom_param"
-                                        )
-                                        plot_config['bottom']['third'] = {'df': third_bottom_df, 'param': third_bottom_param, 'name': f"Third ({third_bottom_source})"}
-                        
-                        # Generate the comprehensive dual plot
-                        fig = plot_rbr_dual_comprehensive(plot_config, max_points)
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    if not dual_plot_mode:
-                        # Single parameter plotting (existing functionality)
-                        # Smart default selection
-                        default_index = 0
-                        if "Depth (m)" in y_axis_options:
-                            default_index = y_axis_options.index("Depth (m)")
-                        
-                        y_axis = st.selectbox("Select Parameter to Plot:", 
-                                             options=y_axis_options, 
-                                             index=default_index,
-                                             key="y_axis_single")
-                        
-                        fig = plot_rbr_downsampled(
-                            primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-
-                    # --- High-Resolution Plotting ---
-                    st.subheader("High-Resolution Plot")
-                    
-                    # Generate high-resolution plot when button is clicked
-                    if generate_high_res:
-                        if start_time and end_time:
-                            try:
-                                if dual_plot_mode:
-                                    # Use comprehensive dual plotting for high-res
-                                    high_res_fig = plot_rbr_dual_comprehensive_high_res(
-                                        plot_config, start_time, end_time
-                                    )
-                                else:
-                                    # Single parameter high-resolution plot
-                                    high_res_fig = plot_rbr_high_resolution(
-                                        primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time,
-                                        primary_core_name=selected_core_label,
-                                        overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
-                                        third_x_offset=third_x_offset, third_y_offset=third_y_offset
-                                    )
-                                st.plotly_chart(high_res_fig, use_container_width=True)
-                            except Exception as e:
-                                st.error(f"An error occurred while generating the high-resolution plot: {e}")
+                if bottom_overlay_option == "Same Core":
+                    bottom_other_files = [file for file in bottom_df_files['file_name'] if file != bottom_selected_file_label]
+                    if bottom_other_files:
+                        bottom_overlay_file_label = st.selectbox("Select bottom overlay file from same core:", bottom_other_files, index=0, key="bottom_overlay_same")
+                        bottom_overlay_file_row = bottom_df_files[bottom_df_files['file_name'] == bottom_overlay_file_label]
+                        if not bottom_overlay_file_row.empty:
+                            bottom_overlay_relative_path = os.path.join(bottom_overlay_file_row.iloc[0]['file_path'], bottom_overlay_file_row.iloc[0]['file_name'])
+                            bottom_overlay_file_path = get_full_path(bottom_overlay_relative_path)
                         else:
-                            st.warning("Please provide both Start Time and End Time for high-resolution plotting.")
+                            st.warning("The selected bottom overlay file could not be found.")
                     else:
-                        st.info("Use the controls in the left sidebar to configure and generate a high-resolution plot.")
+                        st.warning("No other files available for bottom overlay in the same core.")
+
+                elif bottom_overlay_option == "Different Core":
+                    bottom_overlay_core_label = st.selectbox("Select Core for Bottom Overlay:", list(core_options.keys()), key="bottom_overlay_core")
+                    bottom_overlay_core_id = core_options[bottom_overlay_core_label]
+                    with get_connection() as conn:
+                        bottom_overlay_query = "SELECT file_name, file_path, sensor_type, sensor_location, remarks FROM sensor_files WHERE core_id = %s"
+                        bottom_overlay_df_files = pd.read_sql(bottom_overlay_query, conn, params=(bottom_overlay_core_id,))
+                    if not bottom_overlay_df_files.empty:
+                        bottom_overlay_file_label = st.selectbox("Select Bottom Overlay File", bottom_overlay_df_files['file_name'], key="bottom_overlay_diff")
+                        bottom_overlay_file_row = bottom_overlay_df_files[bottom_overlay_df_files['file_name'] == bottom_overlay_file_label]
+                        if not bottom_overlay_file_row.empty:
+                            bottom_overlay_relative_path = os.path.join(bottom_overlay_file_row.iloc[0]['file_path'], bottom_overlay_file_row.iloc[0]['file_name'])
+                            bottom_overlay_file_path = get_full_path(bottom_overlay_relative_path)
+                        else:
+                            st.warning("The selected bottom overlay file could not be found.")
+                    else:
+                        st.warning("No sensor data files found for the selected core.")
+
+                # --- Bottom Third Trace Selection ---
+                st.subheader("Add Bottom Third Trace (Optional)")
+                bottom_third_trace_option = st.radio("Add a bottom third data source?", ["None", "Select Core and File"], key="bottom_third_option")
+                bottom_third_file_path = None
+                bottom_third_relative_path = None
+                if bottom_third_trace_option == "Select Core and File":
+                    bottom_third_core_label = st.selectbox("Select Core for Bottom Third Trace:", list(core_options.keys()), key="bottom_third_core")
+                    bottom_third_core_id = core_options[bottom_third_core_label]
+                    with get_connection() as conn:
+                        bottom_third_query = "SELECT file_name, file_path, sensor_type, sensor_location, remarks FROM sensor_files WHERE core_id = %s"
+                        bottom_third_df_files = pd.read_sql(bottom_third_query, conn, params=(bottom_third_core_id,))
+                    if not bottom_third_df_files.empty:
+                        bottom_third_file_label = st.selectbox("Select Bottom Third Trace File", bottom_third_df_files['file_name'], key="bottom_third_file")
+                        bottom_third_file_row = bottom_third_df_files[bottom_third_df_files['file_name'] == bottom_third_file_label].iloc[0]
+                        bottom_third_relative_path = os.path.join(bottom_third_file_row['file_path'], bottom_third_file_row['file_name'])
+                        bottom_third_file_path = get_full_path(bottom_third_relative_path)
+        else:
+            # Initialize bottom plot variables to None when dual mode is disabled
+            bottom_primary_file_path = None
+            bottom_overlay_file_path = None
+            bottom_third_file_path = None
+            bottom_relative_path = None
+            bottom_overlay_relative_path = None
+            bottom_third_relative_path = None
+            bottom_file_row = None
+            bottom_overlay_file_row = None
+            bottom_third_file_row = None
+            bottom_overlay_option = None
+            bottom_selected_core_label = None
+
+        # --- Plotting in the Right Column ---
+        with col2:
+            if primary_file_path:
+                try:
+                    # Helper function to determine if file is Star Oddi
+                    def is_star_oddi_file(file_path, sensor_type=None):
+                        file_extension = os.path.splitext(file_path)[1].lower()
+                        sensor_type_lower = sensor_type.lower() if sensor_type else ''
+                        return (file_extension in ['.dat', '.acc'] or 
+                               ('star' in sensor_type_lower and 'oddi' in sensor_type_lower))
+
+                    # Process primary file
+                    st.write("**Debug Info:**")
+                    st.write(f"Sensor type from DB: '{file_row['sensor_type']}'")
+                    st.write(f"File extension: {os.path.splitext(primary_file_path)[1].lower()}")
+                    
+                    if is_star_oddi_file(primary_file_path, file_row['sensor_type']):
+                        st.write("✅ Using Star Oddi parser for primary file")
+                        primary_df = process_star_oddi_data(relative_path)
+                    else:
+                        st.write("✅ Using RBR parser for primary file")
+                        primary_df = process_rsk_data(primary_file_path)
+
+                    # Process overlay file
+                    overlay_df = None
+                    if overlay_file_path and overlay_relative_path:
+                        if overlay_option == "Same Core":
+                            overlay_sensor_type = overlay_file_row.iloc[0]['sensor_type']
+                        elif overlay_option == "Different Core":
+                            overlay_sensor_type = overlay_file_row.iloc[0]['sensor_type']
                         
-            except Exception as e:
-                st.error(f"An error occurred while processing the files: {e}")
-                import traceback
-                st.error(traceback.format_exc())
+                        if is_star_oddi_file(overlay_file_path, overlay_sensor_type):
+                            st.write("✅ Using Star Oddi parser for overlay file")
+                            overlay_df = process_star_oddi_data(overlay_relative_path)
+                        else:
+                            st.write("✅ Using RBR parser for overlay file")
+                            overlay_df = process_rsk_data(overlay_file_path)
+
+                    # Process third file
+                    third_df = None
+                    if third_file_path and third_relative_path:
+                        if is_star_oddi_file(third_file_path, third_file_row['sensor_type']):
+                            st.write("✅ Using Star Oddi parser for third file")
+                            third_df = process_star_oddi_data(third_relative_path)
+                        else:
+                            st.write("✅ Using RBR parser for third file")
+                            third_df = process_rsk_data(third_file_path)
+
+                    if primary_df is not None:
+                        st.subheader("Interactive Plotting")
+                        max_points = st.slider("Max Points for Plotting", min_value=100, max_value=5000, value=1000, step=100)
+                        
+                        # Process bottom plot files if dual mode is enabled
+                        bottom_primary_df = None
+                        bottom_overlay_df = None
+                        bottom_third_df = None
+                        
+                        # Initialize bottom plot variables if not in dual mode
+                        if 'dual_plot_mode' not in locals() or not dual_plot_mode:
+                            bottom_primary_file_path = None
+                            bottom_relative_path = None
+                            bottom_overlay_file_path = None
+                            bottom_overlay_relative_path = None
+                            bottom_overlay_option = None
+                            bottom_third_file_path = None
+                            bottom_third_relative_path = None
+                            bottom_file_row = None
+                            bottom_overlay_file_row = None
+                            bottom_third_file_row = None
+                        
+                        if dual_plot_mode and bottom_primary_file_path:
+                            # Process bottom primary file
+                            if is_star_oddi_file(bottom_primary_file_path, bottom_file_row['sensor_type']):
+                                st.write("✅ Using Star Oddi parser for bottom primary file")
+                                bottom_primary_df = process_star_oddi_data(bottom_relative_path)
+                            else:
+                                st.write("✅ Using RBR parser for bottom primary file")
+                                bottom_primary_df = process_rsk_data(bottom_primary_file_path)
+
+                            # Process bottom overlay file
+                            if bottom_overlay_file_path and bottom_overlay_relative_path:
+                                if bottom_overlay_option == "Same Core":
+                                    bottom_overlay_sensor_type = bottom_overlay_file_row.iloc[0]['sensor_type']
+                                elif bottom_overlay_option == "Different Core":
+                                    bottom_overlay_sensor_type = bottom_overlay_file_row.iloc[0]['sensor_type']  # Fixed: was bottom_file_row
+                                else:
+                                    bottom_overlay_sensor_type = None
+                                
+                                if is_star_oddi_file(bottom_overlay_file_path, bottom_overlay_sensor_type):
+                                    st.write("✅ Using Star Oddi parser for bottom overlay file")
+                                    bottom_overlay_df = process_star_oddi_data(bottom_overlay_relative_path)
+                                else:
+                                    st.write("✅ Using RBR parser for bottom overlay file")
+                                    bottom_overlay_df = process_rsk_data(bottom_overlay_file_path)
+
+                            # Process bottom third file
+                            if bottom_third_file_path and bottom_third_relative_path:
+                                if is_star_oddi_file(bottom_third_file_path, bottom_third_file_row['sensor_type']):
+                                    st.write("✅ Using Star Oddi parser for bottom third file")
+                                    bottom_third_df = process_star_oddi_data(bottom_third_relative_path)
+                                else:
+                                    st.write("✅ Using RBR parser for bottom third file")
+                                    bottom_third_df = process_rsk_data(bottom_third_file_path)
+                        
+                        # Helper function to get all available parameters from any DataFrame
+                        def get_all_parameters(*dataframes):
+                            all_params = set()
+                            param_categories = {
+                                'depth': ["Depth (m)", "Pressure (dbar)", "Sea Pressure (dbar)"],
+                                'temperature': ["Temperature (°C)"],
+                                'tilt': ["Tilt X", "Tilt Y", "Tilt Z", "Roll", "EAL"],
+                                'acceleration': ["X_Acceleration", "Y_Acceleration", "Z_Acceleration", "Total_G"]
+                            }
+                            
+                            for df in dataframes:
+                                if df is not None:
+                                    for category, params in param_categories.items():
+                                        for param in params:
+                                            if param in df.columns and not df[param].isna().all():
+                                                all_params.add(param)
+                            
+                            return sorted(list(all_params))
+
+                        # Get available parameters from top plot files
+                        top_y_axis_options = get_all_parameters(primary_df, overlay_df, third_df)
+                        
+                        # Get available parameters from bottom plot files (if dual mode)
+                        if dual_plot_mode and bottom_primary_df is not None:
+                            bottom_y_axis_options = get_all_parameters(bottom_primary_df, bottom_overlay_df, bottom_third_df)
+                        else:
+                            bottom_y_axis_options = []
+
+                        if dual_plot_mode and bottom_primary_df is not None:
+                            # Dual plotting with separate file selections
+                            st.write("**Parameter Selection:**")
+                            col_top, col_bottom = st.columns(2)
+                            
+                            with col_top:
+                                st.write("**Top Plot Parameter:**")
+                                if top_y_axis_options:
+                                    default_top_idx = 0
+                                    if "Depth (m)" in top_y_axis_options:
+                                        default_top_idx = top_y_axis_options.index("Depth (m)")
+                                    
+                                    top_y_axis = st.selectbox("Select Top Parameter:", 
+                                                             options=top_y_axis_options, 
+                                                             index=default_top_idx,
+                                                             key="top_param")
+                                else:
+                                    st.error("No parameters available for top plot")
+                                    top_y_axis = None
+                            
+                            with col_bottom:
+                                st.write("**Bottom Plot Parameter:**")
+                                if bottom_y_axis_options:
+                                    # Smart default for bottom - prefer acceleration, then tilt, then depth
+                                    default_bottom_idx = 0
+                                    for preferred_param in ["Total_G", "X_Acceleration", "Tilt X", "Depth (m)"]:
+                                        if preferred_param in bottom_y_axis_options:
+                                            default_bottom_idx = bottom_y_axis_options.index(preferred_param)
+                                            break
+                                    
+                                    bottom_y_axis = st.selectbox("Select Bottom Parameter:", 
+                                                               options=bottom_y_axis_options, 
+                                                               index=default_bottom_idx,
+                                                               key="bottom_param")
+                                else:
+                                    st.error("No parameters available for bottom plot")
+                                    bottom_y_axis = None
+                            
+
+                            if top_y_axis and bottom_y_axis:
+                                # Show available data info
+                                st.info(f"📊 **Top plot:** {len([df for df in [primary_df, overlay_df, third_df] if df is not None])} files available")
+                                st.info(f"📊 **Bottom plot:** {len([df for df in [bottom_primary_df, bottom_overlay_df, bottom_third_df] if df is not None])} files available")
+                                
+                                # Generate dual stacked plot
+                                fig = plot_rbr_dual_simple(
+                                    # Top plot data
+                                    primary_df, overlay_df, third_df, top_y_axis,
+                                    # Bottom plot data  
+                                    bottom_primary_df, bottom_overlay_df, bottom_third_df, bottom_y_axis,
+                                    max_points=max_points,
+                                    top_name=f"Top: {selected_core_label}",
+                                    bottom_name=f"Bottom: {bottom_selected_core_label if 'bottom_selected_core_label' in locals() else 'Bottom Core'}"
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                        
+                        else:
+                            # Single parameter plotting (existing functionality)
+                            if top_y_axis_options:
+                                # Smart default selection
+                                default_index = 0
+                                if "Depth (m)" in top_y_axis_options:
+                                    default_index = top_y_axis_options.index("Depth (m)")
+                                
+                                y_axis = st.selectbox("Select Parameter to Plot:", 
+                                                     options=top_y_axis_options, 
+                                                     index=default_index,
+                                                     key="y_axis_single")
+                                
+                                fig = plot_rbr_downsampled(
+                                    primary_df, overlay_df, third_df, y_axis=y_axis, max_points=max_points, primary_core_name=selected_core_label
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.error("❌ No plottable parameters found in any files.")
+
+                        # --- High-Resolution Plotting ---
+                        st.subheader("High-Resolution Plot")
+                        
+                        # Generate high-resolution plot when button is clicked
+                        if generate_high_res:
+                            if start_time and end_time:
+                                try:
+                                    if dual_plot_mode and bottom_primary_df is not None and top_y_axis and bottom_y_axis:
+                                        # Create high-resolution dual plot
+                                        high_res_fig = plot_rbr_dual_simple_high_res(
+                                            # Top plot data
+                                            primary_df, overlay_df, third_df, top_y_axis,
+                                            # Bottom plot data  
+                                            bottom_primary_df, bottom_overlay_df, bottom_third_df, bottom_y_axis,
+                                            start_time=start_time, end_time=end_time,
+                                            top_name=f"Top: {selected_core_label}",
+                                            bottom_name=f"Bottom: {bottom_selected_core_label if 'bottom_selected_core_label' in locals() else 'Bottom Core'}"
+                                        )
+                                    else:
+                                        # Single parameter high-resolution plot
+                                        high_res_fig = plot_rbr_high_resolution(
+                                            primary_df, overlay_df, third_df, y_axis=y_axis, start_time=start_time, end_time=end_time,
+                                            primary_core_name=selected_core_label,
+                                            overlay_x_offset=overlay_x_offset, overlay_y_offset=overlay_y_offset,
+                                            third_x_offset=third_x_offset, third_y_offset=third_y_offset
+                                        )
+                                    st.plotly_chart(high_res_fig, use_container_width=True)
+                                except Exception as e:
+                                    st.error(f"An error occurred while generating the high-resolution plot: {e}")
+                            else:
+                                st.warning("Please provide both Start Time and End Time for high-resolution plotting.")
+                        else:
+                            st.info("Use the controls in the left sidebar to configure and generate a high-resolution plot.")
+                        
+                except Exception as e:
+                    st.error(f"An error occurred while processing the files: {e}")
+                    import traceback
+                    st.error(traceback.format_exc())
+            else:
+                st.warning("Please select a sensor data file to visualize.")
 
 # Call the function to make it work as a page
 if __name__ == "__main__":
