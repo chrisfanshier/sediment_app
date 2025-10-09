@@ -3,6 +3,7 @@ import os
 import pandas as pd
 from db_util import get_connection
 from db_util import fetch_dropdown_values
+from db_util import fetch_cruise_options  # Add this import
 from utils import render_dynamic_fields_from_metadata
 from datetime import date, time
 from sqlalchemy import text
@@ -44,33 +45,47 @@ if "show_confirmation" not in st.session_state:
 # --- Core Selection ---
 st.subheader("Select Core to Edit")
 
-# Get all core names for selection
+# Get all core names for selection with cruise info
 with get_connection() as conn:
-    cores_query = "SELECT core_id, core_name FROM cores ORDER BY core_name"
+    cores_query = """
+    SELECT c.core_id, c.core_name, cr.cruise_name, v.vessel_name
+    FROM cores c
+    LEFT JOIN cruises cr ON c.cruise_id = cr.cruise_id
+    LEFT JOIN vessels v ON cr.vessel_id = v.vessel_id
+    ORDER BY c.core_name
+    """
     all_cores = conn.execute(text(cores_query)).fetchall()
 
 if not all_cores:
     st.warning("No cores found in the database.")
     st.stop()
 
-core_options = {core[1]: core[0] for core in all_cores}  # Map core names to IDs
-selected_core_name = st.selectbox("Select Core to Edit", ["Select a core..."] + list(core_options.keys()))
+# Create enhanced core options with cruise and vessel info
+core_options = {}
+for core in all_cores:
+    cruise_info = f" - {core[2]}" if core[2] else ""
+    vessel_info = f" ({core[3]})" if core[3] else ""
+    display_name = f"{core[1]}{cruise_info}{vessel_info}"
+    core_options[display_name] = core[0]
 
-if selected_core_name == "Select a core...":
+selected_core_display = st.selectbox("Select Core to Edit", ["Select a core..."] + list(core_options.keys()))
+
+if selected_core_display == "Select a core...":
     st.info("Please select a core to edit.")
     st.stop()
 
-# Load the selected core data
-selected_core_id = core_options[selected_core_name]
+selected_core_id = core_options[selected_core_display]
 
+# Load the selected core data
 with get_connection() as conn:
-    # Get core data with related table info
+    # Get core data with related table info including cruise
     core_query = """
-        SELECT c.*, v.vessel_name, ct.core_type_name, w.wire_type
+        SELECT c.*, v.vessel_name, ct.core_type_name, w.wire_type, cr.cruise_name, cr.cruise_id
         FROM cores c
         LEFT JOIN vessels v ON c.vessel_id = v.vessel_id
         LEFT JOIN core_types ct ON c.core_type_id = ct.core_type_id
         LEFT JOIN wire w ON c.wire_type_id = w.wire_type_id
+        LEFT JOIN cruises cr ON c.cruise_id = cr.cruise_id
         WHERE c.core_id = :core_id
     """
     core_data = conn.execute(text(core_query), {"core_id": selected_core_id}).fetchone()
@@ -81,11 +96,157 @@ with get_connection() as conn:
 
 # Fetch dropdown values dynamically
 vessels, core_types = fetch_dropdown_values()
+cruises = fetch_cruise_options()
 
-# Get wire types
-with get_connection() as conn:
-    wire_query = "SELECT wire_type_id, wire_type FROM wire ORDER BY wire_type"
-    wire_types = conn.execute(text(wire_query)).fetchall()
+# --- Cruise Selection with Auto-populated Vessel ---
+st.subheader("Cruise and Vessel")
+
+# Create cruise options for dropdown
+cruise_options = {}
+cruise_vessel_map = {}  # Map cruise_id to vessel info
+
+if cruises:
+    for cruise in cruises:
+        cruise_id, cruise_name, vessel_name, vessel_id = cruise
+        display_name = f"{cruise_name} ({vessel_name})" if vessel_name else cruise_name
+        cruise_options[display_name] = cruise_id
+        cruise_vessel_map[cruise_id] = {
+            'vessel_name': vessel_name,
+            'vessel_id': vessel_id
+        }
+
+# Determine current cruise selection
+current_cruise_index = 0
+if core_data.cruise_id:
+    # Find the matching cruise in the options
+    for i, (display_name, cruise_id) in enumerate(cruise_options.items()):
+        if cruise_id == core_data.cruise_id:
+            current_cruise_index = i + 1  # +1 because of "Select Cruise" option
+            break
+
+# Cruise selection dropdown
+cruise_choice = st.selectbox(
+    "Select Cruise*",
+    ["Select Cruise"] + list(cruise_options.keys()),
+    index=current_cruise_index
+)
+
+# Auto-populate vessel based on cruise selection
+if cruise_choice == "Select Cruise":
+    cruise_id = None
+    vessel_id = None
+    vessel_name = "No cruise selected"
+    st.info("Please select a cruise to auto-populate vessel information.")
+else:
+    cruise_id = cruise_options[cruise_choice]
+    vessel_info = cruise_vessel_map[cruise_id]
+    vessel_id = vessel_info['vessel_id']
+    vessel_name = vessel_info['vessel_name']
+    
+    # Display auto-populated vessel
+    st.success(f"**Vessel:** {vessel_name} (auto-populated from cruise)")
+
+# Show vessel selection as read-only info
+st.text_input("Vessel", value=vessel_name, disabled=True, 
+              help="Vessel is automatically selected based on the chosen cruise")
+
+# Warn if cruise changed
+if cruise_id != core_data.cruise_id:
+    st.warning("⚠️ Changing the cruise will also change the vessel association.")
+
+# --- Other Meta Data Fields ---
+leg = st.text_input("Leg", value=core_data.leg or "")
+station = st.text_input("Station", value=core_data.station or "")
+
+# Date Field
+date_field = st.date_input("Date*", value=core_data.date if core_data.date else date.today())
+
+# Geographic Coordinates
+st.subheader("Geographic Coordinates")
+col1, col2 = st.columns(2)
+
+with col1:
+    latitude_input = st.text_input("Latitude", 
+                                  value=str(core_data.latitude) if core_data.latitude is not None else "", 
+                                  placeholder="Enter latitude or leave blank for NULL")
+    if latitude_input.strip() == "":
+        latitude = None
+    else:
+        try:
+            latitude = float(latitude_input)
+        except ValueError:
+            st.warning("Latitude must be a numeric value.")
+            latitude = None
+
+with col2:
+    longitude_input = st.text_input("Longitude", 
+                                   value=str(core_data.longitude) if core_data.longitude is not None else "", 
+                                   placeholder="Enter longitude or leave blank for NULL")
+    if longitude_input.strip() == "":
+        longitude = None
+    else:
+        try:
+            longitude = float(longitude_input)
+        except ValueError:
+            st.warning("Longitude must be a numeric value.")
+            longitude = None
+
+# Water Depth
+water_depth_input = st.text_input("Water Depth (m)", 
+                                 value=str(core_data.water_depth_m) if core_data.water_depth_m is not None else "", 
+                                 placeholder="Enter water depth or leave blank for NULL")
+if water_depth_input.strip() == "":
+    water_depth = None
+else:
+    try:
+        water_depth = float(water_depth_input)
+    except ValueError:
+        st.warning("Water Depth must be a numeric value.")
+        water_depth = None
+
+# Observer
+observer = st.text_input("Observer", value=core_data.observer or "", placeholder="Enter observer name")
+
+# Core Type Selection
+core_type_options = {f"{ct[1]}": (ct[0], ct[1]) for ct in core_types}
+
+# Find current core type index
+current_core_type_index = 0
+if core_data.core_type_id:
+    for i, (core_type_name, (core_type_id_val, core_type_name_val)) in enumerate(core_type_options.items()):
+        if core_type_id_val == core_data.core_type_id:
+            current_core_type_index = i + 1  # +1 because of "Select Core Type" option
+            break
+
+core_type_choice = st.selectbox(
+    "Core Type*",
+    ["Select Core Type"] + list(core_type_options.keys()),
+    index=current_core_type_index
+)
+
+# Wire Type Selection
+wire_types = [(1, "Steel"), (2, "Synthetic")]  # Add your wire types here
+wire_type_options = {wt[1]: wt[0] for wt in wire_types}
+
+# Find current wire type index
+current_wire_type_index = 0
+if core_data.wire_type_id:
+    wire_type_names = list(wire_type_options.keys())
+    for i, wire_type_name in enumerate(wire_type_names):
+        if wire_type_options[wire_type_name] == core_data.wire_type_id:
+            current_wire_type_index = i + 1  # +1 because of "Select Wire Type" option
+            break
+
+wire_type_choice = st.selectbox(
+    "Wire Type",
+    ["Select Wire Type"] + list(wire_type_options.keys()),
+    index=current_wire_type_index
+)
+
+if wire_type_choice == "Select Wire Type":
+    wire_type_id = None
+else:
+    wire_type_id = wire_type_options[wire_type_choice]
 
 # --- Display Edit Form ---
 st.subheader("Edit Core Data")
@@ -112,113 +273,11 @@ else:
 if core_name != core_data.core_name:
     st.warning("⚠️ Changing the core name will affect all related records (files, etc.)")
 
-# Vessel
-vessel_options = {v[1]: v[0] for v in vessels}
-current_vessel_index = list(vessel_options.values()).index(core_data.vessel_id) if core_data.vessel_id else 0
-vessel_choice = st.selectbox("Select Vessel", list(vessel_options.keys()), index=current_vessel_index)
-
-# Cruise
-cruise_input = st.text_input("Cruise", value=core_data.cruise or "", key="cruise_input")
-
-if cruise_input:
-    filtered_cruise = re.sub(r'[^A-Za-z0-9\-]', '', cruise_input)
-    cruise = filtered_cruise.upper()
-    
-    if cruise != cruise_input:
-        st.warning(f"Cruise automatically formatted: **{cruise}**")
-        st.caption("Only letters, numbers, and hyphens (-) are allowed. All letters will be capitalized.")
-else:
-    cruise = ""
-
-# Other basic fields
-leg = st.text_input("Leg", value=core_data.leg or "")
-date_field = st.date_input("Date", 
-                          value=core_data.date if core_data.date else date.today(),
-                          min_value=date(1900, 1, 1),  # Allow dates back to 1900
-                          max_value=date(2050, 12, 31))  # Future limit
-station = st.text_input("Station", value=core_data.station or "")
-
-# Coordinates
-st.subheader("Coordinates")
-coord_format = st.selectbox("Coordinate Format", ["Decimal Degrees", "NULL entry"])
-
-if coord_format == "Decimal Degrees":
-    lat_input = st.text_input("Latitude (decimal degrees)", 
-                              value=str(core_data.latitude) if core_data.latitude is not None else "", 
-                              placeholder="Enter latitude or leave blank for NULL")
-    lon_input = st.text_input("Longitude (decimal degrees)", 
-                              value=str(core_data.longitude) if core_data.longitude is not None else "", 
-                              placeholder="Enter longitude or leave blank for NULL")
-    
-    # Handle latitude
-    if lat_input.strip() == "":
-        latitude = None
-    else:
-        try:
-            latitude = float(lat_input)
-            if latitude < -90 or latitude > 90:
-                st.warning("Latitude must be between -90 and 90 degrees.")
-                latitude = None
-        except ValueError:
-            st.warning("Latitude must be a numeric value.")
-            latitude = None
-    
-    # Handle longitude
-    if lon_input.strip() == "":
-        longitude = None
-    else:
-        try:
-            longitude = float(lon_input)
-            if longitude < -180 or longitude > 180:
-                st.warning("Longitude must be between -180 and 180 degrees.")
-                longitude = None
-        except ValueError:
-            st.warning("Longitude must be a numeric value.")
-            longitude = None
-else:  # NULL entry
-    st.warning("Latitude and Longitude will be saved as NULL.")
-    latitude = None
-    longitude = None
-
-# Water Depth
-water_depth_input = st.text_input("Water Depth (meters)", 
-                                  value=str(core_data.water_depth_m) if core_data.water_depth_m is not None else "", 
-                                  placeholder="Enter water depth or leave blank for NULL")
-if water_depth_input.strip() == "":
-    water_depth = None
-else:
-    try:
-        water_depth = float(water_depth_input)
-    except ValueError:
-        st.warning("Water Depth must be a numeric value.")
-        water_depth = None
-
-# Observer
-observer = st.text_input("Observer", value=core_data.observer or "")
-
-# Wire Type
-wire_options = {wt[1]: wt[0] for wt in wire_types}
-current_wire_type = core_data.wire_type if core_data.wire_type else "Select Wire Type"
-wire_choice = st.selectbox("Wire Type", ["Select Wire Type"] + list(wire_options.keys()), 
-                          index=0 if current_wire_type == "Select Wire Type" else list(wire_options.keys()).index(current_wire_type) + 1)
-
-if wire_choice == "Select Wire Type":
-    wire_type_id = None
-else:
-    wire_type_id = wire_options[wire_choice]
-
-# Core Type
-core_type_options = {ct[1]: (ct[0], ct[2]) for ct in core_types}
-current_core_type = core_data.core_type_name if core_data.core_type_name else "Select Core Type"
-core_type_choice = st.selectbox("Select Core Type", ["Select Core Type"] + list(core_type_options.keys()),
-                                index=0 if current_core_type == "Select Core Type" else list(core_type_options.keys()).index(current_core_type) + 1)
-
 # --- Dynamic Fields ---
 if core_type_choice != "Select Core Type":
     core_type_id = core_type_options[core_type_choice][0]
     
     # Get existing dynamic field values from the cores table
-    # First, get the field names using the same utils function as add_core_data.py
     from utils import get_dynamic_fields_metadata
     
     dynamic_field_names = get_dynamic_fields_metadata(core_type_id)
@@ -236,7 +295,7 @@ if core_type_choice != "Select Core Type":
                 for i, field_name in enumerate(dynamic_field_names):
                     existing_dynamic_values[field_name] = current_values[i]
     
-    # Render dynamic fields with existing values using the same function as add_core_data.py
+    # Render dynamic fields with existing values
     dynamic_field_values = render_dynamic_fields_from_metadata(core_type_id, existing_values=existing_dynamic_values)
 else:
     dynamic_field_values = {}
@@ -292,6 +351,8 @@ if st.button("Update Core"):
 
     if not core_name.strip():
         missing_fields.append("Core Name")
+    if cruise_choice == "Select Cruise":
+        missing_fields.append("Cruise")
     if core_type_choice == "Select Core Type":
         missing_fields.append("Core Type")
     if not date_field:
@@ -305,11 +366,14 @@ if st.button("Update Core"):
 # Show confirmation dialog
 if st.session_state.show_confirmation:
     st.warning("⚠️ **Confirm Update Operation**")
+    
+    # Get the original core name for display
+    selected_core_name = core_data.core_name
     st.info(f"Updating core: **{selected_core_name}** → **{core_name}**")
     
     # Collect NULL values
     null_values = []
-    if not cruise or not cruise.strip(): null_values.append("Cruise")
+    if cruise_id is None: null_values.append("Cruise")
     if not leg or not leg.strip(): null_values.append("Leg")
     if not station or not station.strip(): null_values.append("Station")
     if latitude is None: null_values.append("Latitude")
@@ -328,11 +392,13 @@ if st.session_state.show_confirmation:
     if tension_at_bottom is None: null_values.append("Tension at Bottom")
     if pullout_tension is None: null_values.append("Pullout Tension")
     if not notes or not notes.strip(): null_values.append("Notes")
+    if not data_entry_remarks or not data_entry_remarks.strip(): null_values.append("Data Entry Remarks")
     
     # Check dynamic fields for NULLs
-    for field, value in dynamic_field_values.items():
-        if value is None or (isinstance(value, str) and not value.strip()):
-            null_values.append(field.replace("_", " ").capitalize())
+    if 'dynamic_field_values' in locals():
+        for field, value in dynamic_field_values.items():
+            if value is None or (isinstance(value, str) and not value.strip()):
+                null_values.append(field.replace("_", " ").capitalize())
     
     if null_values:
         st.markdown("**The following fields will be saved as NULL:**")
@@ -363,7 +429,7 @@ if st.session_state.show_confirmation:
                     # Build UPDATE query
                     base_update = """
                         UPDATE cores SET
-                            core_name = :core_name, vessel_id = :vessel_id, cruise = :cruise, leg = :leg, 
+                            core_name = :core_name, vessel_id = :vessel_id, cruise_id = :cruise_id, leg = :leg, 
                             date = :date, station = :station, water_depth_m = :water_depth_m, 
                             latitude = :latitude, longitude = :longitude, observer = :observer, 
                             core_type_id = :core_type_id, time_launched = :time_launched, 
@@ -377,8 +443,8 @@ if st.session_state.show_confirmation:
                     
                     base_values = {
                         "core_name": core_name,
-                        "vessel_id": vessel_options[vessel_choice],
-                        "cruise": cruise or None,
+                        "vessel_id": vessel_id,
+                        "cruise_id": cruise_id,
                         "leg": leg or None,
                         "date": date_field,
                         "station": station or None,
@@ -399,11 +465,12 @@ if st.session_state.show_confirmation:
                         "pullout_tension": pullout_tension,
                         "notes": notes or None,
                         "wire_type_id": wire_type_id,
+                        "data_entry_remarks": data_entry_remarks or None,
                         "core_id": selected_core_id
                     }
                     
                     # Handle dynamic fields
-                    if dynamic_field_values:
+                    if 'dynamic_field_values' in locals() and dynamic_field_values:
                         cleaned_dynamic_values = {}
                         for key, value in dynamic_field_values.items():
                             if isinstance(value, str) and value.strip() == "":

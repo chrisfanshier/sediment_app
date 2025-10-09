@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import json
 from db_util import get_connection
+from db_util import fetch_cruise_options  # Add this import
 from sqlalchemy import text
 from config import ROOT_DIRECTORY
 
@@ -71,17 +72,17 @@ def upload_winch_file(file):
     return "winch_data"  # Return relative path
 
 # Function to insert winch data into database
-def insert_winch_data(file_name, file_path, cruise, start_time, end_time, settings, notes):
-    """Insert winch file metadata into database (no core association)"""
+def insert_winch_data(file_name, file_path, cruise_id, start_time, end_time, settings, notes):
+    """Insert winch file metadata into database using cruise_id"""
     with get_connection() as conn:
         query = text("""
-            INSERT INTO winch_data (file_name, file_path, cruise, start_time, end_time, settings, notes)
-            VALUES (:file_name, :file_path, :cruise, :start_time, :end_time, :settings, :notes)
+            INSERT INTO winch_data (file_name, file_path, cruise_id, start_time, end_time, settings, notes)
+            VALUES (:file_name, :file_path, :cruise_id, :start_time, :end_time, :settings, :notes)
         """)
         conn.execute(query, {
             "file_name": file_name,
             "file_path": file_path,
-            "cruise": cruise or None,
+            "cruise_id": cruise_id,
             "start_time": start_time,
             "end_time": end_time,
             "settings": settings,
@@ -92,10 +93,42 @@ def insert_winch_data(file_name, file_path, cruise, start_time, end_time, settin
 # Main interface - no core selection needed
 st.info("ℹ️ Winch data files contain continuous logging that may include multiple core operations or partial deployments.")
 
-# Step 1: Cruise identification
-cruise_name = st.text_input("Cruise Identifier", 
-                           placeholder="e.g., SKQ202512S, RR2208",
-                           help="Enter the cruise identifier for this winch data")
+# Step 1: Cruise selection
+st.subheader("Cruise Selection")
+
+# Fetch cruise options
+cruises = fetch_cruise_options()
+
+# Create cruise options for dropdown
+cruise_options = {}
+if cruises:
+    for cruise in cruises:
+        cruise_id, cruise_name, vessel_name, vessel_id = cruise
+        display_name = f"{cruise_name} ({vessel_name})" if vessel_name else cruise_name
+        cruise_options[display_name] = cruise_id
+
+# Cruise selection dropdown
+cruise_choice = st.selectbox(
+    "Select Cruise*",
+    ["Select Cruise"] + list(cruise_options.keys()),
+    help="Select the cruise this winch data belongs to"
+)
+
+if cruise_choice == "Select Cruise":
+    cruise_id = None
+    cruise_name = None
+    vessel_name = "No cruise selected"
+    st.info("Please select a cruise to continue.")
+else:
+    cruise_id = cruise_options[cruise_choice]
+    cruise_name = cruise_choice.split(" (")[0]  # Extract cruise name without vessel
+    
+    # Get vessel info for display
+    vessel_info = next((c for c in cruises if c[0] == cruise_id), None)
+    vessel_name = vessel_info[2] if vessel_info and vessel_info[2] else "Unknown vessel"
+    
+    # Display auto-populated vessel info
+    st.success(f"**Vessel:** {vessel_name} (from selected cruise)")
 
 # Step 2: Winch format selection
 winch_format = st.selectbox("Select Winch Data Format", list(WINCH_FORMATS.keys()))
@@ -119,7 +152,7 @@ notes = st.text_area("Notes",
                     placeholder="Enter notes about this winch logging session (e.g., equipment issues, time periods covered, etc.)...")
 
 # Step 5: Process file if uploaded
-if uploaded_file is not None and cruise_name:
+if uploaded_file is not None and cruise_choice != "Select Cruise":
     try:
         # Preview the file with selected format
         st.subheader("📋 File Preview")
@@ -182,7 +215,7 @@ if uploaded_file is not None and cruise_name:
                 insert_winch_data(
                     uploaded_file.name,
                     uploaded_file_path,
-                    cruise_name,
+                    cruise_id,  # Use cruise_id instead of cruise_name
                     str(start_datetime),
                     str(end_datetime),
                     settings,
@@ -199,8 +232,8 @@ if uploaded_file is not None and cruise_name:
         st.error(f"Error processing winch file: {e}")
         st.write("Please check that the selected format matches your file structure.")
 
-elif uploaded_file is not None and not cruise_name:
-    st.warning("Please enter a cruise identifier before processing the file.")
+elif uploaded_file is not None and cruise_choice == "Select Cruise":
+    st.warning("Please select a cruise before processing the file.")
 
 # Display current winch data summary
 st.markdown("---")
@@ -208,17 +241,20 @@ st.subheader("📈 Current Winch Data Files")
 
 try:
     with get_connection() as conn:
-        # Get summary by cruise
+        # Get summary by cruise with cruise and vessel names
         query = text("""
             SELECT 
-                cruise,
+                cr.cruise_name,
+                v.vessel_name,
                 COUNT(*) as file_count,
-                MIN(start_time) as earliest_data,
-                MAX(end_time) as latest_data
-            FROM winch_data 
-            WHERE cruise IS NOT NULL
-            GROUP BY cruise
-            ORDER BY cruise
+                MIN(wd.start_time) as earliest_data,
+                MAX(wd.end_time) as latest_data
+            FROM winch_data wd
+            LEFT JOIN cruises cr ON wd.cruise_id = cr.cruise_id
+            LEFT JOIN vessels v ON cr.vessel_id = v.vessel_id
+            WHERE wd.cruise_id IS NOT NULL
+            GROUP BY cr.cruise_name, v.vessel_name
+            ORDER BY cr.cruise_name
         """)
         
         winch_summary = pd.read_sql(query, conn)
@@ -227,7 +263,8 @@ try:
             st.write("**Winch Data by Cruise:**")
             
             for _, row in winch_summary.iterrows():
-                with st.expander(f"🚢 {row['cruise']} ({row['file_count']} files)"):
+                vessel_info = f" - {row['vessel_name']}" if row['vessel_name'] else ""
+                with st.expander(f"🚢 {row['cruise_name']}{vessel_info} ({row['file_count']} files)"):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write(f"**Earliest Data:** {row['earliest_data']}")
@@ -236,12 +273,13 @@ try:
                     
                     # Get individual files for this cruise
                     file_query = text("""
-                        SELECT file_name, start_time, end_time, notes
-                        FROM winch_data 
-                        WHERE cruise = :cruise
-                        ORDER BY start_time
+                        SELECT wd.file_name, wd.start_time, wd.end_time, wd.notes
+                        FROM winch_data wd
+                        JOIN cruises cr ON wd.cruise_id = cr.cruise_id
+                        WHERE cr.cruise_name = :cruise_name
+                        ORDER BY wd.start_time
                     """)
-                    cruise_files = pd.read_sql(file_query, conn, params={"cruise": row['cruise']})
+                    cruise_files = pd.read_sql(file_query, conn, params={"cruise_name": row['cruise_name']})
                     
                     for _, file_row in cruise_files.iterrows():
                         st.write(f"📄 **{file_row['file_name']}**")

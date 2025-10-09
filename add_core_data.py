@@ -4,6 +4,7 @@ import pandas as pd
 from db_util import get_connection
 from db_util import fetch_dropdown_values
 from db_util import fetch_last_record
+from db_util import fetch_cruise_options  # Add this import
 from utils import render_dynamic_fields_from_metadata
 from datetime import date, time
 from sqlalchemy import text
@@ -39,6 +40,7 @@ st.title("🧪 Add a New Sediment Core")
 
 # Fetch dropdown values dynamically
 vessels, core_types = fetch_dropdown_values()
+cruises = fetch_cruise_options()
 
 # Fetch the last record for carry-forward functionality
 last_record = fetch_last_record()
@@ -65,32 +67,59 @@ else:
 if core_name and core_name != core_name_input:
     st.info(f"Formatted Core Name: **{core_name}**")
 
-vessel_options = {v[1]: v[0] for v in vessels}  # Map vessel names to IDs
-vessel_choice = st.selectbox(
-    "Select Vessel",
-    list(vessel_options.keys()),
-    index=list(vessel_options.values()).index(last_record['vessel_id']) if last_record else 0
+# --- Cruise Selection with Auto-populated Vessel ---
+st.subheader("Cruise and Vessel")
+
+# Create cruise options for dropdown
+cruise_options = {}
+cruise_vessel_map = {}  # Map cruise_id to vessel info
+
+if cruises:
+    for cruise in cruises:
+        cruise_id, cruise_name, vessel_name, vessel_id = cruise
+        display_name = f"{cruise_name} ({vessel_name})" if vessel_name else cruise_name
+        cruise_options[display_name] = cruise_id
+        cruise_vessel_map[cruise_id] = {
+            'vessel_name': vessel_name,
+            'vessel_id': vessel_id
+        }
+
+# Determine default cruise selection
+default_cruise_index = 0
+if last_record and last_record.get('cruise_id'):
+    # Find the matching cruise in the options
+    for i, (display_name, cruise_id) in enumerate(cruise_options.items()):
+        if cruise_id == last_record['cruise_id']:
+            default_cruise_index = i + 1  # +1 because of "Select Cruise" option
+            break
+
+# Cruise selection dropdown
+cruise_choice = st.selectbox(
+    "Select Cruise*",
+    ["Select Cruise"] + list(cruise_options.keys()),
+    index=default_cruise_index
 )
-cruise_input = st.text_input("Cruise", value=last_record['cruise'] if last_record else "", key="cruise_input")
 
-# Auto-capitalize and filter allowed characters for Cruise
-if cruise_input:
-    # Remove any characters that aren't letters, numbers, or hyphens
-    filtered_cruise = re.sub(r'[^A-Za-z0-9\-]', '', cruise_input)
-    # Convert to uppercase
-    cruise = filtered_cruise.upper()
-    
-    # Show warning if input was modified
-    if cruise != cruise_input:
-        st.warning(f"Cruise automatically formatted: **{cruise}**")
-        st.caption("Only letters, numbers, and hyphens (-) are allowed. All letters will be capitalized.")
+# Auto-populate vessel based on cruise selection
+if cruise_choice == "Select Cruise":
+    cruise_id = None
+    vessel_id = None
+    vessel_name = "No cruise selected"
+    st.info("Please select a cruise to auto-populate vessel information.")
 else:
-    cruise = ""
+    cruise_id = cruise_options[cruise_choice]
+    vessel_info = cruise_vessel_map[cruise_id]
+    vessel_id = vessel_info['vessel_id']
+    vessel_name = vessel_info['vessel_name']
+    
+    # Display auto-populated vessel
+    st.success(f"**Vessel:** {vessel_name} (auto-populated from cruise)")
 
-# Show helper message if needed
-if cruise_input and cruise != cruise_input:
-    st.caption("Cruise will be automatically capitalized. Only letters, numbers, and hyphens (-) are allowed.")
+# Show vessel selection as read-only info
+st.text_input("Vessel", value=vessel_name, disabled=True, 
+              help="Vessel is automatically selected based on the chosen cruise")
 
+# Remove the old vessel and cruise input sections and continue with leg
 leg = st.text_input("Leg", value=last_record['leg'] if last_record else "")
 date_field = st.date_input("Date", 
                           value=date.today(),
@@ -325,6 +354,10 @@ if st.button("Save Core"):
     if not core_name.strip():
         missing_fields.append("Core Name")
 
+    # Check if cruise is selected
+    if cruise_choice == "Select Cruise":
+        missing_fields.append("Cruise")
+
     # Check if core_type is selected
     if core_type_choice == "Select Core Type":
         missing_fields.append("Core Type")
@@ -356,7 +389,7 @@ if st.session_state.show_confirmation:
     null_values = []
     
     # Check static fields for NULLs
-    if not cruise or not cruise.strip(): null_values.append("Cruise")
+    if cruise_id is None: null_values.append("Cruise")  # Change from cruise text check
     if not leg or not leg.strip(): null_values.append("Leg")
     if not station or not station.strip(): null_values.append("Station")
     if latitude is None: null_values.append("Latitude")
@@ -428,12 +461,12 @@ if st.session_state.show_confirmation:
                         # === CREATE JC CORE (original logic) ===
                         base_query = """
                             INSERT INTO cores (
-                                core_name, vessel_id, cruise, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
+                                core_name, vessel_id, cruise_id, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
                                 time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id, data_entry_remarks
                         """
                         base_values = [
-                            core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
+                            core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
                             water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
                             time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
                             tension_at_bottom, pullout_tension, notes or None, wire_type_id, data_entry_remarks or None
@@ -466,7 +499,7 @@ if st.session_state.show_confirmation:
                             
                             # TC core values (same as JC but with different name, core_type, and NULL tensions)
                             tc_base_values = [
-                                tc_core_name, vessel_options[vessel_choice], cruise or None, leg or None, date_field, station or None, 
+                                tc_core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
                                 water_depth, latitude, longitude, observer or None, tc_core_type_id, time_launched, time_on_bottom, 
                                 time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
                                 None, None, notes or None, wire_type_id, data_entry_remarks or None  # tensions = NULL, include data_entry_remarks

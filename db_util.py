@@ -66,13 +66,29 @@ def get_dynamic_fields_metadata(core_type_id):
     return []
 
 def fetch_last_record():
-    """Fetch the most recent record from the cores table."""
-    with get_connection() as conn:
-        query = text("SELECT * FROM cores ORDER BY core_id DESC LIMIT 1")
-        result = conn.execute(query).fetchone()
-        if result:
-            # Use _asdict() to convert the Row object to a dictionary
-            return result._asdict()
+    """Fetch the last record from cores table for carry-forward functionality."""
+    try:
+        with get_connection() as conn:
+            query = """
+            SELECT c.vessel_id, c.cruise_id, cr.cruise_name, c.leg, c.station 
+            FROM cores c
+            LEFT JOIN cruises cr ON c.cruise_id = cr.cruise_id
+            ORDER BY c.core_id DESC 
+            LIMIT 1
+            """
+            result = conn.execute(text(query)).fetchone()
+            if result:
+                return {
+                    'vessel_id': result[0],
+                    'cruise_id': result[1], 
+                    'cruise_name': result[2],
+                    'leg': result[3],
+                    'station': result[4]
+                }
+            else:
+                return None
+    except Exception as e:
+        print(f"Error fetching last record: {e}")
         return None
 
 def get_mscl_core_files():
@@ -208,4 +224,20 @@ def delete_all_sections_for_core(core_id):
         query = text("DELETE FROM sections WHERE core_id = :core_id")
         conn.execute(query, {"core_id": core_id})
         conn.commit()
+
+def fetch_cruise_options():
+    """Fetch cruise options with vessel information for dropdown."""
+    try:
+        with get_connection() as conn:
+            query = """
+            SELECT cr.cruise_id, cr.cruise_name, v.vessel_name, v.vessel_id
+            FROM cruises cr
+            LEFT JOIN vessels v ON cr.vessel_id = v.vessel_id
+            ORDER BY cr.cruise_name
+            """
+            cruises = conn.execute(text(query)).fetchall()
+            return cruises
+    except Exception as e:
+        print(f"Error fetching cruise options: {e}")
+        return []
 
