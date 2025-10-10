@@ -207,20 +207,3 @@ else:
                             conn.commit()
                         st.success("Sensor file updated successfully!")
                         st.rerun()
-
-        # Delete file option
-        st.markdown("---")
-        st.subheader("🗑️ Delete File")
-        st.warning("⚠️ This will permanently delete the file record from the database (but not the actual file).")
-        
-        if st.button("Delete File Record", type="secondary"):
-            with get_connection() as conn:
-                if file_type == "mscl":
-                    delete_query = text("DELETE FROM mscl_files WHERE file_id = :file_id")
-                else:
-                    delete_query = text("DELETE FROM sensor_files WHERE file_id = :file_id")
-                
-                conn.execute(delete_query, {"file_id": file_id})
-                conn.commit()
-            st.success("File record deleted successfully!")
-            st.rerun()
