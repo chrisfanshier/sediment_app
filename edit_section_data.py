@@ -13,18 +13,18 @@ if not cores_with_sections:
 else:
     # Step 1: Select Core
     st.subheader("Select Core to Edit")
-    core_options = {f"{name} ({cruise}) - {count} sections": (id, name, cruise, count) 
-                   for id, name, cruise, count in cores_with_sections}
+    core_options = {f"{name} ({cruise_name}) - {count} sections": (id, name, cruise_name, count) 
+                for id, name, cruise_name, count in cores_with_sections}
     selected_core_label = st.selectbox("Select Core", [""] + list(core_options.keys()))
     
     if selected_core_label:
-        selected_core_id, selected_core_name, selected_cruise, section_count = core_options[selected_core_label]
-        
+        selected_core_id, selected_core_name, selected_cruise_name, section_count = core_options[selected_core_label]
+
         # Get existing sections
         existing_sections = get_sections_for_core(selected_core_id)
         
         st.subheader(f"Edit Sections for {selected_core_name}")
-        st.write(f"**Cruise:** {selected_cruise}")
+        st.write(f"**Cruise:** {selected_cruise_name}")
         
         # Initialize session state for section lengths
         if "section_lengths" not in st.session_state or st.session_state.get("current_core_id") != selected_core_id:

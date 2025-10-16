@@ -5,17 +5,19 @@ from db_util import get_connection, fetch_cores, get_existing_sections, insert_s
 st.title("📏 Add Section Data")
 
 # Main interface
+# ...existing code...
 cores = fetch_cores()
 if cores.empty:
     st.warning("No cores found. Please add cores first.")
 else:
     # Step 1: Select Core
     st.subheader("Select Core")
-    core_options = {f"{name} ({cruise})": (id, name, cruise) for id, name, cruise in zip(cores['core_id'], cores['core_name'], cores['cruise'])}
+    # Use cruise_name instead of cruise
+    core_options = {f"{name} ({cruise_name})": (id, name, cruise_name) for id, name, cruise_name in zip(cores['core_id'], cores['core_name'], cores['cruise_name'])}
     selected_core_label = st.selectbox("Select Core", [""] + list(core_options.keys()))
     
     if selected_core_label:
-        selected_core_id, selected_core_name, selected_cruise = core_options[selected_core_label]
+        selected_core_id, selected_core_name, selected_cruise_name = core_options[selected_core_label]
         
         # Check for existing sections
         existing_sections = get_existing_sections(selected_core_id)
@@ -110,7 +112,6 @@ else:
                                     if length > 0:  # Only save sections with length > 0
                                         top_cum = cumulative
                                         bottom_cum = cumulative + length
-                                        
                                         insert_section(
                                             selected_core_id,
                                             i,

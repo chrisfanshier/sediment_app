@@ -13,8 +13,13 @@ def get_connection():
     return engine.connect()
 
 def fetch_cores():
-    """Fetch the cores table from the database."""
-    query = "SELECT * FROM cores ORDER BY core_name"
+    """Fetch cores with cruise_name from cruises table."""
+    query = """
+        SELECT c.core_id, c.core_name, cr.cruise_name
+        FROM cores c
+        JOIN cruises cr ON c.cruise_id = cr.cruise_id
+        ORDER BY cr.cruise_name, c.core_name
+    """
     with get_connection() as conn:
         return pd.read_sql(query, conn)
 
@@ -140,23 +145,25 @@ def get_existing_sections(core_id):
     """Get existing sections for a core"""
     with get_connection() as conn:
         query = text("""
-            SELECT section_number, section_length, top_cum_length, bottom_cum_length 
-            FROM sections 
-            WHERE core_id = :core_id 
+            SELECT section_number, section_length
+            FROM sections
+            WHERE core_id = :core_id
             ORDER BY section_number
         """)
         result = conn.execute(query, {"core_id": core_id})
         return result.fetchall()
 
+# filepath: c:\sediment_app\scripts\db_util.py
 def get_cores_with_sections():
     """Get cores that have sections"""
     with get_connection() as conn:
         query = text("""
-            SELECT DISTINCT c.core_id, c.core_name, c.cruise, COUNT(s.section_id) as section_count
+            SELECT DISTINCT c.core_id, c.core_name, cr.cruise_name, COUNT(s.section_id) as section_count
             FROM cores c
             JOIN sections s ON c.core_id = s.core_id
-            GROUP BY c.core_id, c.core_name, c.cruise
-            ORDER BY c.cruise, c.core_name
+            JOIN cruises cr ON c.cruise_id = cr.cruise_id
+            GROUP BY c.core_id, c.core_name, cr.cruise_name
+            ORDER BY cr.cruise_name, c.core_name
         """)
         result = conn.execute(query)
         return result.fetchall()
