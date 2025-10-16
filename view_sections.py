@@ -9,26 +9,27 @@ def view_sections():
     with get_connection() as conn:
         # Get sections data with cruise and core_name instead of IDs
         query_sections = """
-            SELECT c.cruise,
-                   c.core_name,
-                   s.section_number,
-                   s.section_length,
-                   s.top_cum_length,
-                   s.bottom_cum_length
-            FROM sections s
-            JOIN cores c ON s.core_id = c.core_id
-            ORDER BY c.cruise, c.core_name, s.section_number
+        SELECT cr.cruise_name,
+            c.core_name,
+            s.section_number,
+            s.section_length,
+            s.top_cum_length,
+            s.bottom_cum_length
+        FROM sections s
+        JOIN cores c ON s.core_id = c.core_id
+        JOIN cruises cr ON c.cruise_id = cr.cruise_id
+        ORDER BY cr.cruise_name, c.core_name, s.section_number
         """
         sections_data = pd.read_sql(query_sections, conn)
 
-        cruises = pd.read_sql("SELECT DISTINCT cruise FROM cores ORDER BY cruise", conn)
-        cruise_list = cruises['cruise'].tolist()
+        cruises = pd.read_sql("SELECT DISTINCT cruise_name FROM cruises ORDER BY cruise_name", conn)
+        cruise_list = cruises['cruise_name'].tolist()
 
         # Get core_id and core_name for the selected cruise
         if cruise_list:
             selected_cruise = st.sidebar.selectbox("Select a cruise to filter cores:", options=[""] + cruise_list)
             if selected_cruise:
-                query = "SELECT core_id, core_name FROM cores WHERE cruise = %s ORDER BY core_name"
+                query = "SELECT core_id, core_name FROM cores WHERE cruise_name = %s ORDER BY core_name"
                 cores = pd.read_sql(query, conn, params=[selected_cruise])
                 core_list = cores[['core_id', 'core_name']].values.tolist()
             else:
@@ -58,7 +59,7 @@ def view_sections():
 
         # Apply search filters
         if search_cruise:
-            filtered_data = filtered_data[filtered_data['cruise'].astype(str).str.contains(search_cruise, case=False)]
+            filtered_data = filtered_data[filtered_data['cruise_name'].astype(str).str.contains(search_cruise, case=False)]
         if search_core_name:
             filtered_data = filtered_data[filtered_data['core_name'].astype(str).str.contains(search_core_name, case=False)]
         if search_section:
