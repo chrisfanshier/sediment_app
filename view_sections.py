@@ -29,10 +29,8 @@ def view_sections():
         if cruise_list:
             selected_cruise = st.sidebar.selectbox("Select a cruise to filter cores:", options=[""] + cruise_list)
             if selected_cruise:
-# ...existing code...
                 query = "SELECT core_id, core_name FROM cores WHERE cruise_name = :cruise_name ORDER BY core_name"
                 cores = pd.read_sql(query, conn, params={"cruise_name": selected_cruise})
-# ...existing code...
                 core_list = cores[['core_id', 'core_name']].values.tolist()
             else:
                 core_list = []
