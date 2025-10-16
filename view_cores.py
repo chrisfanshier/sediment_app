@@ -17,12 +17,18 @@ def view_cores():
         core_types_df = pd.read_sql(query_core_types, conn)
         core_type_map = core_types_df.set_index('core_type_id')['core_type_name'].to_dict()
 
-        # Get cores data WITH file counts in one query
+        # Fetch cruise names
+        query_cruises = "SELECT cruise_id, cruise_name FROM cruises"
+        cruises_df = pd.read_sql(query_cruises, conn)
+        cruise_map = cruises_df.set_index('cruise_id')['cruise_name'].to_dict()
+
+        # Get cores data WITH file counts in one query, and join cruises for cruise_name
         query_cores_with_files = """
             SELECT c.*, 
                    COALESCE(mscl_count, 0) as mscl_file_count,
                    COALESCE(sensor_count, 0) as sensor_file_count,
-                   COALESCE(mscl_count, 0) + COALESCE(sensor_count, 0) as total_file_count
+                   COALESCE(mscl_count, 0) + COALESCE(sensor_count, 0) as total_file_count,
+                   cr.cruise_name
             FROM cores c 
             LEFT JOIN (
                 SELECT core_id, COUNT(*) as mscl_count 
@@ -34,6 +40,7 @@ def view_cores():
                 FROM sensor_files 
                 GROUP BY core_id
             ) s ON c.core_id = s.core_id
+            LEFT JOIN cruises cr ON c.cruise_id = cr.cruise_id
             ORDER BY c.core_name
         """
         cores_data = pd.read_sql(query_cores_with_files, conn)
@@ -41,12 +48,15 @@ def view_cores():
         # Replace IDs with names (keep this part)
         cores_data['vessel_name'] = cores_data['vessel_id'].map(vessel_map).fillna(cores_data['vessel_id'])
         cores_data['core_type_name'] = cores_data['core_type_id'].map(core_type_map).fillna(cores_data['core_type_id'])
+        # cruise_name is already joined in the query
 
         # Drop the original ID columns if you only want to display names
         if 'vessel_id' in cores_data.columns:
             cores_data.drop(columns=['vessel_id'], inplace=True)
         if 'core_type_id' in cores_data.columns:
             cores_data.drop(columns=['core_type_id'], inplace=True)
+        if 'cruise_id' in cores_data.columns:
+            cores_data.drop(columns=['cruise_id'], inplace=True)
 
     if not cores_data.empty:
         # Sidebar Search Boxes (Above Column Selection)
@@ -68,14 +78,15 @@ def view_cores():
 
         # Apply search filters
         if search_cruise:
-            filtered_data = filtered_data[filtered_data['cruise'].astype(str).str.contains(search_cruise, case=False)]
+            filtered_data = filtered_data['cruise_name'].astype(str).str.contains(search_cruise, case=False)
+            filtered_data = cores_data[filtered_data][visible_columns].copy()
         if search_core_name:
             filtered_data = filtered_data[filtered_data['core_name'].astype(str).str.contains(search_core_name, case=False)]
 
         # Sidebar filters for all visible columns (excluding search fields)
         st.sidebar.header("Filter Options")
         for column in visible_columns:
-            if column not in ["cruise", "core_name", "vessel_name", "core_type_name"]:  # Exclude the name columns as well
+            if column not in ["cruise_name", "core_name", "vessel_name", "core_type_name"]:  # Exclude the name columns as well
                 unique_values = cores_data[column].dropna().unique()
 
                 if len(unique_values) < 20:  # Use a multiselect filter for categorical-like columns

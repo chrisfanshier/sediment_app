@@ -21,6 +21,22 @@ def view_sections():
         """
         sections_data = pd.read_sql(query_sections, conn)
 
+        cruises = pd.read_sql("SELECT DISTINCT cruise FROM cores ORDER BY cruise", conn)
+        cruise_list = cruises['cruise'].tolist()
+
+        # Get core_id and core_name for the selected cruise
+        if cruise_list:
+            selected_cruise = st.sidebar.selectbox("Select a cruise to filter cores:", options=[""] + cruise_list)
+            if selected_cruise:
+                query = "SELECT core_id, core_name FROM cores WHERE cruise = %s ORDER BY core_name"
+                cores = pd.read_sql(query, conn, params=[selected_cruise])
+                core_list = cores[['core_id', 'core_name']].values.tolist()
+            else:
+                core_list = []
+        else:
+            selected_cruise = ""
+            core_list = []
+
     if not sections_data.empty:
         # Sidebar Search Boxes (Above Column Selection)
         st.sidebar.header("Search")
@@ -86,6 +102,7 @@ def view_sections():
             """
         )
     else:
+        st.info("No sections data found. Please check the database or adjust your filters.")
         st.write("No sections found in the database.")
         st.info("Sections are created when you add CT scan data. Go to 'Add CT Data' to create sections.")
 
