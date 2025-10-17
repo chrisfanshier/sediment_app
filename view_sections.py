@@ -25,19 +25,6 @@ def view_sections():
         cruises = pd.read_sql("SELECT DISTINCT cruise_name FROM cruises ORDER BY cruise_name", conn)
         cruise_list = cruises['cruise_name'].tolist()
 
-        # Get core_id and core_name for the selected cruise
-        if cruise_list:
-            selected_cruise = st.sidebar.selectbox("Select a cruise to filter cores:", options=[""] + cruise_list)
-            if selected_cruise:
-                query = "SELECT core_id, core_name FROM cores WHERE cruise_name = :cruise_name ORDER BY core_name"
-                cores = pd.read_sql(query, conn, params={"cruise_name": selected_cruise})
-                core_list = cores[['core_id', 'core_name']].values.tolist()
-            else:
-                core_list = []
-        else:
-            selected_cruise = ""
-            core_list = []
-
     if not sections_data.empty:
         # Sidebar Search Boxes (Above Column Selection)
         st.sidebar.header("Search")
