@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from db_util import (get_cores_with_sections, get_sections_for_core, 
-                     delete_all_sections_for_core, insert_section)
+                     delete_all_sections_for_core, insert_section, update_section, delete_section)
+import psycopg2
 
 st.title("✏️ Edit Section Data")
 
@@ -64,7 +65,6 @@ else:
             with col3:
                 # Calculate cumulative lengths
                 top_cum = total_length
-                bottom_cum = total_length + new_length
                 st.write(f"{top_cum:.1f} - {bottom_cum:.1f}")
                 total_length = bottom_cum
                 
@@ -129,37 +129,65 @@ else:
         # Save button
         if st.button("💾 Save All Changes", type="primary"):
             try:
-                # Delete all existing sections
-                delete_all_sections_for_core(selected_core_id)
-                
-                # Insert new sections (only those with length > 0)
-                cumulative = 0
-                sections_saved = 0
-                
-                for i, length in enumerate(st.session_state.section_lengths):
-                    if length > 0:  # Only save sections with length > 0
-                        section_number = i + 1
-                        top_cum = cumulative
-                        bottom_cum = cumulative + length
-                        
+                # Fetch existing sections from DB (with IDs)
+                db_sections = get_sections_for_core(selected_core_id)
+                db_section_ids = [s[0] for s in db_sections]
+
+                # Prepare new sections data (only those with length > 0)
+                new_sections = [
+                    {
+                        "section_number": i + 1,
+                        "length": length,
+                        "top_cum": sum(st.session_state.section_lengths[:i]),
+                        "bottom_cum": sum(st.session_state.section_lengths[:i+1])
+                    }
+                    for i, length in enumerate(st.session_state.section_lengths)
+                    if length > 0
+                ]
+
+                # Update or insert sections
+                for i, section in enumerate(new_sections):
+                    if i < len(db_sections):
+                        # Update existing section
+                        section_id = db_sections[i][0]
+                        update_section(
+                            section_id,
+                            section["length"],
+                            section["top_cum"],
+                            section["bottom_cum"]
+                        )
+                    else:
+                        # Insert new section
                         insert_section(
                             selected_core_id,
-                            section_number,
-                            length,
-                            top_cum,
-                            bottom_cum
+                            section["section_number"],
+                            section["length"],
+                            section["top_cum"],
+                            section["bottom_cum"]
                         )
-                        
-                        cumulative = bottom_cum
-                        sections_saved += 1
-                
-                # Success message like the other scripts - but DON'T clear session state or rerun
+
+                # Delete extra sections if any
+                if len(db_sections) > len(new_sections):
+                    for j in range(len(new_sections), len(db_sections)):
+                        section_id = db_sections[j][0]
+                        try:
+                            delete_section(section_id)
+                        except psycopg2.errors.ForeignKeyViolation:
+                            st.error(
+                                "❌ Cannot delete section because it is referenced by other data (e.g., CT scan data). "
+                                "Please remove related data first."
+                            )
+                            raise
+
                 st.success("✅ Section records updated successfully!")
-                st.write(f"**Sections saved:** {sections_saved}")
-                st.write(f"**Total core length:** {cumulative:.1f} cm")
-                
-                # Don't clear session state or rerun - let user see what they saved
-                
+                st.write(f"**Sections saved:** {len(new_sections)}")
+                st.write(f"**Total core length:** {sum([s['length'] for s in new_sections]):.1f} cm")
+
+            except psycopg2.errors.ForeignKeyViolation:
+                st.error(
+                    "❌ Cannot delete section because it is referenced by other data (e.g., CT scan data). "
+                    "Please remove related data first."
+                )
             except Exception as e:
                 st.error(f"Error saving sections: {e}")
 
