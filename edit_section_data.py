@@ -33,7 +33,7 @@ else:
             st.session_state.current_core_id = selected_core_id
             # Load existing section lengths
             for section in existing_sections:
-                section_id, section_number, section_length, top_cum, bottom_cum = section
+                section_id, section_number, section_length, *_ = section
                 st.session_state.section_lengths.append(float(section_length or 0))
         
         st.write("**Edit section lengths (in cm). Section numbers will auto-renumber.**")
@@ -52,19 +52,19 @@ else:
                 new_length = st.number_input(
                     "Length (cm)",
                     min_value=0.0,
-                    max_value=5000.0,  # Changed from 1000.0 to 5000.0 to handle longer cores
+                    max_value=5000.0,
                     value=length,
                     step=0.1,
                     format="%.1f",
                     key=f"section_length_{i}",
                     label_visibility="collapsed"
                 )
-                # Update session state
                 st.session_state.section_lengths[i] = new_length
             
             with col3:
                 # Calculate cumulative lengths
                 top_cum = total_length
+                bottom_cum = top_cum + new_length  # <-- Add this line!
                 st.write(f"{top_cum:.1f} - {bottom_cum:.1f}")
                 total_length = bottom_cum
                 
