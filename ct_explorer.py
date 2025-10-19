@@ -4,7 +4,6 @@ from db_util import get_connection  # Use shared DB connection
 
 st.title("CT Data Explorer (Postgres)")
 
-@st.cache_data
 def get_full_table():
     with get_connection() as conn:
         query = """
@@ -15,7 +14,6 @@ def get_full_table():
         df = pd.read_sql_query(query, conn)
     return df
 
-@st.cache_data
 def get_summary_table(df):
     filtered = df[~(df["image_type"].isnull() & df["processing_stage"].isnull())].copy()
     filtered["image_type_disp"] = filtered["image_type"].fillna("NULL")
