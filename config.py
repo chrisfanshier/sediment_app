@@ -8,7 +8,8 @@ SUBDIRECTORIES = {
     "MSCL Data": "MSCL_Data",
     "RBR Sensor": "Sensor_Data",
     "Star-Oddi Sensor": "Sensor_Data",
-    "Winch Data": "winch_data"
+    "Winch Data": "winch_data",
+    "CT Data": "CT_Data"
 }
 
 # Predefined winch data formats
