@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 from db_util import get_connection  # Use shared DB connection
+from PIL import Image
+import numpy as np
+import os
+from config import ROOT_DIRECTORY, SUBDIRECTORIES
 
 st.title("CT Data Explorer (Postgres)")
 
@@ -77,12 +81,19 @@ try:
     def make_tiff_link(row):
         if row["image_type"] in ["giXRayImage", "giCTOrthogonalView"]:
             tiff_path = row["xml_path"].replace(".xml", ".tif")
-            # Store the tiff path in a clickable button
+            # Display as a link (for reference)
             return tiff_path
         return ""
 
     if "xml_path" in filtered_df.columns and "image_type" in filtered_df.columns:
         filtered_df["TIFF File"] = filtered_df.apply(make_tiff_link, axis=1)
+
+        # Add a hyperlink column (for reference only)
+        def make_hyperlink(tiff_path):
+            if tiff_path:
+                return f"[{os.path.basename(tiff_path)}](file://{os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES['CT Data'], tiff_path)})"
+            return ""
+        filtered_df["TIFF Link"] = filtered_df["TIFF File"].apply(make_hyperlink)
 
         st.dataframe(filtered_df, use_container_width=True)
 
@@ -92,13 +103,17 @@ try:
 
         selected_tiff = st.selectbox("Show TIFF image for selected XML", tiff_files) if tiff_files else None
         if selected_tiff:
-            # You may need to prepend the root directory to get the full path
-            from config import ROOT_DIRECTORY, SUBDIRECTORIES
-            import os
+            # Use config info for base directory
             base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
             tiff_full_path = os.path.join(base_dir, selected_tiff)
             try:
-                st.image(tiff_full_path, caption=selected_tiff, use_column_width=True)
+                # Convert 16-bit TIFF to 8-bit for display
+                img = Image.open(tiff_full_path)
+                if img.mode == "I;16":
+                    arr = np.array(img)
+                    arr8 = (arr / 256).astype("uint8")  # Scale to 8-bit
+                    img = Image.fromarray(arr8)
+                st.image(img, caption=selected_tiff, use_column_width=True)
             except Exception as e:
                 st.warning(f"Could not load TIFF: {e}")
 
