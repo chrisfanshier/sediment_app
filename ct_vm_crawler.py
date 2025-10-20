@@ -197,6 +197,7 @@ def save_ct_folders_to_staging(records):
             row[0] for row in conn.execute(text("SELECT xml_path FROM ct_xml_staging"))
         )
         new_records = []
+        manual_review = []  # Collect records needing manual interpretation
         for r in records:
             reason = None
             if r["xml_path"] in existing_xmls:
@@ -204,10 +205,6 @@ def save_ct_folders_to_staging(records):
             elif not r["core_name"]:
                 reason = "Missing core_name"
             # Add more checks as needed
-
-            if reason:
-                print(f"SKIPPED: {r['xml_path']} | Reason: {reason}")
-                continue
 
             core_name = r["core_name"].strip() if r["core_name"] else None
             core_row = conn.execute(
@@ -223,17 +220,13 @@ def save_ct_folders_to_staging(records):
             except (TypeError, ValueError):
                 section_number_int = None
 
-            if core_id:
-                # Try to find existing section
-                section_row = None
-                if section_number_int is not None:
-                    section_row = conn.execute(
-                        text("SELECT section_id FROM sections WHERE core_id = :core_id AND section_number = :section_number"),
-                        {"core_id": core_id, "section_number": section_number_int}
-                    ).fetchone()
-                # If not found, create it
+            # Only create a new section if section_number is an integer and no section exists
+            if core_id and section_number_int is not None:
+                section_row = conn.execute(
+                    text("SELECT section_id FROM sections WHERE core_id = :core_id AND section_number = :section_number"),
+                    {"core_id": core_id, "section_number": section_number_int}
+                ).fetchone()
                 if not section_row:
-                    # Use Total-Scanned-Length if available, else None
                     try:
                         section_length = float(r.get("total_scanned_length")) if r.get("total_scanned_length") else None
                     except Exception:
@@ -247,7 +240,7 @@ def save_ct_folders_to_staging(records):
                         """),
                         {
                             "core_id": core_id,
-                            "section_number": section_number,
+                            "section_number": section_number_int,
                             "section_length": section_length,
                             "remarks": remarks
                         }
@@ -255,6 +248,14 @@ def save_ct_folders_to_staging(records):
                     section_id = result.scalar()
                 else:
                     section_id = section_row[0]
+            elif core_id and section_number_int is None:
+                # Section number not integer, flag for manual review
+                manual_review.append(r)
+                reason = "Non-integer section number, needs manual interpretation"
+
+            if reason:
+                print(f"SKIPPED: {r['xml_path']} | Reason: {reason}")
+                continue
 
             conn.execute(
                 text("""
@@ -277,6 +278,7 @@ def save_ct_folders_to_staging(records):
                 )
             )
             new_records.append(r)
+        # Optionally, log or return manual_review for further handling
         return new_records
 
 # === Flask routes ===
