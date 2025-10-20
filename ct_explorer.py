@@ -73,7 +73,34 @@ try:
     if search_core_full:
         filtered_df = filtered_df[filtered_df['core_name'].astype(str).str.contains(search_core_full, case=False)]
 
-    st.dataframe(filtered_df, use_container_width=True)
+    # Add TIFF link column for giXRayImage and giCTOrthogonalView
+    def make_tiff_link(row):
+        if row["image_type"] in ["giXRayImage", "giCTOrthogonalView"]:
+            tiff_path = row["xml_path"].replace(".xml", ".tif")
+            # Store the tiff path in a clickable button
+            return tiff_path
+        return ""
+
+    if "xml_path" in filtered_df.columns and "image_type" in filtered_df.columns:
+        filtered_df["TIFF File"] = filtered_df.apply(make_tiff_link, axis=1)
+
+        st.dataframe(filtered_df, use_container_width=True)
+
+        # Show TIFF image if selected
+        tiff_files = filtered_df["TIFF File"].dropna().unique()
+        tiff_files = [f for f in tiff_files if f]  # Remove empty strings
+
+        selected_tiff = st.selectbox("Show TIFF image for selected XML", tiff_files) if tiff_files else None
+        if selected_tiff:
+            # You may need to prepend the root directory to get the full path
+            from config import ROOT_DIRECTORY, SUBDIRECTORIES
+            import os
+            base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
+            tiff_full_path = os.path.join(base_dir, selected_tiff)
+            try:
+                st.image(tiff_full_path, caption=selected_tiff, use_column_width=True)
+            except Exception as e:
+                st.warning(f"Could not load TIFF: {e}")
 
 except Exception as e:
     st.error(f"Could not connect to Postgres or query data: {e}")
