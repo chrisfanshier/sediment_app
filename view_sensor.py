@@ -430,23 +430,6 @@ def view_sensor_data():
                             
 
                             if top_y_axis and bottom_y_axis:
-                                # Collect metadata for legend names
-                                top_metadata = {
-                                    'primary_sensor_location': file_row.get('sensor_location'),
-                                    'overlay_sensor_location': overlay_file_row.iloc[0]['sensor_location'] if overlay_file_row is not None and not overlay_file_row.empty else None,
-                                    'overlay_core_name': overlay_core_label if 'overlay_core_label' in locals() else None,
-                                    'third_sensor_location': third_file_row['sensor_location'] if 'third_file_row' in locals() and third_file_row is not None else None,
-                                    'third_core_name': third_core_label if 'third_core_label' in locals() else None
-                                }
-                                
-                                bottom_metadata = {
-                                    'primary_sensor_location': bottom_file_row.get('sensor_location'),
-                                    'overlay_sensor_location': bottom_overlay_file_row.iloc[0]['sensor_location'] if 'bottom_overlay_file_row' in locals() and bottom_overlay_file_row is not None and not bottom_overlay_file_row.empty else None,
-                                    'overlay_core_name': bottom_overlay_core_label if 'bottom_overlay_core_label' in locals() else None,
-                                    'third_sensor_location': bottom_third_file_row['sensor_location'] if 'bottom_third_file_row' in locals() and bottom_third_file_row is not None else None,
-                                    'third_core_name': bottom_third_core_label if 'bottom_third_core_label' in locals() else None
-                                }
-                                
                                 # Show available data info
                                 st.info(f"📊 **Top plot:** {len([df for df in [primary_df, overlay_df, third_df] if df is not None])} files available")
                                 st.info(f"📊 **Bottom plot:** {len([df for df in [bottom_primary_df, bottom_overlay_df, bottom_third_df] if df is not None])} files available")
@@ -458,10 +441,8 @@ def view_sensor_data():
                                     # Bottom plot data  
                                     bottom_primary_df, bottom_overlay_df, bottom_third_df, bottom_y_axis,
                                     max_points=max_points,
-                                    top_name=selected_core_label,
-                                    bottom_name=bottom_selected_core_label if 'bottom_selected_core_label' in locals() else 'Bottom Core',
-                                    top_metadata=top_metadata,
-                                    bottom_metadata=bottom_metadata
+                                    top_name=f"Top: {selected_core_label}",
+                                    bottom_name=f"Bottom: {bottom_selected_core_label if 'bottom_selected_core_label' in locals() else 'Bottom Core'}"
                                 )
                                 st.plotly_chart(fig, use_container_width=True)
                         
