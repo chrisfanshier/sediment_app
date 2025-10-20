@@ -361,7 +361,13 @@ def plot_rbr_dual_stacked(primary_df, overlay_df=None, third_df=None,
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text=y_axis_1, row=1, col=1)
     fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
-    
+
+    # Invert y-axis if plotting Depth or Pressure
+    if "depth" in y_axis_1.lower() or "press" in y_axis_1.lower():
+        fig.update_yaxes(autorange="reversed", row=1, col=1)
+    if "depth" in y_axis_2.lower() or "press" in y_axis_2.lower():
+        fig.update_yaxes(autorange="reversed", row=2, col=1)
+
     return fig
 
 def plot_rbr_dual_stacked_flexible(param1_df, param2_df, 
@@ -425,7 +431,13 @@ def plot_rbr_dual_stacked_flexible(param1_df, param2_df,
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text=y_axis_1, row=1, col=1)
     fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
-    
+
+    # Invert y-axis if plotting Depth or Pressure
+    if "depth" in y_axis_1.lower() or "press" in y_axis_1.lower():
+        fig.update_yaxes(autorange="reversed", row=1, col=1)
+    if "depth" in y_axis_2.lower() or "press" in y_axis_2.lower():
+        fig.update_yaxes(autorange="reversed", row=2, col=1)
+
     return fig
 
 def plot_rbr_dual_high_resolution(param1_df, param2_df, 
@@ -497,7 +509,13 @@ def plot_rbr_dual_high_resolution(param1_df, param2_df,
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text=y_axis_1, row=1, col=1)
     fig.update_yaxes(title_text=y_axis_2, row=2, col=1)
-    
+
+    # Invert y-axis if plotting Depth or Pressure
+    if "depth" in y_axis_1.lower() or "press" in y_axis_1.lower():
+        fig.update_yaxes(autorange="reversed", row=1, col=1)
+    if "depth" in y_axis_2.lower() or "press" in y_axis_2.lower():
+        fig.update_yaxes(autorange="reversed", row=2, col=1)
+
     return fig
 
 def plot_rbr_dual_comprehensive(plot_config, max_points=1000):
@@ -575,7 +593,16 @@ def plot_rbr_dual_comprehensive(plot_config, max_points=1000):
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text="Parameter Value", row=1, col=1)
     fig.update_yaxes(title_text="Parameter Value", row=2, col=1)
-    
+
+    # Invert y-axis if plotting Depth or Pressure
+    for i, plot in enumerate(['top', 'bottom'], start=1):
+        for trace_type, trace_config in plot_config[plot].items():
+            if trace_config and 'param' in trace_config:
+                param = trace_config['param']
+                if "depth" in param.lower() or "press" in param.lower():
+                    fig.update_yaxes(autorange="reversed", row=i, col=1)
+                    break
+
     return fig
 
 def plot_rbr_dual_comprehensive_high_res(plot_config, start_time, end_time):
@@ -661,7 +688,16 @@ def plot_rbr_dual_comprehensive_high_res(plot_config, start_time, end_time):
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text="Parameter Value", row=1, col=1)
     fig.update_yaxes(title_text="Parameter Value", row=2, col=1)
-    
+
+    # Invert y-axis if plotting Depth or Pressure
+    for i, plot in enumerate(['top', 'bottom'], start=1):
+        for trace_type, trace_config in plot_config[plot].items():
+            if trace_config and 'param' in trace_config:
+                param = trace_config['param']
+                if "depth" in param.lower() or "press" in param.lower():
+                    fig.update_yaxes(autorange="reversed", row=i, col=1)
+                    break
+
     return fig
 
 def plot_rbr_dual_simple(top_primary_df, top_overlay_df, top_third_df, top_y_axis,
@@ -742,7 +778,13 @@ def plot_rbr_dual_simple(top_primary_df, top_overlay_df, top_third_df, top_y_axi
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text=top_y_axis, row=1, col=1)
     fig.update_yaxes(title_text=bottom_y_axis, row=2, col=1)
-    
+
+    # Invert y-axis if plotting Depth or Pressure
+    if "depth" in top_y_axis.lower() or "press" in top_y_axis.lower():
+        fig.update_yaxes(autorange="reversed", row=1, col=1)
+    if "depth" in bottom_y_axis.lower() or "press" in bottom_y_axis.lower():
+        fig.update_yaxes(autorange="reversed", row=2, col=1)
+
     return fig
 
 def plot_rbr_dual_simple_high_res(top_primary_df, top_overlay_df, top_third_df, top_y_axis,
@@ -807,5 +849,11 @@ def plot_rbr_dual_simple_high_res(top_primary_df, top_overlay_df, top_third_df, 
     fig.update_xaxes(title_text="Time", row=2, col=1)
     fig.update_yaxes(title_text=top_y_axis, row=1, col=1)
     fig.update_yaxes(title_text=bottom_y_axis, row=2, col=1)
-    
+
+    # Invert y-axis if plotting Depth or Pressure
+    if "depth" in top_y_axis.lower() or "press" in top_y_axis.lower():
+        fig.update_yaxes(autorange="reversed", row=1, col=1)
+    if "depth" in bottom_y_axis.lower() or "press" in bottom_y_axis.lower():
+        fig.update_yaxes(autorange="reversed", row=2, col=1)
+
     return fig
