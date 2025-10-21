@@ -153,6 +153,24 @@ def apply_zoom_filter(df, zoom_range):
             
     return df
 
+def apply_offsets(df, x_offset, y_offset, global_x, global_y, parameter_cols):
+    """Apply time and value offsets to dataframe"""
+    df_offset = df.copy()
+    
+    # Apply time offset (x-axis)
+    total_x_offset = x_offset + global_x
+    if total_x_offset != 0:
+        df_offset['datetime'] = df_offset['datetime'] + pd.Timedelta(seconds=total_x_offset)
+    
+    # Apply value offset (y-axis) to specified columns
+    total_y_offset = y_offset + global_y
+    if total_y_offset != 0:
+        for col in parameter_cols:
+            if col in df_offset.columns:
+                df_offset[col] = df_offset[col] + total_y_offset
+    
+    return df_offset
+
 st.title("🌡️ Sensor Data Plotter")
 st.write("Overlay multiple sensor measurements with winch data")
 
@@ -242,6 +260,63 @@ with st.sidebar:
                                             st.error("No parameters found in winch file")
                                             enable_winch = False
 
+                            # Additional plot window controls
+                            st.subheader("📈 Additional Plot Windows")
+                            additional_sensor_plot = st.checkbox("Enable Additional Sensor Plot", value=False)
+                            additional_winch_plot = st.checkbox("Enable Additional Winch Plot", value=False)
+                            
+                            # If additional sensor plot is enabled, allow parameter and file selection
+                            if additional_sensor_plot:
+                                st.write("**Additional Sensor Plot Configuration:**")
+                                
+                                # Independent file selection for additional sensor plot
+                                additional_sensor_files = st.multiselect(
+                                    "Additional Sensor Files:", 
+                                    options=list(sensor_options.keys()),
+                                    key="additional_sensor_files"
+                                )
+                                
+                                if additional_sensor_files:
+                                    additional_sensor_file_ids = [sensor_options[s] for s in additional_sensor_files]
+                                    
+                                    # Get parameters from the selected additional files
+                                    additional_all_parameters = set()
+                                    for file_id in additional_sensor_file_ids:
+                                        df, _ = load_sensor_data(file_id)
+                                        if df is not None:
+                                            numeric_cols = [col for col in df.select_dtypes(include=['number']).columns 
+                                                          if col.lower() not in ['id', 'index']]
+                                            additional_all_parameters.update(numeric_cols)
+                                    
+                                    if additional_all_parameters:
+                                        additional_sensor_parameter = st.selectbox(
+                                            "Additional Sensor Parameter:", 
+                                            options=['all'] + sorted(list(additional_all_parameters)),
+                                            key="additional_sensor_param"
+                                        )
+                                    else:
+                                        additional_sensor_parameter = None
+                                        st.warning("No numeric parameters found in selected additional sensor files")
+                                else:
+                                    additional_sensor_file_ids = []
+                                    additional_sensor_parameter = None
+                                    st.info("Select files for additional sensor plot")
+                            else:
+                                additional_sensor_files = []
+                                additional_sensor_file_ids = []
+                                additional_sensor_parameter = None
+                            
+
+                            # If additional winch plot is enabled, allow parameter selection
+                            if additional_winch_plot and 'winch_params' in locals() and winch_params:
+                                additional_winch_parameter = st.selectbox(
+                                    "Additional Winch Parameter:", 
+                                    options=[p for p in winch_params if p != winch_parameter],
+                                    key="additional_winch_param"
+                                )
+                            else:
+                                additional_winch_parameter = None
+
 # Main plotting area
 if 'selected_sensors' in locals() and selected_sensors:
     
@@ -251,6 +326,7 @@ if 'selected_sensors' in locals() and selected_sensors:
     with col2:
         st.subheader("🔧 Plot Controls")
         
+        # First the existing detail mode controls...
         if detail_mode:
             st.info("🔍 Detail mode: Focused view around max depth")
             
@@ -282,35 +358,35 @@ if 'selected_sensors' in locals() and selected_sensors:
                 default_start = max_depth_time - pd.Timedelta(minutes=5)
                 default_end = max_depth_time + pd.Timedelta(minutes=5)
                 
-                # Manual time inputs
+                # Manual time inputs with precise control
                 st.write("**Adjust time window around max depth:**")
                 
                 col_start, col_end = st.columns(2)
                 
                 with col_start:
-                    start_time = st.time_input(
-                        "Start time:",
-                        value=default_start.time(),
-                        key="detail_start"
-                    )
-                    start_date = default_start.date()
+                    st.write("**Start Time**")
+                    start_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_start.hour, key="start_hour")
+                    start_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_start.minute, key="start_minute")
+                    start_second = st.number_input("Second:", min_value=0, max_value=59, value=default_start.second, key="start_second")
                 
                 with col_end:
-                    end_time = st.time_input(
-                        "End time:",
-                        value=default_end.time(),
-                        key="detail_end"
-                    )
-                    end_date = default_end.date()
+                    st.write("**End Time**")
+                    end_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_end.hour, key="end_hour")
+                    end_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_end.minute, key="end_minute")
+                    end_second = st.number_input("Second:", min_value=0, max_value=59, value=default_end.second, key="end_second")
                 
-                # Combine date and time
-                detail_start = pd.to_datetime(f"{start_date} {start_time}")
-                detail_end = pd.to_datetime(f"{end_date} {end_time}")
+                # Combine into datetime objects
+                start_date = default_start.date()
+                end_date = default_end.date()
+                
+                detail_start = pd.to_datetime(f"{start_date} {start_hour:02d}:{start_minute:02d}:{start_second:02d}")
+                detail_end = pd.to_datetime(f"{end_date} {end_hour:02d}:{end_minute:02d}:{end_second:02d}")
                 zoom_range = [detail_start, detail_end]
                 
                 # Show the selected window
-                time_span_minutes = (detail_end - detail_start).total_seconds() / 60
-                st.info(f"⏰ Time window: {time_span_minutes:.1f} minutes")
+                time_span_seconds = (detail_end - detail_start).total_seconds()
+                time_span_minutes = time_span_seconds / 60
+                st.info(f"⏰ Time window: {time_span_minutes:.1f} minutes ({time_span_seconds:.0f} seconds)")
                 st.info(f"🎯 Centered on max depth at {max_depth_time.strftime('%H:%M:%S')}")
                 
             else:
@@ -330,22 +406,29 @@ if 'selected_sensors' in locals() and selected_sensors:
                     col_start, col_end = st.columns(2)
                     
                     with col_start:
-                        start_time = st.time_input(
-                            "Start time:",
-                            value=default_start.time(),
-                            key="manual_start"
-                        )
+                        st.write("**Start Time**")
+                        start_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_start.hour, key="manual_start_hour")
+                        start_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_start.minute, key="manual_start_minute")
+                        start_second = st.number_input("Second:", min_value=0, max_value=59, value=default_start.second, key="manual_start_second")
                     
                     with col_end:
-                        end_time = st.time_input(
-                            "End time:",
-                            value=default_end.time(),
-                            key="manual_end"
-                        )
+                        st.write("**End Time**")
+                        end_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_end.hour, key="manual_end_hour")
+                        end_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_end.minute, key="manual_end_minute")
+                        end_second = st.number_input("Second:", min_value=0, max_value=59, value=default_end.second, key="manual_end_second")
                     
-                    detail_start = pd.to_datetime(f"{default_start.date()} {start_time}")
-                    detail_end = pd.to_datetime(f"{default_end.date()} {end_time}")
+                    # Combine into datetime objects
+                    start_date = default_start.date()
+                    end_date = default_end.date()
+                    
+                    detail_start = pd.to_datetime(f"{start_date} {start_hour:02d}:{start_minute:02d}:{start_second:02d}")
+                    detail_end = pd.to_datetime(f"{end_date} {end_hour:02d}:{end_minute:02d}:{end_second:02d}")
                     zoom_range = [detail_start, detail_end]
+                    
+                    # Show time span
+                    time_span_seconds = (detail_end - detail_start).total_seconds()
+                    time_span_minutes = time_span_seconds / 60
+                    st.info(f"⏰ Time window: {time_span_minutes:.1f} minutes ({time_span_seconds:.0f} seconds)")
                 else:
                     zoom_range = None
         else:
@@ -360,96 +443,129 @@ if 'selected_sensors' in locals() and selected_sensors:
             )
             st.info(f"📊 Overview mode: Max {max_points:,} points per file")
 
-    with col1:
-        # Create the plot
-        if enable_winch and 'selected_winch' in locals() and 'winch_parameter' in locals():
-            # Two subplots
-            fig = make_subplots(
-                rows=2, cols=1,
-                shared_xaxes=True,
-                vertical_spacing=0.02,
-                row_heights=[0.6, 0.4],
-                subplot_titles=[f"Sensor Data: {parameter}", f"Winch Data: {winch_parameter}"]
-            )
-            
-            # Add sensor traces to top subplot
-            colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
-            for i, file_id in enumerate(sensor_file_ids):
+        # NEW: Add offset controls section
+        st.subheader("⚡ Trace Offsets")
+        
+        # Global offset controls
+        st.write("**Global Offsets:**")
+        global_x_offset = st.number_input("Global X Offset (seconds):", value=0.0, step=0.1, format="%.2f")
+        global_y_offset = st.number_input("Global Y Offset:", value=0.0, step=0.1, format="%.2f")
+        
+        # Individual file offsets
+        st.write("**Individual Sensor File Offsets:**")
+        file_offsets = {}
+        
+        # Main sensor files
+        st.write("*Main Sensor Files:*")
+        for i, file_id in enumerate(sensor_file_ids):
+            df, info = load_sensor_data(file_id)
+            if df is not None:
+                st.write(f"📊 {info.file_name}")
+                col_x, col_y = st.columns(2)
+                
+                with col_x:
+                    x_offset = st.number_input(
+                        f"X (sec):",
+                        value=0.0,
+                        step=0.01,
+                        format="%.3f",
+                        key=f"sensor_x_{file_id}"
+                    )
+                
+                with col_y:
+                    y_offset = st.number_input(
+                        f"Y:",
+                        value=0.0,
+                        step=0.01,
+                        format="%.3f",
+                        key=f"sensor_y_{file_id}"
+                    )
+                
+                file_offsets[file_id] = {'x': x_offset, 'y': y_offset}
+        
+        # Additional sensor files offsets
+        if additional_sensor_plot and additional_sensor_file_ids:
+            st.write("*Additional Sensor Files:*")
+            for i, file_id in enumerate(additional_sensor_file_ids):
                 df, info = load_sensor_data(file_id)
                 if df is not None:
-                    # Apply zoom filter first if in detail mode
-                    if detail_mode and zoom_range:
-                        df = apply_zoom_filter(df, zoom_range)
-                        st.write(f"📊 {info.file_name}: {len(df):,} points in zoom range")
+                    st.write(f"📊 {info.file_name} (Additional)")
+                    col_x, col_y = st.columns(2)
                     
-                    # Apply downsampling if not in detail mode
-                    if not detail_mode and len(df) > max_points:
-                        step = max(1, len(df) // max_points)
-                        df = df.iloc[::step]
-                    elif detail_mode and len(df) > 200000:  # Safety limit even in detail mode
-                        st.warning(f"⚠️ {info.file_name}: {len(df):,} points is very large. Sampling every 2nd point.")
-                        df = df.iloc[::2]
-
-                    color = colors[i % len(colors)]
-                    cols_to_plot = find_columns_to_plot(df, parameter)
+                    with col_x:
+                        x_offset = st.number_input(
+                            f"X (sec):",
+                            value=0.0,
+                            step=0.01,
+                            format="%.3f",
+                            key=f"additional_sensor_x_{file_id}"
+                        )
                     
-                    # Debug info
-                    if not cols_to_plot:
-                        st.warning(f"No columns found for parameter '{parameter}' in {info.file_name}")
-                        st.write(f"Available columns: {list(df.columns)}")
+                    with col_y:
+                        y_offset = st.number_input(
+                            f"Y:",
+                            value=0.0,
+                            step=0.01,
+                            format="%.3f",
+                            key=f"additional_sensor_y_{file_id}"
+                        )
+                    
+                    file_offsets[file_id] = {'x': x_offset, 'y': y_offset}
 
-                    for col in cols_to_plot:
-                        if col in df.columns and not df[col].isna().all():
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=df['datetime'], y=df[col],
-                                    name=f"{info.file_name}: {col}",
-                                    line=dict(color=color, width=2),
-                                    opacity=0.8
-                                ), row=1, col=1
-                            )
+        # ADD THIS SECTION - Winch offset controls (restore to original position)
+        if enable_winch and 'winch_file_id' in locals():
+            st.write("**Winch Offsets:**")
+            col_wx, col_wy = st.columns(2)
             
-            # Add winch trace to bottom subplot
-            winch_df, winch_info = load_winch_data(winch_file_id)
-            if winch_df is not None and winch_parameter in winch_df.columns:
-                # Apply zoom filter first if in detail mode
-                if detail_mode and zoom_range:
-                    winch_df = apply_zoom_filter(winch_df, zoom_range)
-                
-                # Apply downsampling if not in detail mode
-                if not detail_mode and len(winch_df) > max_points:
-                    step = max(1, len(winch_df) // max_points)
-                    winch_df = winch_df.iloc[::step]
-                elif detail_mode and len(winch_df) > 200000:  # Safety limit
-                    winch_df = winch_df.iloc[::2]
-
-                fig.add_trace(
-                    go.Scatter(
-                        x=winch_df['datetime'], y=winch_df[winch_parameter],
-                        name=f"🔧 Winch: {winch_parameter}",
-                        line=dict(color='purple', width=2),
-                        opacity=0.8
-                    ), row=2, col=1
+            with col_wx:
+                winch_x_offset = st.number_input(
+                    "Winch X (sec):",
+                    value=0.0,
+                    step=0.01,
+                    format="%.3f",
+                    key="winch_x_offset"
                 )
             
-            # Configure layout for dual plot
-            fig.update_layout(
-                height=700,
-                hovermode='x unified',
-                showlegend=True,
-                template="plotly_white"
-            )
-            
-            # Update axes
-            fig.update_xaxes(title_text="Time", row=2, col=1)
-            fig.update_yaxes(title_text=f"Sensor: {parameter}", row=1, col=1)
-            fig.update_yaxes(title_text=f"Winch: {winch_parameter}", row=2, col=1)
-            
-            # Invert y-axis if depth parameter
-            if parameter and 'depth' in parameter.lower():
-                fig.update_yaxes(autorange="reversed", row=1, col=1)
-                
+            with col_wy:
+                winch_y_offset = st.number_input(
+                    "Winch Y:",
+                    value=0.0,
+                    step=0.01,
+                    format="%.3f",
+                    key="winch_y_offset"
+                )
         else:
+            winch_x_offset = 0.0
+            winch_y_offset = 0.0
+
+    with col1:
+        # Determine subplot configuration
+        subplot_count = 1  # Main sensor plot
+        
+        if enable_winch and 'selected_winch' in locals() and 'winch_parameter' in locals():
+            subplot_count += 1  # Main winch plot
+        
+        if additional_sensor_plot and additional_sensor_file_ids and additional_sensor_parameter:
+            subplot_count += 1  # Additional sensor plot
+            
+        if additional_winch_plot and 'additional_winch_parameter' in locals() and additional_winch_parameter:
+            subplot_count += 1  # Additional winch plot
+        
+        # Create subplot titles
+        subplot_titles = []
+        subplot_titles.append(f"Sensor Data: {parameter}")
+        
+        if enable_winch and 'selected_winch' in locals():
+            subplot_titles.append(f"Winch Data: {winch_parameter}")
+            
+        if additional_sensor_plot and additional_sensor_file_ids and additional_sensor_parameter:
+            subplot_titles.append(f"Additional Sensor: {additional_sensor_parameter}")
+            
+        if additional_winch_plot and 'additional_winch_parameter' in locals() and additional_winch_parameter:
+            subplot_titles.append(f"Additional Winch: {additional_winch_parameter}")
+        
+        # Create subplots
+        if subplot_count == 1:
             # Single plot
             fig = go.Figure()
             
@@ -461,6 +577,18 @@ if 'selected_sensors' in locals() and selected_sensors:
                     if detail_mode and zoom_range:
                         df = apply_zoom_filter(df, zoom_range)
                     
+                    # Get columns to plot
+                    cols_to_plot = find_columns_to_plot(df, parameter)
+                    
+                    # Apply offsets BEFORE downsampling
+                    if file_id in file_offsets:
+                        df = apply_offsets(df, 
+                                         file_offsets[file_id]['x'], 
+                                         file_offsets[file_id]['y'],
+                                         global_x_offset,
+                                         global_y_offset,
+                                         cols_to_plot)
+                    
                     # Apply downsampling if not in detail mode
                     if not detail_mode and len(df) > max_points:
                         step = max(1, len(df) // max_points)
@@ -470,12 +598,6 @@ if 'selected_sensors' in locals() and selected_sensors:
                         df = df.iloc[::2]
                         
                     color = colors[i % len(colors)]
-                    cols_to_plot = find_columns_to_plot(df, parameter)
-                    
-                    # Debug info
-                    if not cols_to_plot:
-                        st.warning(f"No columns found for parameter '{parameter}' in {info.file_name}")
-                        st.write(f"Available columns: {list(df.columns)}")
 
                     for col in cols_to_plot:
                         if col in df.columns and not df[col].isna().all():
@@ -503,9 +625,201 @@ if 'selected_sensors' in locals() and selected_sensors:
             if parameter and 'depth' in parameter.lower():
                 fig.update_yaxes(autorange="reversed")
         
+        else:
+            # Multiple subplots
+            # Calculate row heights based on subplot count
+            if subplot_count == 2:
+                row_heights = [0.6, 0.4]
+            elif subplot_count == 3:
+                row_heights = [0.4, 0.3, 0.3]
+            elif subplot_count == 4:
+                row_heights = [0.3, 0.25, 0.25, 0.2]
+            else:
+                row_heights = [1.0/subplot_count] * subplot_count
+            
+            fig = make_subplots(
+                rows=subplot_count, cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.02,
+                row_heights=row_heights,
+                subplot_titles=subplot_titles
+            )
+            
+            current_row = 1
+            
+            # Main sensor plot (always first)
+            colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+            for i, file_id in enumerate(sensor_file_ids):
+                df, info = load_sensor_data(file_id)
+                if df is not None:
+                    # Apply zoom filter first if in detail mode
+                    if detail_mode and zoom_range:
+                        df = apply_zoom_filter(df, zoom_range)
+                    
+                    # Get columns to plot
+                    cols_to_plot = find_columns_to_plot(df, parameter)
+                    
+                    # Apply offsets BEFORE downsampling
+                    if file_id in file_offsets:
+                        df = apply_offsets(df, 
+                                         file_offsets[file_id]['x'], 
+                                         file_offsets[file_id]['y'],
+                                         global_x_offset,
+                                         global_y_offset,
+                                         cols_to_plot)
+                    
+                    # Apply downsampling if not in detail mode
+                    if not detail_mode and len(df) > max_points:
+                        step = max(1, len(df) // max_points)
+                        df = df.iloc[::step]
+                    elif detail_mode and len(df) > 200000:  # Safety limit even in detail mode
+                        df = df.iloc[::2]
+
+                    color = colors[i % len(colors)]
+
+                    for col in cols_to_plot:
+                        if col in df.columns and not df[col].isna().all():
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=df['datetime'], y=df[col],
+                                    name=f"{info.file_name}: {col}",
+                                    line=dict(color=color, width=2),
+                                    opacity=0.8,
+                                    legendgroup="main_sensor"
+                                ), row=current_row, col=1
+                            )
+            
+            fig.update_yaxes(title_text=f"Sensor: {parameter}", row=current_row, col=1)
+            if parameter and 'depth' in parameter.lower():
+                fig.update_yaxes(autorange="reversed", row=current_row, col=1)
+            
+            current_row += 1
+            
+            # Main winch plot
+            if enable_winch and 'selected_winch' in locals() and 'winch_parameter' in locals():
+                winch_df, winch_info = load_winch_data(winch_file_id)
+                if winch_df is not None and winch_parameter in winch_df.columns:
+                    # Apply zoom filter first if in detail mode
+                    if detail_mode and zoom_range:
+                        winch_df = apply_zoom_filter(winch_df, zoom_range)
+                    
+                    # Apply winch offsets BEFORE downsampling
+                    winch_df = apply_offsets(winch_df, winch_x_offset, winch_y_offset, 0, 0, [winch_parameter])
+                    
+                    # Apply downsampling if not in detail mode
+                    if not detail_mode and len(winch_df) > max_points:
+                        step = max(1, len(winch_df) // max_points)
+                        winch_df = winch_df.iloc[::step]
+                    elif detail_mode and len(winch_df) > 200000:  # Safety limit
+                        winch_df = winch_df.iloc[::2]
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=winch_df['datetime'], y=winch_df[winch_parameter],
+                            name=f"🔧 Winch: {winch_parameter}",
+                            line=dict(color='purple', width=2),
+                            opacity=0.8,
+                            legendgroup="main_winch"
+                        ), row=current_row, col=1
+                    )
+                
+                fig.update_yaxes(title_text=f"Winch: {winch_parameter}", row=current_row, col=1)
+                current_row += 1
+            
+            # Additional sensor plot
+            if additional_sensor_plot and additional_sensor_file_ids and additional_sensor_parameter:
+                additional_colors = ['darkblue', 'darkred', 'darkgreen', 'darkorange', 'indigo', 'maroon', 'hotpink', 'dimgray']
+                for i, file_id in enumerate(additional_sensor_file_ids):  # Use additional_sensor_file_ids instead of sensor_file_ids
+                    df, info = load_sensor_data(file_id)
+                    if df is not None:
+                        # Apply zoom filter first if in detail mode
+                        if detail_mode and zoom_range:
+                            df = apply_zoom_filter(df, zoom_range)
+                        
+                        # Get columns to plot for additional parameter
+                        cols_to_plot = find_columns_to_plot(df, additional_sensor_parameter)
+                        
+                        # Apply offsets BEFORE downsampling - use the correct offset key
+                        if file_id in file_offsets:
+                            df = apply_offsets(df, 
+                                             file_offsets[file_id]['x'], 
+                                             file_offsets[file_id]['y'],
+                                             global_x_offset,
+                                             global_y_offset,
+                                             cols_to_plot)
+                        
+                        # Apply downsampling if not in detail mode
+                        if not detail_mode and len(df) > max_points:
+                            step = max(1, len(df) // max_points)
+                            df = df.iloc[::step]
+                        elif detail_mode and len(df) > 200000:  # Safety limit even in detail mode
+                            df = df.iloc[::2]
+
+                        color = additional_colors[i % len(additional_colors)]
+
+                        for col in cols_to_plot:
+                            if col in df.columns and not df[col].isna().all():
+                                fig.add_trace(
+                                    go.Scatter(
+                                        x=df['datetime'], y=df[col],
+                                        name=f"Add. {info.file_name}: {col}",
+                                        line=dict(color=color, width=2),
+                                        opacity=0.8,
+                                        legendgroup="additional_sensor"
+                                    ), row=current_row, col=1
+                                )
+                
+                fig.update_yaxes(title_text=f"Add. Sensor: {additional_sensor_parameter}", row=current_row, col=1)
+                if additional_sensor_parameter and 'depth' in additional_sensor_parameter.lower():
+                    fig.update_yaxes(autorange="reversed", row=current_row, col=1)
+                
+                current_row += 1
+            
+            # Additional winch plot
+            if additional_winch_plot and 'additional_winch_parameter' in locals() and additional_winch_parameter:
+                winch_df, winch_info = load_winch_data(winch_file_id)
+                if winch_df is not None and additional_winch_parameter in winch_df.columns:
+                    # Apply zoom filter first if in detail mode
+                    if detail_mode and zoom_range:
+                        winch_df = apply_zoom_filter(winch_df, zoom_range)
+                    
+                    # Apply winch offsets BEFORE downsampling
+                    winch_df = apply_offsets(winch_df, winch_x_offset, winch_y_offset, 0, 0, [additional_winch_parameter])
+                    
+                    # Apply downsampling if not in detail mode
+                    if not detail_mode and len(winch_df) > max_points:
+                        step = max(1, len(winch_df) // max_points)
+                        winch_df = winch_df.iloc[::step]
+                    elif detail_mode and len(winch_df) > 200000:  # Safety limit
+                        winch_df = winch_df.iloc[::2]
+
+                    fig.add_trace(
+                        go.Scatter(
+                            x=winch_df['datetime'], y=winch_df[additional_winch_parameter],
+                            name=f"🔧 Add. Winch: {additional_winch_parameter}",
+                            line=dict(color='darkmagenta', width=2),
+                            opacity=0.8,
+                            legendgroup="additional_winch"
+                        ), row=current_row, col=1
+                    )
+                
+                fig.update_yaxes(title_text=f"Add. Winch: {additional_winch_parameter}", row=current_row, col=1)
+            
+            # Configure layout for multiple subplots
+            plot_height = 400 + (subplot_count * 150)  # Dynamic height based on subplot count
+            fig.update_layout(
+                height=plot_height,
+                hovermode='x unified',
+                showlegend=True,
+                template="plotly_white"
+            )
+            
+            # Update x-axis title only on bottom subplot
+            fig.update_xaxes(title_text="Time", row=subplot_count, col=1)
+        
         # Display the plot
         st.plotly_chart(fig, use_container_width=True)
-    
+
     # Data info
     st.subheader("📊 Data Information")
     info_col1, info_col2, info_col3 = st.columns(3)
@@ -513,6 +827,9 @@ if 'selected_sensors' in locals() and selected_sensors:
     with info_col1:
         st.metric("Parameter", parameter)
         st.metric("Sensor Files", len(selected_sensors))
+        if additional_sensor_plot and additional_sensor_file_ids:
+            st.metric("Additional Sensor Files", len(additional_sensor_file_ids))
+            st.metric("Additional Sensor Param", additional_sensor_parameter)
     
     with info_col2:
         if detail_mode:
@@ -522,6 +839,8 @@ if 'selected_sensors' in locals() and selected_sensors:
         
         if enable_winch and 'selected_winch' in locals():
             st.metric("Winch Data", "Enabled")
+            if additional_winch_plot and 'additional_winch_parameter' in locals():
+                st.metric("Additional Winch Param", additional_winch_parameter)
         else:
             st.metric("Winch Data", "Disabled")
     
@@ -535,8 +854,10 @@ if 'selected_sensors' in locals() and selected_sensors:
         
         st.metric("Total Data Points", f"{total_points:,}")
         
-        if enable_winch and 'winch_df' in locals() and winch_df is not None:
-            st.metric("Winch Points", f"{len(winch_df):,}")
+        subplot_info = f"{subplot_count} subplot(s)"
+        if additional_sensor_plot or additional_winch_plot:
+            subplot_info += " (with additional plots)"
+        st.metric("Plot Configuration", subplot_info)
 
 else:
     st.info("👆 Select cruise, core, and sensor files from the sidebar to begin plotting")
