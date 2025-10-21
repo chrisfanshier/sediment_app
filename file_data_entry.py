@@ -4,7 +4,7 @@ import streamlit as st
 st.set_page_config(layout="wide")
 
 # Sidebar navigation
-menu = ["Add Data File", "Edit Data File", "Edit Winch Data"]
+menu = ["Add Data File", "Edit Data File", "Add Winch Data", "Edit Winch Data"]
 choice = st.sidebar.radio("Select Option", menu)
 
 # Render the selected page
@@ -29,6 +29,19 @@ elif choice == "Edit Data File":
     edit_file_code = edit_file_code.replace("st.set_page_config(layout='wide')", '')
     
     exec(edit_file_code)
+
+elif choice == "Add Winch Data":
+    # Execute the add_winch_data.py file content
+    with open("add_winch_data.py", "r", encoding="utf-8") as f:
+        add_winch_code = f.read()
+    
+    # Remove any st.set_page_config lines to avoid conflicts
+    add_winch_code = add_winch_code.replace('st.set_page_config(layout="wide")', '')
+    add_winch_code = add_winch_code.replace("st.set_page_config(layout='wide')", '')
+    add_winch_code = add_winch_code.replace('st.set_page_config(page_title="Add Winch Data", layout="wide")', '')
+    add_winch_code = add_winch_code.replace("st.set_page_config(page_title='Add Winch Data', layout='wide')", '')
+    
+    exec(add_winch_code)
 
 elif choice == "Edit Winch Data":
     # Execute the edit_winch_data.py file content
