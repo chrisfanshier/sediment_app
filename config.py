@@ -37,7 +37,14 @@ WINCH_FORMATS = {
         "header_lines": 13,
         "columns": ["Date", "Time", "Winch Number", "Tension", "Tension Alarm", "Payout", "Payout Alarm", "Speed", "Speed Alarm", "Max Payout"],
         "datetime_code": "pd.to_datetime(df['Date'] + ' ' + df['Time'], errors='coerce')"
+    },
+    "Armstrong short": {
+        "delimiter": "\\s+",
+        "header_lines": 1,
+        "columns": ["date", "time", "tension", "payout_m", "speed_m/s"],
+        "datetime_code": "pd.to_datetime(df['date']+ ' ' +df['time'])",
     }
+
 }
 
 # Function to construct full paths
