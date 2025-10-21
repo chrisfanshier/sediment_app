@@ -3,6 +3,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
 import os
+from config import get_full_path
 from db_util import get_connection, fetch_cruise_options
 from sqlalchemy import text
 from utils import process_rsk_data, process_star_oddi_data
@@ -73,7 +74,8 @@ def load_winch_data(winch_file_id):
             settings = {}
         
         # Construct full file path
-        full_file_path = os.path.join(file_info.file_path, file_info.file_name)
+        relative_path = os.path.join(file_info.file_path, file_info.file_name)
+        full_file_path = get_full_path(relative_path)
         
         # Use the settings from the database
         if settings:
