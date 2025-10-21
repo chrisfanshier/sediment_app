@@ -333,3 +333,23 @@ def process_star_oddi_data(relative_path):
         st.error(f"An error occurred while processing Star Oddi file: {e}")
         return None
 
+def parse_winch_dat(file_path, settings):
+    # Load the file using settings
+    df = pd.read_csv(
+        file_path,
+        delimiter=settings.get("delimiter", ","),
+        header=settings.get("header_lines", 0)
+    )
+    # If columns are specified, set them
+    if "columns" in settings:
+        df.columns = settings["columns"]
+
+    # Dynamically evaluate the datetime code from settings
+    datetime_code = settings.get("datetime_code")
+    if datetime_code:
+        # Use eval in a controlled way
+        df["datetime"] = eval(datetime_code, {"pd": pd, "df": df})
+    else:
+        raise ValueError("No datetime_code found in settings.")
+
+    return df
