@@ -244,7 +244,7 @@ elif file_category == "Winch Data":
         try:
             uploaded_file.seek(0)
             if delimiter == r"\s+":
-                df_preview = pd.read_csv(uploaded_file, delim_whitespace=True, skiprows=header_lines, nrows=20, header=None)
+                df_preview = pd.read_csv(uploaded_file, sep='\s+', skiprows=header_lines, nrows=20, header=None)
             else:
                 df_preview = pd.read_csv(uploaded_file, delimiter=delimiter, skiprows=header_lines, nrows=20, header=None)
             st.write("Raw Preview (first 20 rows):", df_preview)
@@ -286,7 +286,7 @@ elif file_category == "Winch Data":
                 # Read the entire dataset
                 uploaded_file.seek(0)
                 if delimiter == r"\s+":
-                    df = pd.read_csv(uploaded_file, delim_whitespace=True, skiprows=header_lines, names=colnames)
+                    df = pd.read_csv(uploaded_file, sep='\s+', skiprows=header_lines, names=colnames)
                 else:
                     df = pd.read_csv(uploaded_file, delimiter=delimiter, skiprows=header_lines, names=colnames)
 
