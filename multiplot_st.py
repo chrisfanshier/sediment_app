@@ -192,6 +192,12 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
             # Get columns to plot
             cols_to_plot = find_columns_to_plot(df, parameter)
             
+            # Create file identifier with sensor location
+            if info.sensor_location:
+                file_identifier = f"{info.sensor_location}_{info.file_name}"
+            else:
+                file_identifier = info.file_name
+            
             # Create original data columns
             for col in cols_to_plot:
                 if col in df.columns and not df[col].isna().all():
@@ -202,8 +208,8 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
                         step = max(1, len(df_export) // max_points)
                         df_export = df_export.iloc[::step]
                     
-                    # Rename column with file info
-                    original_col_name = f"{info.file_name}_{col}_original"
+                    # Rename column with sensor location and file info
+                    original_col_name = f"{file_identifier}_{col}_original"
                     df_export.rename(columns={col: original_col_name}, inplace=True)
                     export_data.append(df_export)
             
@@ -225,8 +231,8 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
                             step = max(1, len(df_export_offset) // max_points)
                             df_export_offset = df_export_offset.iloc[::step]
                         
-                        # Rename column with offset info
-                        offset_col_name = f"{info.file_name}_{col}_offset"
+                        # Rename column with sensor location and offset info
+                        offset_col_name = f"{file_identifier}_{col}_offset"
                         df_export_offset.rename(columns={col: offset_col_name}, inplace=True)
                         export_data.append(df_export_offset)
     
@@ -242,6 +248,12 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
                 # Get columns to plot
                 cols_to_plot = find_columns_to_plot(df, additional_sensor_parameter)
                 
+                # Create file identifier with sensor location for additional files
+                if info.sensor_location:
+                    file_identifier = f"ADD_{info.sensor_location}_{info.file_name}"
+                else:
+                    file_identifier = f"ADD_{info.file_name}"
+                
                 # Create original data columns
                 for col in cols_to_plot:
                     if col in df.columns and not df[col].isna().all():
@@ -252,8 +264,8 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
                             step = max(1, len(df_export) // max_points)
                             df_export = df_export.iloc[::step]
                         
-                        # Rename column with additional file info
-                        original_col_name = f"ADD_{info.file_name}_{col}_original"
+                        # Rename column with additional sensor location and file info
+                        original_col_name = f"{file_identifier}_{col}_original"
                         df_export.rename(columns={col: original_col_name}, inplace=True)
                         export_data.append(df_export)
                 
@@ -275,12 +287,12 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
                                 step = max(1, len(df_export_offset) // max_points)
                                 df_export_offset = df_export_offset.iloc[::step]
                             
-                            # Rename column with offset info
-                            offset_col_name = f"ADD_{info.file_name}_{col}_offset"
+                            # Rename column with sensor location and offset info
+                            offset_col_name = f"{file_identifier}_{col}_offset"
                             df_export_offset.rename(columns={col: offset_col_name}, inplace=True)
                             export_data.append(df_export_offset)
     
-    # Collect winch data
+    # Collect winch data (unchanged - winch doesn't have sensor_location)
     if enable_winch and winch_file_id and winch_parameter:
         winch_df, winch_info = load_winch_data(winch_file_id)
         if winch_df is not None and winch_parameter in winch_df.columns:
@@ -315,7 +327,7 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
             df_winch_export_offset.rename(columns={winch_parameter: offset_winch_col}, inplace=True)
             export_data.append(df_winch_export_offset)
     
-    # Collect additional winch data
+    # Collect additional winch data (unchanged - winch doesn't have sensor_location)
     if additional_winch_plot and winch_file_id and additional_winch_parameter:
         winch_df, winch_info = load_winch_data(winch_file_id)
         if winch_df is not None and additional_winch_parameter in winch_df.columns:
@@ -508,6 +520,28 @@ with st.sidebar:
                                 )
                             else:
                                 additional_winch_parameter = None
+
+    # Add cache control section after sensor selection
+    if 'selected_sensors' in locals() and selected_sensors:
+        st.divider()
+        st.subheader("🔄 Cache Control")
+        
+        col_cache1, col_cache2 = st.columns(2)
+        
+        with col_cache1:
+            if st.button("Clear Data Cache", help="Clear cached sensor data to reload fresh from database"):
+                st.cache_data.clear()
+                st.success("✅ Cache cleared!")
+                st.rerun()
+        
+        with col_cache2:
+            if st.button("Clear All Cache", help="Clear all cached data including parameters"):
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.success("✅ All cache cleared!")
+                st.rerun()
+        
+        st.caption("💡 Use after updating sensor metadata in database")
 
 # Main plotting area
 if 'selected_sensors' in locals() and selected_sensors:
