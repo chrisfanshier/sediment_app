@@ -871,22 +871,15 @@ if 'selected_sensors' in locals() and selected_sensors:
         if additional_winch_plot and 'additional_winch_parameter' in locals() and additional_winch_parameter:
             subplot_count += 1  # Additional winch plot
         
-        # Create subplot titles
-        subplot_titles = []
-        subplot_titles.append(f"Sensor Data: {parameter}")
-        
-        if enable_winch and 'selected_winch' in locals():
-            subplot_titles.append(f"Winch Data: {winch_parameter}")
-            
-        if additional_sensor_plot and 'additional_sensor_file_ids' in locals() and additional_sensor_file_ids and 'additional_sensor_parameter' in locals() and additional_sensor_parameter:
-            subplot_titles.append(f"Additional Sensor: {additional_sensor_parameter}")
-            
-        if additional_winch_plot and 'additional_winch_parameter' in locals() and additional_winch_parameter:
-            subplot_titles.append(f"Additional Winch: {additional_winch_parameter}")
+        # Get core name for main title
+        if 'selected_core' in locals() and selected_core:
+            main_title = selected_core
+        else:
+            main_title = "Sensor Data Plot"
         
         # Create subplots
         if subplot_count == 1:
-            # Single plot
+            # Single plot - no subplot titles
             fig = go.Figure()
             
             colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
@@ -894,7 +887,7 @@ if 'selected_sensors' in locals() and selected_sensors:
                 df, info = load_sensor_data(file_id)
                 if df is not None:
                     # Apply zoom filter first if in detail mode
-                    if detail_mode and 'zoom_range' in locals() and zoom_range:
+                    if detail_mode and zoom_range:
                         df = apply_zoom_filter(df, zoom_range)
                     
                     # Get columns to plot
@@ -921,24 +914,30 @@ if 'selected_sensors' in locals() and selected_sensors:
 
                     for col in cols_to_plot:
                         if col in df.columns and not df[col].isna().all():
+                            # Use sensor_location instead of file_name in legend
+                            if info.sensor_location:
+                                legend_name = f"{info.sensor_location}: {col}"
+                            else:
+                                legend_name = f"{info.file_name}: {col}"
+                            
                             fig.add_trace(
                                 go.Scatter(
                                     x=df['datetime'], y=df[col],
-                                    name=f"{info.file_name}: {col}",
+                                    name=legend_name,
                                     line=dict(color=color, width=2),
                                     opacity=0.8
                                 )
                             )
             
-            # Configure layout for single plot
+            # Configure layout for single plot with core name as title
             fig.update_layout(
                 height=600,
                 hovermode='x unified',
                 showlegend=True,
-                title=f"Sensor Data: {parameter}",
+                title=main_title,  # Core name as main title
                 template="plotly_white",
                 xaxis_title="Time",
-                yaxis_title=f"Sensor: {parameter}"
+                yaxis_title=f"{parameter}"
             )
             
             # Invert y-axis if depth parameter
@@ -946,7 +945,7 @@ if 'selected_sensors' in locals() and selected_sensors:
                 fig.update_yaxes(autorange="reversed")
         
         else:
-            # Multiple subplots
+            # Multiple subplots - NO subplot titles, just core name as main title
             # Calculate row heights based on subplot count
             if subplot_count == 2:
                 row_heights = [0.6, 0.4]
@@ -961,8 +960,8 @@ if 'selected_sensors' in locals() and selected_sensors:
                 rows=subplot_count, cols=1,
                 shared_xaxes=True,
                 vertical_spacing=0.02,
-                row_heights=row_heights,
-                subplot_titles=subplot_titles
+                row_heights=row_heights
+                # NO subplot_titles parameter - removes individual plot titles
             )
             
             current_row = 1
@@ -973,7 +972,7 @@ if 'selected_sensors' in locals() and selected_sensors:
                 df, info = load_sensor_data(file_id)
                 if df is not None:
                     # Apply zoom filter first if in detail mode
-                    if detail_mode and 'zoom_range' in locals() and zoom_range:
+                    if detail_mode and zoom_range:
                         df = apply_zoom_filter(df, zoom_range)
                     
                     # Get columns to plot
@@ -999,17 +998,23 @@ if 'selected_sensors' in locals() and selected_sensors:
 
                     for col in cols_to_plot:
                         if col in df.columns and not df[col].isna().all():
+                            # Use sensor_location instead of file_name in legend
+                            if info.sensor_location:
+                                legend_name = f"{info.sensor_location}: {col}"
+                            else:
+                                legend_name = f"{info.file_name}: {col}"
+                            
                             fig.add_trace(
                                 go.Scatter(
                                     x=df['datetime'], y=df[col],
-                                    name=f"{info.file_name}: {col}",
+                                    name=legend_name,
                                     line=dict(color=color, width=2),
                                     opacity=0.8,
                                     legendgroup="main_sensor"
                                 ), row=current_row, col=1
                             )
             
-            fig.update_yaxes(title_text=f"Sensor: {parameter}", row=current_row, col=1)
+            fig.update_yaxes(title_text=f"{parameter}", row=current_row, col=1)
             if parameter and 'depth' in parameter.lower():
                 fig.update_yaxes(autorange="reversed", row=current_row, col=1)
             
@@ -1020,7 +1025,7 @@ if 'selected_sensors' in locals() and selected_sensors:
                 winch_df, winch_info = load_winch_data(winch_file_id)
                 if winch_df is not None and winch_parameter in winch_df.columns:
                     # Apply zoom filter first if in detail mode
-                    if detail_mode and 'zoom_range' in locals() and zoom_range:
+                    if detail_mode and zoom_range:
                         winch_df = apply_zoom_filter(winch_df, zoom_range)
                     
                     # Apply winch offsets BEFORE downsampling
@@ -1036,14 +1041,14 @@ if 'selected_sensors' in locals() and selected_sensors:
                     fig.add_trace(
                         go.Scatter(
                             x=winch_df['datetime'], y=winch_df[winch_parameter],
-                            name=f"🔧 Winch: {winch_parameter}",
+                            name=f"Winch: {winch_parameter}",  # Keep winch naming as is
                             line=dict(color='purple', width=2),
                             opacity=0.8,
                             legendgroup="main_winch"
                         ), row=current_row, col=1
                     )
                 
-                fig.update_yaxes(title_text=f"Winch: {winch_parameter}", row=current_row, col=1)
+                fig.update_yaxes(title_text=f"{winch_parameter}", row=current_row, col=1)
                 current_row += 1
             
             # Additional sensor plot
@@ -1053,7 +1058,7 @@ if 'selected_sensors' in locals() and selected_sensors:
                     df, info = load_sensor_data(file_id)
                     if df is not None:
                         # Apply zoom filter first if in detail mode
-                        if detail_mode and 'zoom_range' in locals() and zoom_range:
+                        if detail_mode and zoom_range:
                             df = apply_zoom_filter(df, zoom_range)
                         
                         # Get columns to plot for additional parameter
@@ -1079,17 +1084,23 @@ if 'selected_sensors' in locals() and selected_sensors:
 
                         for col in cols_to_plot:
                             if col in df.columns and not df[col].isna().all():
+                                # Use sensor_location for additional sensors too
+                                if info.sensor_location:
+                                    legend_name = f"Add. {info.sensor_location}: {col}"
+                                else:
+                                    legend_name = f"Add. {info.file_name}: {col}"
+                                
                                 fig.add_trace(
                                     go.Scatter(
                                         x=df['datetime'], y=df[col],
-                                        name=f"Add. {info.file_name}: {col}",
+                                        name=legend_name,
                                         line=dict(color=color, width=2),
                                         opacity=0.8,
                                         legendgroup="additional_sensor"
                                     ), row=current_row, col=1
                                 )
                 
-                fig.update_yaxes(title_text=f"Add. Sensor: {additional_sensor_parameter}", row=current_row, col=1)
+                fig.update_yaxes(title_text=f"{additional_sensor_parameter}", row=current_row, col=1)
                 if additional_sensor_parameter and 'depth' in additional_sensor_parameter.lower():
                     fig.update_yaxes(autorange="reversed", row=current_row, col=1)
                 
@@ -1100,7 +1111,7 @@ if 'selected_sensors' in locals() and selected_sensors:
                 winch_df, winch_info = load_winch_data(winch_file_id)
                 if winch_df is not None and additional_winch_parameter in winch_df.columns:
                     # Apply zoom filter first if in detail mode
-                    if detail_mode and 'zoom_range' in locals() and zoom_range:
+                    if detail_mode and zoom_range:
                         winch_df = apply_zoom_filter(winch_df, zoom_range)
                     
                     # Apply winch offsets BEFORE downsampling
@@ -1116,22 +1127,23 @@ if 'selected_sensors' in locals() and selected_sensors:
                     fig.add_trace(
                         go.Scatter(
                             x=winch_df['datetime'], y=winch_df[additional_winch_parameter],
-                            name=f"🔧 Add. Winch: {additional_winch_parameter}",
+                            name=f"Add. Winch: {additional_winch_parameter}",  # Keep winch naming as is
                             line=dict(color='darkmagenta', width=2),
                             opacity=0.8,
                             legendgroup="additional_winch"
                         ), row=current_row, col=1
                     )
                 
-                fig.update_yaxes(title_text=f"Add. Winch: {additional_winch_parameter}", row=current_row, col=1)
+                fig.update_yaxes(title_text=f"{additional_winch_parameter}", row=current_row, col=1)
             
-            # Configure layout for multiple subplots
+            # Configure layout for multiple subplots with core name as main title
             plot_height = 400 + (subplot_count * 150)  # Dynamic height based on subplot count
             fig.update_layout(
                 height=plot_height,
                 hovermode='x unified',
                 showlegend=True,
-                template="plotly_white"
+                template="plotly_white",
+                title=main_title  # Core name as main title, no subplot titles
             )
             
             # Update x-axis title only on bottom subplot
