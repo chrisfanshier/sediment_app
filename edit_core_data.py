@@ -224,9 +224,14 @@ core_type_choice = st.selectbox(
     index=current_core_type_index
 )
 
-# Wire Type Selection
-wire_types = [(1, "Steel"), (2, "Synthetic")]  # Add your wire types here
-wire_type_options = {wt[1]: wt[0] for wt in wire_types}
+# Replace lines 189-202:
+
+# Wire Type Selection - Get from database dynamically  
+with get_connection() as conn:
+    wire_query = "SELECT wire_type_id, wire_type FROM wire ORDER BY wire_type"
+    wire_types = conn.execute(text(wire_query)).fetchall()
+
+wire_type_options = {wt[1]: wt[0] for wt in wire_types}  # Map wire type names to IDs
 
 # Find current wire type index
 current_wire_type_index = 0
