@@ -85,6 +85,9 @@ def load_winch_data(winch_file_id):
                 "columns": settings.get("columns", []),
                 "datetime_code": settings.get("datetime_code", "pd.to_datetime(df['datetime'])")
             }
+            # Add numeric_columns if present in settings
+            if "numeric_columns" in settings:
+                parsing_settings["numeric_columns"] = settings["numeric_columns"]
         else:
             # Fallback settings
             file_ext = os.path.splitext(file_info.file_name)[1].lower()
