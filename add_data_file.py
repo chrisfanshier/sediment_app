@@ -286,12 +286,21 @@ elif file_category == "Winch Data":
                 # Read the entire dataset
                 uploaded_file.seek(0)
                 if delimiter == r"\s+":
-                    df = pd.read_csv(uploaded_file, sep='\s+', skiprows=header_lines, names=colnames)
+                    df = pd.read_csv(uploaded_file, sep='\s+', skiprows=header_lines, names=colnames, low_memory=False)
                 else:
-                    df = pd.read_csv(uploaded_file, delimiter=delimiter, skiprows=header_lines, names=colnames)
+                    df = pd.read_csv(uploaded_file, delimiter=delimiter, skiprows=header_lines, names=colnames, low_memory=False)
 
                 # Execute datetime creation
                 exec(f"df['datetime'] = {datetime_code}")
+                
+                # Convert numeric columns if specified in format
+                if "numeric_columns" in selected_format:
+                    numeric_cols = selected_format["numeric_columns"]
+                    for col in numeric_cols:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col].astype(str).str.strip(), errors='coerce')
+                            st.info(f"✅ Converted '{col}' to numeric")
+                
                 st.write("Preview with datetime column (first 20 rows):", df.head())
 
                 # Calculate time range
@@ -324,15 +333,21 @@ elif file_category == "Winch Data":
                         # Save file using the same pattern as other files
                         uploaded_file_path = upload_file(uploaded_file, "Winch Data")
 
-                        # Prepare settings as JSON
-                        settings = json.dumps({
+                        # Prepare settings as JSON - include numeric_columns from format
+                        settings_dict = {
                             "delimiter": delimiter,
                             "header_lines": header_lines,
                             "columns": colnames,
                             "datetime_code": datetime_code,
                             "total_records": len(df),
                             "duration_hours": (end_datetime - start_datetime).total_seconds() / 3600
-                        })
+                        }
+                        
+                        # Add numeric_columns if present in selected format
+                        if "numeric_columns" in selected_format:
+                            settings_dict["numeric_columns"] = selected_format["numeric_columns"]
+                        
+                        settings = json.dumps(settings_dict)
 
                         # Insert metadata
                         insert_winch_data(
