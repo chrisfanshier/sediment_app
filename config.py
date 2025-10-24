@@ -43,8 +43,14 @@ WINCH_FORMATS = {
         "header_lines": 1,
         "columns": ["date", "time", "tension", "payout_m", "speed_m/s"],
         "datetime_code": "pd.to_datetime(df['date']+ ' ' +df['time'])",
+    },
+    "Revelle": {
+        "delimiter": ",",
+        "header_lines": 0,
+        "columns": ["time_stamp", "winch_id", "other_timestamp", "tension_lbs", "speed_mm", "payout_m", "checksum"],
+        "datetime_code": "pd.to_datetime(df['time_stamp'])",
+        "numeric_columns": ["tension_lbs", "speed_mm", "payout_m"]
     }
-
 }
 
 # Function to construct full paths

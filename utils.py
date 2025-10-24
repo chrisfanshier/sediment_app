@@ -333,23 +333,52 @@ def process_star_oddi_data(relative_path):
         st.error(f"An error occurred while processing Star Oddi file: {e}")
         return None
 
-def parse_winch_dat(file_path, settings):
-    # Load the file using settings
+def parse_winch_dat(file_path, parsing_settings):
+    """
+    Parse winch .dat file with custom settings
+    
+    Args:
+        file_path: Path to the .dat file
+        parsing_settings: Dict with keys:
+            - delimiter: str (default ",")
+            - header_lines: int (default 0)
+            - columns: list of column names (optional)
+            - datetime_code: str, Python code to create datetime column
+            - numeric_columns: list of column names to convert to numeric (optional)
+    
+    Returns:
+        DataFrame with parsed data including 'datetime' column
+    """
+    delimiter = parsing_settings.get("delimiter", ",")
+    header_lines = parsing_settings.get("header_lines", 0)
+    columns = parsing_settings.get("columns", None)
+    datetime_code = parsing_settings.get("datetime_code", "pd.to_datetime(df['datetime'])")
+    numeric_columns = parsing_settings.get("numeric_columns", [])
+    
+    # Read the file
     df = pd.read_csv(
         file_path,
-        delimiter=settings.get("delimiter", ","),
-        header=settings.get("header_lines", 0)
+        delimiter=delimiter,
+        skiprows=header_lines,
+        header=None if columns else 0,
+        names=columns if columns else None,
+        low_memory=False
     )
-    # If columns are specified, set them
-    if "columns" in settings:
-        df.columns = settings["columns"]
-
-    # Dynamically evaluate the datetime code from settings
-    datetime_code = settings.get("datetime_code")
-    if datetime_code:
-        # Use eval in a controlled way
-        df["datetime"] = eval(datetime_code, {"pd": pd, "df": df})
-    else:
-        raise ValueError("No datetime_code found in settings.")
-
+    
+    # Execute the datetime code to create datetime column
+    try:
+        exec(f"df['datetime'] = {datetime_code}", {"df": df, "pd": pd})
+    except Exception as e:
+        raise ValueError(f"Error creating datetime column: {e}\nCode: {datetime_code}")
+    
+    # Convert specified columns to numeric
+    for col in numeric_columns:
+        if col in df.columns:
+            try:
+                # Remove common formatting and convert to numeric
+                df[col] = pd.to_numeric(df[col].astype(str).str.strip(), errors='coerce')
+                print(f"✅ Converted column '{col}' to numeric")
+            except Exception as e:
+                print(f"⚠️ Warning: Could not convert column '{col}' to numeric: {e}")
+    
     return df
