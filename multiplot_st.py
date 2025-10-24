@@ -174,192 +174,129 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
                            winch_file_id, winch_parameter, additional_winch_parameter, 
                            file_offsets, global_x_offset, global_y_offset, winch_x_offset, winch_y_offset,
                            max_points, enable_winch, additional_winch_plot, zoom_mode, zoom_range):
-    """Create export dataframe with all plotted data including original and offset values"""
+    """Create export dataframe with exactly what's being plotted (offset data only)"""
     
     export_data = []
+    metadata = {
+        'global_x_offset_seconds': global_x_offset,
+        'global_y_offset': global_y_offset,
+        'winch_x_offset_seconds': winch_x_offset,
+        'winch_y_offset': winch_y_offset,
+        'file_offsets': {}
+    }
     
-    # Collect main sensor data
+    # Collect main sensor data (exactly as plotted)
     for file_id in sensor_file_ids:
         df, info = load_sensor_data(file_id)
         if df is not None:
-            # Get columns to plot
             cols_to_plot = find_columns_to_plot(df, parameter)
             
-            # Create file identifier with sensor location
+            # Apply offsets (same as plotting)
+            if file_id in file_offsets:
+                df = apply_offsets(df, 
+                                file_offsets[file_id]['x'], 
+                                file_offsets[file_id]['y'],
+                                global_x_offset,
+                                global_y_offset,
+                                cols_to_plot)
+                # Store offset info in metadata
+                metadata['file_offsets'][info.file_name] = {
+                    'x_seconds': file_offsets[file_id]['x'],
+                    'y': file_offsets[file_id]['y']
+                }
+            
+            # Apply zoom filter if in zoom mode (same as plotting)
+            if zoom_mode and zoom_range:
+                df = apply_zoom_filter(df, zoom_range)
+            
+            # Apply downsampling if not in zoom mode (same as plotting)
+            if not zoom_mode and len(df) > max_points:
+                step = max(1, len(df) // max_points)
+                df = df.iloc[::step]
+            
+            # Create file identifier
             if info.sensor_location:
                 file_identifier = f"{info.sensor_location}_{info.file_name}"
             else:
                 file_identifier = info.file_name
             
-            # Create original data columns
+            # Export plotted columns
             for col in cols_to_plot:
                 if col in df.columns and not df[col].isna().all():
                     df_export = df[['datetime', col]].copy()
-                    
-                    # Apply downsampling if not in zoom mode
-                    if not zoom_mode and len(df_export) > max_points:
-                        step = max(1, len(df_export) // max_points)
-                        df_export = df_export.iloc[::step]
-                    
-                    # Rename column with sensor location and file info
-                    original_col_name = f"{file_identifier}_{col}_original"
-                    df_export.rename(columns={col: original_col_name}, inplace=True)
+                    df_export.rename(columns={col: f"{file_identifier}_{col}"}, inplace=True)
                     export_data.append(df_export)
-            
-            # Create offset data columns
-            if file_id in file_offsets:
-                df_offset = apply_offsets(df, 
-                                        file_offsets[file_id]['x'], 
-                                        file_offsets[file_id]['y'],
-                                        global_x_offset,
-                                        global_y_offset,
-                                        cols_to_plot)
-                
-                # Apply zoom filter if in zoom mode
-                if zoom_mode and zoom_range:
-                    df_offset = apply_zoom_filter(df_offset, zoom_range)
-                
-                for col in cols_to_plot:
-                    if col in df_offset.columns and not df_offset[col].isna().all():
-                        df_export_offset = df_offset[['datetime', col]].copy()
-                        
-                        # Apply downsampling if not in zoom mode
-                        if not zoom_mode and len(df_export_offset) > max_points:
-                            step = max(1, len(df_export_offset) // max_points)
-                            df_export_offset = df_export_offset.iloc[::step]
-                        
-                        # Rename column with sensor location and offset info
-                        offset_col_name = f"{file_identifier}_{col}_offset"
-                        df_export_offset.rename(columns={col: offset_col_name}, inplace=True)
-                        export_data.append(df_export_offset)
     
-    # Collect additional sensor data
+    # Collect additional sensor data (exactly as plotted)
     if additional_sensor_file_ids and additional_sensor_parameter:
         for file_id in additional_sensor_file_ids:
             df, info = load_sensor_data(file_id)
             if df is not None:
-                # Get columns to plot
                 cols_to_plot = find_columns_to_plot(df, additional_sensor_parameter)
                 
-                # Create file identifier with sensor location for additional files
+                if file_id in file_offsets:
+                    df = apply_offsets(df, 
+                                    file_offsets[file_id]['x'], 
+                                    file_offsets[file_id]['y'],
+                                    global_x_offset,
+                                    global_y_offset,
+                                    cols_to_plot)
+                    metadata['file_offsets'][f"ADD_{info.file_name}"] = {
+                        'x_seconds': file_offsets[file_id]['x'],
+                        'y': file_offsets[file_id]['y']
+                    }
+                
+                if zoom_mode and zoom_range:
+                    df = apply_zoom_filter(df, zoom_range)
+                
+                if not zoom_mode and len(df) > max_points:
+                    step = max(1, len(df) // max_points)
+                    df = df.iloc[::step]
+                
                 if info.sensor_location:
                     file_identifier = f"ADD_{info.sensor_location}_{info.file_name}"
                 else:
                     file_identifier = f"ADD_{info.file_name}"
                 
-                # Create original data columns
                 for col in cols_to_plot:
                     if col in df.columns and not df[col].isna().all():
                         df_export = df[['datetime', col]].copy()
-                        
-                        # Apply downsampling if not in zoom mode
-                        if not zoom_mode and len(df_export) > max_points:
-                            step = max(1, len(df_export) // max_points)
-                            df_export = df_export.iloc[::step]
-                        
-                        # Rename column with additional sensor location and file info
-                        original_col_name = f"{file_identifier}_{col}_original"
-                        df_export.rename(columns={col: original_col_name}, inplace=True)
+                        df_export.rename(columns={col: f"{file_identifier}_{col}"}, inplace=True)
                         export_data.append(df_export)
-                
-                # Create offset data columns
-                if file_id in file_offsets:
-                    df_offset = apply_offsets(df, 
-                                            file_offsets[file_id]['x'], 
-                                            file_offsets[file_id]['y'],
-                                            global_x_offset,
-                                            global_y_offset,
-                                            cols_to_plot)
-                    
-                    # Apply zoom filter if in zoom mode
-                    if zoom_mode and zoom_range:
-                        df_offset = apply_zoom_filter(df_offset, zoom_range)
-                    
-                    for col in cols_to_plot:
-                        if col in df_offset.columns and not df_offset[col].isna().all():
-                            df_export_offset = df_offset[['datetime', col]].copy()
-                            
-                            # Apply downsampling if not in zoom mode
-                            if not zoom_mode and len(df_export_offset) > max_points:
-                                step = max(1, len(df_export_offset) // max_points)
-                                df_export_offset = df_export_offset.iloc[::step]
-                            
-                            # Rename column with sensor location and offset info
-                            offset_col_name = f"{file_identifier}_{col}_offset"
-                            df_export_offset.rename(columns={col: offset_col_name}, inplace=True)
-                            export_data.append(df_export_offset)
     
-    # Collect winch data
+    # Collect winch data (exactly as plotted)
     if enable_winch and winch_file_id and winch_parameter:
         winch_df, winch_info = load_winch_data(winch_file_id)
         if winch_df is not None and winch_parameter in winch_df.columns:
-            # Original winch data
-            df_winch_export = winch_df[['datetime', winch_parameter]].copy()
+            winch_df = apply_offsets(winch_df, winch_x_offset, winch_y_offset, 0, 0, [winch_parameter])
             
-            # Apply downsampling if not in zoom mode
-            if not zoom_mode and len(df_winch_export) > max_points:
-                step = max(1, len(df_winch_export) // max_points)
-                df_winch_export = df_winch_export.iloc[::step]
-            
-            # Rename column
-            original_winch_col = f"WINCH_{winch_parameter}_original"
-            df_winch_export.rename(columns={winch_parameter: original_winch_col}, inplace=True)
-            export_data.append(df_winch_export)
-            
-            # Offset winch data
-            winch_df_offset = apply_offsets(winch_df, winch_x_offset, winch_y_offset, 0, 0, [winch_parameter])
-            
-            # Apply zoom filter if in zoom mode
             if zoom_mode and zoom_range:
-                winch_df_offset = apply_zoom_filter(winch_df_offset, zoom_range)
+                winch_df = apply_zoom_filter(winch_df, zoom_range)
             
-            df_winch_export_offset = winch_df_offset[['datetime', winch_parameter]].copy()
+            if not zoom_mode and len(winch_df) > max_points:
+                step = max(1, len(winch_df) // max_points)
+                winch_df = winch_df.iloc[::step]
             
-            # Apply downsampling if not in zoom mode
-            if not zoom_mode and len(df_winch_export_offset) > max_points:
-                step = max(1, len(df_winch_export_offset) // max_points)
-                df_winch_export_offset = df_winch_export_offset.iloc[::step]
-            
-            # Rename column
-            offset_winch_col = f"WINCH_{winch_parameter}_offset"
-            df_winch_export_offset.rename(columns={winch_parameter: offset_winch_col}, inplace=True)
-            export_data.append(df_winch_export_offset)
+            df_winch_export = winch_df[['datetime', winch_parameter]].copy()
+            df_winch_export.rename(columns={winch_parameter: f"WINCH_{winch_parameter}"}, inplace=True)
+            export_data.append(df_winch_export)
     
-    # Collect additional winch data
+    # Collect additional winch data (exactly as plotted)
     if additional_winch_plot and winch_file_id and additional_winch_parameter:
         winch_df, winch_info = load_winch_data(winch_file_id)
         if winch_df is not None and additional_winch_parameter in winch_df.columns:
-            # Original additional winch data
-            df_winch_export = winch_df[['datetime', additional_winch_parameter]].copy()
+            winch_df = apply_offsets(winch_df, winch_x_offset, winch_y_offset, 0, 0, [additional_winch_parameter])
             
-            # Apply downsampling if not in zoom mode
-            if not zoom_mode and len(df_winch_export) > max_points:
-                step = max(1, len(df_winch_export) // max_points)
-                df_winch_export = df_winch_export.iloc[::step]
-            
-            # Rename column
-            original_winch_col = f"WINCH_ADD_{additional_winch_parameter}_original"
-            df_winch_export.rename(columns={additional_winch_parameter: original_winch_col}, inplace=True)
-            export_data.append(df_winch_export)
-            
-            # Offset additional winch data
-            winch_df_offset = apply_offsets(winch_df, winch_x_offset, winch_y_offset, 0, 0, [additional_winch_parameter])
-            
-            # Apply zoom filter if in zoom mode
             if zoom_mode and zoom_range:
-                winch_df_offset = apply_zoom_filter(winch_df_offset, zoom_range)
+                winch_df = apply_zoom_filter(winch_df, zoom_range)
             
-            df_winch_export_offset = winch_df_offset[['datetime', additional_winch_parameter]].copy()
+            if not zoom_mode and len(winch_df) > max_points:
+                step = max(1, len(winch_df) // max_points)
+                winch_df = winch_df.iloc[::step]
             
-            # Apply downsampling if not in zoom mode
-            if not zoom_mode and len(df_winch_export_offset) > max_points:
-                step = max(1, len(df_winch_export_offset) // max_points)
-                df_winch_export_offset = df_winch_export_offset.iloc[::step]
-            
-            # Rename column
-            offset_winch_col = f"WINCH_ADD_{additional_winch_parameter}_offset"
-            df_winch_export_offset.rename(columns={additional_winch_parameter: offset_winch_col}, inplace=True)
-            export_data.append(df_winch_export_offset)
+            df_winch_export = winch_df[['datetime', additional_winch_parameter]].copy()
+            df_winch_export.rename(columns={additional_winch_parameter: f"WINCH_ADD_{additional_winch_parameter}"}, inplace=True)
+            export_data.append(df_winch_export)
     
     # Merge all data on datetime
     if export_data:
@@ -370,9 +307,9 @@ def create_export_dataframe(sensor_file_ids, additional_sensor_file_ids, paramet
         # Sort by datetime
         final_export = final_export.sort_values('datetime').reset_index(drop=True)
         
-        return final_export
+        return final_export, metadata
     else:
-        return pd.DataFrame()
+        return pd.DataFrame(), metadata
 
 st.title("🌡️ Sensor Data Plotter")
 st.write("Overlay multiple sensor measurements with winch data")
@@ -766,7 +703,7 @@ if 'selected_sensors' in locals() and selected_sensors:
             with st.spinner("Preparing export data..."):
                 try:
                     # Create the export dataframe
-                    export_df = create_export_dataframe(
+                    export_df, metadata = create_export_dataframe(
                         sensor_file_ids=sensor_file_ids,
                         additional_sensor_file_ids=additional_sensor_file_ids if additional_sensor_plot else [],
                         parameter=parameter,
@@ -789,15 +726,12 @@ if 'selected_sensors' in locals() and selected_sensors:
                     if not export_df.empty:
                         # Store in session state
                         st.session_state['export_df'] = export_df
+                        st.session_state['export_metadata'] = metadata
                         st.success(f"✅ Export data ready!")
                         st.success(f"📊 **{len(export_df):,} rows** × **{len(export_df.columns):,} columns**")
                         
-                        # Show column summary
-                        data_cols = [col for col in export_df.columns if col != 'datetime']
-                        original_cols = [col for col in data_cols if col.endswith('_original')]
-                        offset_cols = [col for col in data_cols if col.endswith('_offset')]
-                        
-                        st.info(f"📈 **{len(original_cols)} original** + **{len(offset_cols)} offset** data columns")
+                        # Show metadata info
+                        st.info(f"📈 **Offset-adjusted data** (as seen in plot)")
                         
                     else:
                         st.error("❌ No data to export. Check your selections.")
@@ -808,6 +742,7 @@ if 'selected_sensors' in locals() and selected_sensors:
         # Download section
         if 'export_df' in st.session_state and not st.session_state['export_df'].empty:
             export_df = st.session_state['export_df']
+            metadata = st.session_state.get('export_metadata', {})
             
             # Generate filename with metadata
             timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
@@ -816,8 +751,34 @@ if 'selected_sensors' in locals() and selected_sensors:
             
             filename = f"sensor_export_{cruise_name}_{core_name}_{parameter}_{timestamp}.csv"
             
-            # Convert to CSV
-            csv_data = export_df.to_csv(index=False, float_format='%.6f')
+            # Create CSV with metadata header
+            import io
+            csv_buffer = io.StringIO()
+            
+            # Write metadata as comments
+            csv_buffer.write(f"# Export from Sediment App - {timestamp}\n")
+            csv_buffer.write(f"# Cruise: {selected_cruise}\n")
+            csv_buffer.write(f"# Core: {selected_core}\n")
+            csv_buffer.write(f"# Parameter: {parameter}\n")
+            if zoom_mode:
+                csv_buffer.write(f"# Mode: Zoom (all points in window)\n")
+                csv_buffer.write(f"# Zoom range: {zoom_range[0]} to {zoom_range[1]}\n")
+            else:
+                csv_buffer.write(f"# Mode: Overview (downsampled to max {max_points} points)\n")
+            csv_buffer.write(f"# Global X offset: {metadata['global_x_offset_seconds']} seconds\n")
+            csv_buffer.write(f"# Global Y offset: {metadata['global_y_offset']}\n")
+            csv_buffer.write(f"# Winch X offset: {metadata['winch_x_offset_seconds']} seconds\n")
+            csv_buffer.write(f"# Winch Y offset: {metadata['winch_y_offset']}\n")
+            if metadata['file_offsets']:
+                csv_buffer.write(f"# Individual file offsets:\n")
+                for fname, offsets in metadata['file_offsets'].items():
+                    csv_buffer.write(f"#   {fname}: X={offsets['x_seconds']}s, Y={offsets['y']}\n")
+            csv_buffer.write(f"# NOTE: All data is OFFSET-ADJUSTED (as displayed in plot)\n")
+            csv_buffer.write("#\n")
+            
+            # Write the actual data
+            export_df.to_csv(csv_buffer, index=False, float_format='%.6f')
+            csv_data = csv_buffer.getvalue()
             
             # Download button
             st.download_button(
