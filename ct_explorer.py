@@ -27,11 +27,17 @@ st.sidebar.markdown("""
 def get_full_table():
     with get_connection() as conn:
         query = """
-            SELECT ct_xml.*, 
-                   sections.section_number AS section_number_from_sections, 
-                   sections.core_id as section_core_id,
-                   cores.core_name,
-                   cruises.cruise_name
+            SELECT
+                ct_xml.ct_xml_id,
+                ct_xml.section_id,
+                ct_xml.xml_path,
+                ct_xml.image_type,
+                ct_xml.processing_stage,
+                ct_xml.tiff_folder,
+                sections.section_number AS section_number_from_sections,
+                sections.core_id AS section_core_id,
+                cores.core_name,
+                cruises.cruise_name
             FROM ct_xml
             LEFT JOIN sections ON ct_xml.section_id = sections.section_id
             LEFT JOIN cores ON sections.core_id = cores.core_id
