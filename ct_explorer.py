@@ -26,9 +26,15 @@ st.sidebar.markdown("""
 def get_full_table():
     with get_connection() as conn:
         query = """
-            SELECT ct_xml.*, sections.section_number AS section_number_from_sections, sections.core_id as section_core_id
+            SELECT ct_xml.*, 
+                   sections.section_number AS section_number_from_sections, 
+                   sections.core_id as section_core_id,
+                   cores.core_name,
+                   cruises.cruise_name
             FROM ct_xml
             LEFT JOIN sections ON ct_xml.section_id = sections.section_id
+            LEFT JOIN cores ON sections.core_id = cores.core_id
+            LEFT JOIN cruises ON cores.cruise_id = cruises.cruise_id
         """
         df = pd.read_sql_query(query, conn)
     return df
@@ -110,13 +116,18 @@ try:
 
         st.dataframe(filtered_df, use_container_width=True)
 
-        # --- Successive dropdowns: Core -> Section -> TIFF file ---
+        # --- Successive dropdowns: Cruise -> Core -> Section -> TIFF file ---
         tiff_df = filtered_df[filtered_df["TIFF File"].notnull() & (filtered_df["TIFF File"] != "")].copy()
 
+        # Cruise dropdown
+        cruise_options = sorted(tiff_df["cruise_name"].dropna().unique())
+        selected_cruise = st.selectbox("Select Cruise", cruise_options)
+        df_cruise = tiff_df[tiff_df["cruise_name"] == selected_cruise]
+
         # Core dropdown
-        core_options = sorted(tiff_df["core_name"].dropna().unique())
+        core_options = sorted(df_cruise["core_name"].dropna().unique())
         selected_core = st.selectbox("Select Core", core_options)
-        df_core = tiff_df[tiff_df["core_name"] == selected_core]
+        df_core = df_cruise[df_cruise["core_name"] == selected_core]
 
         # Section dropdown
         section_options = sorted(df_core["section_number_from_sections"].dropna().unique(), key=lambda x: (str(x).isdigit(), x))
