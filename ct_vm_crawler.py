@@ -378,6 +378,34 @@ def view_ct():
 def unmapped_sections():
     show_only_unmapped = request.args.get("only_unmapped", "off") == "on"
     with engine.connect() as conn:
+        # --- Get all cruises with cores ---
+        cruises = conn.execute(text("""
+            SELECT DISTINCT cruises.cruise_id, cruises.cruise_name
+            FROM cores
+            JOIN cruises ON cores.cruise_id = cruises.cruise_id
+            ORDER BY cruises.cruise_name
+        """)).fetchall()
+        selected_cruise_id = request.args.get("cruise_id")
+        if not selected_cruise_id and cruises:
+            selected_cruise_id = str(cruises[0].cruise_id)
+
+        # --- Get all cores for the selected cruise ---
+        cores = conn.execute(
+            text("SELECT core_id, core_name FROM cores WHERE cruise_id = :cruise_id ORDER BY core_name"),
+            {"cruise_id": selected_cruise_id}
+        ).fetchall()
+        core_dict = {core.core_id: core.core_name for core in cores}
+
+        # --- Get all sections for all cores in the cruise ---
+        sections_by_core = {}
+        for core in cores:
+            sections = conn.execute(
+                text("SELECT section_id, section_number FROM sections WHERE core_id = :core_id ORDER BY section_number"),
+                {"core_id": core.core_id}
+            ).fetchall()
+            sections_by_core[core.core_id] = [dict(sec._mapping) for sec in sections]
+
+        # --- Get all XML-derived rows ---
         query = """
             SELECT core_id, core_name, section_number, section_id, COUNT(*) as n_xmls
             FROM ct_xml_staging
@@ -385,23 +413,23 @@ def unmapped_sections():
         """
         result = conn.execute(text(query))
         all_sections = [dict(row._mapping) for row in result.fetchall()]
-
+        # Optionally filter by cruise (show only rows with core_id in this cruise or unmapped)
+        filtered_sections = [
+            row for row in all_sections
+            if (row["core_id"] in core_dict or row["core_id"] is None)
+        ]
         if show_only_unmapped:
-            filtered_sections = [row for row in all_sections if row["section_id"] is None]
-        else:
-            filtered_sections = all_sections
-
-        core_sections = {}
-        for row in filtered_sections:
-            sec_result = conn.execute(
-                text("SELECT section_id, section_number FROM sections WHERE core_id = :core_id"),
-                {"core_id": row["core_id"]}
-            )
-            core_sections[(row["core_id"], row["section_number"])] = [dict(sec._mapping) for sec in sec_result.fetchall()]
+            filtered_sections = [row for row in filtered_sections if row["section_id"] is None]
 
     html = """
     <h2>Assign CT XML Section Associations</h2>
     <form method="get" action="/unmapped_sections">
+        <label for="cruise_id">Cruise:</label>
+        <select name="cruise_id" id="cruise_id" onchange="this.form.submit()">
+            {% for cruise in cruises %}
+            <option value="{{ cruise.cruise_id }}" {% if cruise.cruise_id|string == selected_cruise_id %}selected{% endif %}>{{ cruise.cruise_name }}</option>
+            {% endfor %}
+        </select>
         <label>
             <input type="checkbox" name="only_unmapped" value="on" {% if show_only_unmapped %}checked{% endif %}>
             Show only unmapped sections
@@ -409,64 +437,87 @@ def unmapped_sections():
         <button type="submit">Apply Filter</button>
     </form>
     <form method="post" action="/map_section">
+    <input type="hidden" name="cruise_id" value="{{ selected_cruise_id }}">
     <table>
         <tr>
-            <th>Core Name</th>
-            <th>Section Number (from XML)</th>
-            <th>Current Section ID</th>
+            <th>Core Name (XML)</th>
+            <th>Section Number (XML)</th>
             <th>Records</th>
+            <th>Assign Core</th>
             <th>Assign Section</th>
         </tr>
         {% for row in filtered_sections %}
         <tr>
             <td>{{ row['core_name'] }}</td>
             <td>{{ row['section_number'] }}</td>
-            <td>{{ row['section_id'] }}</td>
             <td>{{ row['n_xmls'] }}</td>
             <td>
-                <select name="section_id_{{ row['core_id'] }}_{{ row['section_number'] }}">
+                <select name="core_id_{{ loop.index0 }}">
+                    <option value="">-- Select Core --</option>
+                    {% for core in cores %}
+                    <option value="{{ core.core_id }}" {% if core.core_id == row['core_id'] %}selected{% endif %}>{{ core.core_name }}</option>
+                    {% endfor %}
+                </select>
+            </td>
+            <td>
+                <select name="section_id_{{ loop.index0 }}">
                     <option value="">-- Select Section --</option>
-                    {% for sec in core_sections[(row['core_id'], row['section_number'])] %}
+                    {% for sec in sections_by_core.get(row['core_id'], []) %}
                     <option value="{{ sec['section_id'] }}" {% if sec['section_id'] == row['section_id'] %}selected{% endif %}>{{ sec['section_number'] }}</option>
                     {% endfor %}
                 </select>
             </td>
+            <input type="hidden" name="row_index_{{ loop.index0 }}" value="{{ row['core_name'] }}|||{{ row['section_number'] }}">
         </tr>
         {% endfor %}
     </table>
-    <button type="submit">Update Section Mappings</button>
+    <button type="submit">Update Mappings</button>
     </form>
     """
     return render_template_string(
         html,
         filtered_sections=filtered_sections,
-        core_sections=core_sections,
+        cores=cores,
+        cruises=cruises,
+        selected_cruise_id=selected_cruise_id,
+        sections_by_core=sections_by_core,
         show_only_unmapped=show_only_unmapped
     )
 
 @app.route("/map_section", methods=["POST"])
 def map_section():
+    cruise_id = request.form.get("cruise_id")
     with engine.begin() as conn:
-        result = conn.execute(text("""
-            SELECT core_id, section_number
-            FROM ct_xml_staging
-            GROUP BY core_id, section_number
-        """))
-        pairs = result.fetchall()
-        for pair in pairs:
-            core_id, section_number = pair
-            field_name = f"section_id_{core_id}_{section_number}"
-            section_id = request.form.get(field_name)
+        # Loop over all rows by index
+        i = 0
+        while True:
+            row_key = f"row_index_{i}"
+            if row_key not in request.form:
+                break
+            core_id = request.form.get(f"core_id_{i}")
+            section_id = request.form.get(f"section_id_{i}")
+            core_name, section_number = request.form[row_key].split("|||")
+            # Only update if a core or section is selected
+            if core_id:
+                conn.execute(
+                    text("""
+                        UPDATE ct_xml_staging
+                        SET core_id = :core_id
+                        WHERE core_name = :core_name AND section_number = :section_number
+                    """),
+                    {"core_id": core_id, "core_name": core_name, "section_number": section_number}
+                )
             if section_id:
                 conn.execute(
                     text("""
                         UPDATE ct_xml_staging
                         SET section_id = :section_id
-                        WHERE core_id = :core_id AND section_number = :section_number
+                        WHERE core_name = :core_name AND section_number = :section_number
                     """),
-                    {"section_id": section_id, "core_id": core_id, "section_number": section_number}
+                    {"section_id": section_id, "core_name": core_name, "section_number": section_number}
                 )
-    return redirect("/unmapped_sections")
+            i += 1
+    return redirect(url_for("unmapped_sections", cruise_id=cruise_id))
 
 @app.route("/", methods=["GET", "POST"])
 def select_cruise_folder():
