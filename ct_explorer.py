@@ -26,7 +26,12 @@ st.sidebar.markdown("""
 def get_full_table():
     with get_connection() as conn:
         query = """
-            SELECT ct_xml.*, 
+            SELECT ct_xml.ct_xml_id,
+                   ct_xml.section_id,
+                   ct_xml.xml_path,
+                   ct_xml.image_type,
+                   ct_xml.processing_stage,
+                   ct_xml.tiff_folder,
                    sections.section_number AS section_number_from_sections, 
                    sections.core_id as section_core_id,
                    cores.core_name,
