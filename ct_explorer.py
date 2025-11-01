@@ -6,6 +6,7 @@ import numpy as np
 import os
 from config import ROOT_DIRECTORY, SUBDIRECTORIES
 import glob
+from utils import hierarchical_dropdowns  # <-- Import your new function
 
 st.set_page_config(layout="wide")
 
@@ -80,41 +81,41 @@ try:
     if search_core_full:
         filtered_df = filtered_df[filtered_df['core_name'].astype(str).str.contains(search_core_full, case=False)]
 
-    # Add TIFF link column for giXRayImage and giCTOrthogonalView
+    # --- Add TIFF link column for giXRayImage and giCTOrthogonalView ---
     def make_tiff_link(row):
         if row["image_type"] in ["giXRayImage", "giCTOrthogonalView"]:
             tiff_path = row["xml_path"].replace(".xml", ".tif")
             base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
             tiff_full_path = os.path.join(base_dir, tiff_path)
-            # Try exact match first
             if os.path.exists(tiff_full_path):
                 return tiff_path
-            # Try .TIF (uppercase)
             tiff_path_upper = tiff_path[:-4] + ".TIF"
             tiff_full_path_upper = os.path.join(base_dir, tiff_path_upper)
             if os.path.exists(tiff_full_path_upper):
                 return tiff_path_upper
-            # Try any .tif/.TIF with the same base name
             folder = os.path.dirname(tiff_full_path)
             base = os.path.splitext(os.path.basename(tiff_full_path))[0]
             matches = glob.glob(os.path.join(folder, base + ".*"))
             for match in matches:
                 if match.lower().endswith(".tif"):
-                    # Return relative path
                     return os.path.relpath(match, base_dir)
             return ""
         return ""
 
-    if "xml_path" in filtered_df.columns and "image_type" in filtered_df.columns:
-        filtered_df["TIFF File"] = filtered_df.apply(make_tiff_link, axis=1)
+    if "xml_path" in df.columns and "image_type" in df.columns:
+        df["TIFF File"] = df.apply(make_tiff_link, axis=1)
 
-        st.dataframe(filtered_df, use_container_width=True)
+        # Only keep rows with a TIFF file for the dropdowns
+        ct_df = df[df["TIFF File"].notnull() & (df["TIFF File"] != "")].copy()
 
-        # --- Simple TIFF selection ---
-        tiff_files = filtered_df["TIFF File"].dropna().unique()
-        tiff_files = [f for f in tiff_files if f]  # Remove empty strings
-
-        selected_tiff = st.selectbox("Show TIFF image for selected XML", tiff_files) if tiff_files else None
+        # Use hierarchical dropdowns: cruise, core, section, tiff file
+        cruise, core, section, selected_tiff = hierarchical_dropdowns(
+            ct_df,
+            cruise_col="core_name",  # If you have a dedicated cruise column, use it here
+            core_col="core_name",
+            section_col="section_number_from_sections",
+            file_col="TIFF File"
+        )
 
         if selected_tiff:
             base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
@@ -123,7 +124,7 @@ try:
                 img = Image.open(tiff_full_path)
                 if img.mode == "I;16":
                     arr = np.array(img)
-                    arr8 = (arr / 256).astype("uint8")  # Scale to 8-bit
+                    arr8 = (arr / 256).astype("uint8")
                     img = Image.fromarray(arr8)
                 st.image(img, caption=selected_tiff, use_container_width=True)
             except Exception as e:

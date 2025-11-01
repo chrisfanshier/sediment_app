@@ -382,3 +382,42 @@ def parse_winch_dat(file_path, parsing_settings):
                 print(f"⚠️ Warning: Could not convert column '{col}' to numeric: {e}")
     
     return df
+
+def hierarchical_dropdowns(
+    df,
+    cruise_col,
+    core_col,
+    section_col=None,
+    file_col=None,
+    cruise_label="Select Cruise",
+    core_label="Select Core",
+    section_label="Select Section",
+    file_label="Select File"
+):
+    """
+    Reusable hierarchical dropdowns for Streamlit.
+    Returns: selected_cruise, selected_core, selected_section, selected_file (None if not used)
+    """
+
+    cruises = df[cruise_col].dropna().unique()
+    selected_cruise = st.selectbox(cruise_label, sorted(cruises))
+    df_cruise = df[df[cruise_col] == selected_cruise]
+
+    cores = df_cruise[core_col].dropna().unique()
+    selected_core = st.selectbox(core_label, sorted(cores))
+    df_core = df_cruise[df_cruise[core_col] == selected_core]
+
+    selected_section = None
+    df_section = df_core
+    if section_col:
+        sections = df_core[section_col].dropna().unique()
+        selected_section = st.selectbox(section_label, sorted(sections, key=lambda x: (str(x).isdigit(), x)))
+        df_section = df_core[df_core[section_col] == selected_section]
+
+    selected_file = None
+    if file_col:
+        files = df_section[file_col].dropna().unique()
+        files = [f for f in files if f]
+        if files:
+            selected_file = st.selectbox(file_label, files)
+    return selected_cruise, selected_core, selected_section, selected_file
