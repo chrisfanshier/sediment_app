@@ -518,6 +518,7 @@ def dashboard():
         <li><a href="{{ url_for('select_cruise_folder') }}">Select Cruise Folder</a></li>
         <li><a href="{{ url_for('crawl_ct_page') }}">Crawl CT Files (add to staging)</a></li>
         <li><a href="{{ url_for('view_ct') }}">View Staging Records</a></li>
+        <li><a href="{{ url_for('unmapped_cores') }}">Review/Assign Core Associations</a></li>
         <li><a href="{{ url_for('unmapped_sections') }}">Review/Assign Section Associations</a></li>
         <li>
             <form action="{{ url_for('approve_import') }}" method="post" style="display:inline;">
@@ -577,6 +578,19 @@ def crawl_ct_page():
 @app.route("/unmapped_cores", methods=["GET", "POST"])
 def unmapped_cores():
     with engine.connect() as conn:
+        # Get all cruises with cores
+        cruises = conn.execute(text("""
+            SELECT DISTINCT cruises.cruise_id, cruises.cruise_name
+            FROM cores
+            JOIN cruises ON cores.cruise_id = cruises.cruise_id
+            ORDER BY cruises.cruise_name
+        """)).fetchall()
+
+        # Handle cruise selection
+        selected_cruise_id = request.args.get("cruise_id")
+        if not selected_cruise_id and cruises:
+            selected_cruise_id = str(cruises[0].cruise_id)
+
         # Find core_names in staging with no matching core_id
         result = conn.execute(text("""
             SELECT DISTINCT core_name
@@ -585,23 +599,36 @@ def unmapped_cores():
         """))
         unmapped_core_names = [row[0] for row in result.fetchall()]
 
-        # Get all possible cores for mapping
-        cores = conn.execute(text("SELECT core_id, core_name FROM cores")).fetchall()
+        # Get only cores for the selected cruise
+        cores = conn.execute(
+            text("SELECT core_id, core_name FROM cores WHERE cruise_id = :cruise_id"),
+            {"cruise_id": selected_cruise_id}
+        ).fetchall()
 
     if request.method == "POST":
         selected_core_id = request.form.get("core_id")
         selected_core_name = request.form.get("unmapped_core_name")
+        cruise_id = request.form.get("cruise_id")
         if selected_core_id and selected_core_name:
             with engine.begin() as conn:
                 conn.execute(
                     text("UPDATE ct_xml_staging SET core_id = :core_id WHERE core_name = :core_name"),
                     {"core_id": selected_core_id, "core_name": selected_core_name}
                 )
-        return redirect(url_for("unmapped_cores"))
+        return redirect(url_for("unmapped_cores", cruise_id=cruise_id))
 
     html = """
     <h2>Unmapped Core Names</h2>
+    <form method="get">
+        <label for="cruise_id">Cruise:</label>
+        <select name="cruise_id" id="cruise_id" onchange="this.form.submit()">
+            {% for cruise in cruises %}
+            <option value="{{ cruise.cruise_id }}" {% if cruise.cruise_id|string == selected_cruise_id %}selected{% endif %}>{{ cruise.cruise_name }}</option>
+            {% endfor %}
+        </select>
+    </form>
     <form method="post">
+        <input type="hidden" name="cruise_id" value="{{ selected_cruise_id }}">
         <table>
             <tr><th>Unmapped Core Name</th><th>Assign to Existing Core</th><th>Action</th></tr>
             {% for unmapped in unmapped_core_names %}
@@ -625,7 +652,13 @@ def unmapped_cores():
         </table>
     </form>
     """
-    return render_template_string(html, unmapped_core_names=unmapped_core_names, cores=cores)
+    return render_template_string(
+        html,
+        unmapped_core_names=unmapped_core_names,
+        cores=cores,
+        cruises=cruises,
+        selected_cruise_id=selected_cruise_id
+    )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5905, debug=True)
