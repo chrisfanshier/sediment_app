@@ -377,7 +377,7 @@ def view_ct():
 @app.route("/unmapped_sections", methods=["GET", "POST"])
 def unmapped_sections():
     show_only_unmapped = request.args.get("only_unmapped", "off") == "on"
-    show_filepaths = request.args.get("show_filepaths", "on") == "on"
+    show_filepaths = "show_filepaths" in request.args and request.args.get("show_filepaths") == "on"
     with engine.connect() as conn:
         # --- Get all cruises with cores ---
         cruises = conn.execute(text("""
