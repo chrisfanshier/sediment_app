@@ -421,6 +421,19 @@ def unmapped_sections():
         if show_only_unmapped:
             filtered_sections = [row for row in filtered_sections if row["section_id"] is None]
 
+        # --- Get filepaths for each (core_name, section_number) pair ---
+        filepaths_by_core_section = {}
+        for row in filtered_sections:
+            paths = conn.execute(
+                text("""
+                    SELECT DISTINCT xml_path
+                    FROM ct_xml_staging
+                    WHERE core_name = :core_name AND section_number = :section_number
+                """),
+                {"core_name": row["core_name"], "section_number": row["section_number"]}
+            ).fetchall()
+            filepaths_by_core_section[(row["core_name"], row["section_number"])] = [p[0] for p in paths]
+
     html = """
     <h2>Assign CT XML Section Associations</h2>
     <form method="get" action="/unmapped_sections">
@@ -445,6 +458,7 @@ def unmapped_sections():
             <th>Records</th>
             <th>Assign Core</th>
             <th>Assign Section</th>
+            <th>Filepaths</th>
         </tr>
         {% for row in filtered_sections %}
         <tr>
@@ -467,6 +481,13 @@ def unmapped_sections():
                     {% endfor %}
                 </select>
             </td>
+            <td>
+                <ul style="max-width:350px;overflow-x:auto;">
+                {% for path in filepaths_by_core_section[(row['core_name'], row['section_number'])] %}
+                    <li style="font-size:smaller;">{{ path }}</li>
+                {% endfor %}
+                </ul>
+            </td>
             <input type="hidden" name="row_index_{{ loop.index0 }}" value="{{ row['core_name'] }}|||{{ row['section_number'] }}">
         </tr>
         {% endfor %}
@@ -481,7 +502,8 @@ def unmapped_sections():
         cruises=cruises,
         selected_cruise_id=selected_cruise_id,
         sections_by_core=sections_by_core,
-        show_only_unmapped=show_only_unmapped
+        show_only_unmapped=show_only_unmapped,
+        filepaths_by_core_section=filepaths_by_core_section
     )
 
 @app.route("/map_section", methods=["POST"])
