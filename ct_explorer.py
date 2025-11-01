@@ -110,11 +110,23 @@ try:
 
         st.dataframe(filtered_df, use_container_width=True)
 
-        # --- Simple TIFF selection ---
-        tiff_files = filtered_df["TIFF File"].dropna().unique()
-        tiff_files = [f for f in tiff_files if f]  # Remove empty strings
+        # --- Successive dropdowns: Core -> Section -> TIFF file ---
+        tiff_df = filtered_df[filtered_df["TIFF File"].notnull() & (filtered_df["TIFF File"] != "")].copy()
 
-        selected_tiff = st.selectbox("Show TIFF image for selected XML", tiff_files) if tiff_files else None
+        # Core dropdown
+        core_options = sorted(tiff_df["core_name"].dropna().unique())
+        selected_core = st.selectbox("Select Core", core_options)
+        df_core = tiff_df[tiff_df["core_name"] == selected_core]
+
+        # Section dropdown
+        section_options = sorted(df_core["section_number_from_sections"].dropna().unique(), key=lambda x: (str(x).isdigit(), x))
+        selected_section = st.selectbox("Select Section", section_options)
+        df_section = df_core[df_core["section_number_from_sections"] == selected_section]
+
+        # TIFF file dropdown
+        tiff_files = df_section["TIFF File"].dropna().unique()
+        tiff_files = [f for f in tiff_files if f]
+        selected_tiff = st.selectbox("Select TIFF file", tiff_files) if tiff_files else None
 
         if selected_tiff:
             base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
