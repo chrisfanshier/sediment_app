@@ -377,6 +377,7 @@ def view_ct():
 @app.route("/unmapped_sections", methods=["GET", "POST"])
 def unmapped_sections():
     show_only_unmapped = request.args.get("only_unmapped", "off") == "on"
+    show_filepaths = request.args.get("show_filepaths", "on") == "on"
     with engine.connect() as conn:
         # --- Get all cruises with cores ---
         cruises = conn.execute(text("""
@@ -444,8 +445,12 @@ def unmapped_sections():
             {% endfor %}
         </select>
         <label>
-            <input type="checkbox" name="only_unmapped" value="on" {% if show_only_unmapped %}checked{% endif %}>
+            <input type="checkbox" name="only_unmapped" value="on" {% if show_only_unmapped %}checked{% endif %} onchange="this.form.submit()">
             Show only unmapped sections
+        </label>
+        <label>
+            <input type="checkbox" name="show_filepaths" value="on" {% if show_filepaths %}checked{% endif %} onchange="this.form.submit()">
+            Show filepaths
         </label>
         <button type="submit">Apply Filter</button>
     </form>
@@ -458,7 +463,9 @@ def unmapped_sections():
             <th>Records</th>
             <th>Assign Core</th>
             <th>Assign Section</th>
+            {% if show_filepaths %}
             <th>Filepaths</th>
+            {% endif %}
         </tr>
         {% for row in filtered_sections %}
         <tr>
@@ -481,6 +488,7 @@ def unmapped_sections():
                     {% endfor %}
                 </select>
             </td>
+            {% if show_filepaths %}
             <td>
                 <ul style="max-width:350px;overflow-x:auto;">
                 {% for path in filepaths_by_core_section[(row['core_name'], row['section_number'])] %}
@@ -488,6 +496,7 @@ def unmapped_sections():
                 {% endfor %}
                 </ul>
             </td>
+            {% endif %}
             <input type="hidden" name="row_index_{{ loop.index0 }}" value="{{ row['core_name'] }}|||{{ row['section_number'] }}">
         </tr>
         {% endfor %}
@@ -503,7 +512,8 @@ def unmapped_sections():
         selected_cruise_id=selected_cruise_id,
         sections_by_core=sections_by_core,
         show_only_unmapped=show_only_unmapped,
-        filepaths_by_core_section=filepaths_by_core_section
+        filepaths_by_core_section=filepaths_by_core_section,
+        show_filepaths=show_filepaths
     )
 
 @app.route("/map_section", methods=["POST"])
