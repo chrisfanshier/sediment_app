@@ -574,5 +574,58 @@ def crawl_ct_page():
     """
     return render_template_string(html, cruise_folders=cruise_folders, session_CT_ROOT=selected, message=message)
 
+@app.route("/unmapped_cores", methods=["GET", "POST"])
+def unmapped_cores():
+    with engine.connect() as conn:
+        # Find core_names in staging with no matching core_id
+        result = conn.execute(text("""
+            SELECT DISTINCT core_name
+            FROM ct_xml_staging
+            WHERE core_id IS NULL OR core_id NOT IN (SELECT core_id FROM cores)
+        """))
+        unmapped_core_names = [row[0] for row in result.fetchall()]
+
+        # Get all possible cores for mapping
+        cores = conn.execute(text("SELECT core_id, core_name FROM cores")).fetchall()
+
+    if request.method == "POST":
+        selected_core_id = request.form.get("core_id")
+        selected_core_name = request.form.get("unmapped_core_name")
+        if selected_core_id and selected_core_name:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("UPDATE ct_xml_staging SET core_id = :core_id WHERE core_name = :core_name"),
+                    {"core_id": selected_core_id, "core_name": selected_core_name}
+                )
+        return redirect(url_for("unmapped_cores"))
+
+    html = """
+    <h2>Unmapped Core Names</h2>
+    <form method="post">
+        <table>
+            <tr><th>Unmapped Core Name</th><th>Assign to Existing Core</th><th>Action</th></tr>
+            {% for unmapped in unmapped_core_names %}
+            <tr>
+                <td>
+                    <input type="hidden" name="unmapped_core_name" value="{{ unmapped }}">
+                    {{ unmapped }}
+                </td>
+                <td>
+                    <select name="core_id">
+                        {% for core in cores %}
+                        <option value="{{ core.core_id }}">{{ core.core_name }}</option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td>
+                    <button type="submit">Assign</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </form>
+    """
+    return render_template_string(html, unmapped_core_names=unmapped_core_names, cores=cores)
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5905, debug=True)
