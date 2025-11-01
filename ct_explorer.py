@@ -27,9 +27,15 @@ st.sidebar.markdown("""
 def get_full_table():
     with get_connection() as conn:
         query = """
-            SELECT ct_xml.*, sections.section_number AS section_number_from_sections, sections.core_id as section_core_id
+            SELECT ct_xml.*, 
+                   sections.section_number AS section_number_from_sections, 
+                   sections.core_id as section_core_id,
+                   cores.core_name,
+                   cruises.cruise_name
             FROM ct_xml
             LEFT JOIN sections ON ct_xml.section_id = sections.section_id
+            LEFT JOIN cores ON sections.core_id = cores.core_id
+            LEFT JOIN cruises ON cores.cruise_id = cruises.cruise_id
         """
         df = pd.read_sql_query(query, conn)
     return df
@@ -81,6 +87,8 @@ try:
     if search_core_full:
         filtered_df = filtered_df[filtered_df['core_name'].astype(str).str.contains(search_core_full, case=False)]
 
+    st.dataframe(filtered_df, use_container_width=True)
+    
     # --- Add TIFF link column for giXRayImage and giCTOrthogonalView ---
     def make_tiff_link(row):
         if row["image_type"] in ["giXRayImage", "giCTOrthogonalView"]:
@@ -111,7 +119,7 @@ try:
         # Use hierarchical dropdowns: cruise, core, section, tiff file
         cruise, core, section, selected_tiff = hierarchical_dropdowns(
             ct_df,
-            cruise_col="core_name",  # If you have a dedicated cruise column, use it here
+            cruise_col="cruise_name",   # <-- use the actual cruise name column
             core_col="core_name",
             section_col="section_number_from_sections",
             file_col="TIFF File"
