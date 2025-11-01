@@ -5,6 +5,9 @@ from PIL import Image
 import numpy as np
 import os
 from config import ROOT_DIRECTORY, SUBDIRECTORIES
+import glob
+
+st.set_page_config(layout="wide")
 
 st.title("CT Data Explorer (Postgres)")
 
@@ -66,7 +69,7 @@ try:
 
     st.dataframe(filtered_summary, use_container_width=True)
 
-    # --- Full CT XML Table ---
+    # --- Full CT XML Table (with Section Number from Sections) ---
     st.header("Full CT XML Table (with Section Number from Sections)")
     search_cruise_full = st.text_input("Search Cruise (Full Table):", value="", key="search_cruise_full")
     search_core_full = st.text_input("Search Core (Full Table):", value="", key="search_core_full")
@@ -81,39 +84,48 @@ try:
     def make_tiff_link(row):
         if row["image_type"] in ["giXRayImage", "giCTOrthogonalView"]:
             tiff_path = row["xml_path"].replace(".xml", ".tif")
-            # Display as a link (for reference)
-            return tiff_path
+            base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
+            tiff_full_path = os.path.join(base_dir, tiff_path)
+            # Try exact match first
+            if os.path.exists(tiff_full_path):
+                return tiff_path
+            # Try .TIF (uppercase)
+            tiff_path_upper = tiff_path[:-4] + ".TIF"
+            tiff_full_path_upper = os.path.join(base_dir, tiff_path_upper)
+            if os.path.exists(tiff_full_path_upper):
+                return tiff_path_upper
+            # Try any .tif/.TIF with the same base name
+            folder = os.path.dirname(tiff_full_path)
+            base = os.path.splitext(os.path.basename(tiff_full_path))[0]
+            matches = glob.glob(os.path.join(folder, base + ".*"))
+            for match in matches:
+                if match.lower().endswith(".tif"):
+                    # Return relative path
+                    return os.path.relpath(match, base_dir)
+            return ""
         return ""
 
     if "xml_path" in filtered_df.columns and "image_type" in filtered_df.columns:
         filtered_df["TIFF File"] = filtered_df.apply(make_tiff_link, axis=1)
 
-        # Add a hyperlink column (for reference only)
-        def make_hyperlink(tiff_path):
-            if tiff_path:
-                return f"[{os.path.basename(tiff_path)}](file://{os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES['CT Data'], tiff_path)})"
-            return ""
-        filtered_df["TIFF Link"] = filtered_df["TIFF File"].apply(make_hyperlink)
-
         st.dataframe(filtered_df, use_container_width=True)
 
-        # Show TIFF image if selected
+        # --- Simple TIFF selection ---
         tiff_files = filtered_df["TIFF File"].dropna().unique()
         tiff_files = [f for f in tiff_files if f]  # Remove empty strings
 
         selected_tiff = st.selectbox("Show TIFF image for selected XML", tiff_files) if tiff_files else None
+
         if selected_tiff:
-            # Use config info for base directory
             base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
             tiff_full_path = os.path.join(base_dir, selected_tiff)
             try:
-                # Convert 16-bit TIFF to 8-bit for display
                 img = Image.open(tiff_full_path)
                 if img.mode == "I;16":
                     arr = np.array(img)
                     arr8 = (arr / 256).astype("uint8")  # Scale to 8-bit
                     img = Image.fromarray(arr8)
-                st.image(img, caption=selected_tiff, use_column_width=True)
+                st.image(img, caption=selected_tiff, use_container_width=True)
             except Exception as e:
                 st.warning(f"Could not load TIFF: {e}")
 
