@@ -1,15 +1,46 @@
 from sqlalchemy import create_engine, text
 import pandas as pd
 from datetime import date
+import os
 
-# Database connection string
-DB_URL = "postgresql://postgres:madmaxfuryroad@localhost/sediment_cores"
+# Import database manager for portable/connected mode support
+try:
+    from database_manager import get_database_manager, get_engine as get_managed_engine
+    _use_database_manager = True
+except ImportError:
+    _use_database_manager = False
 
-# Create a SQLAlchemy engine
-engine = create_engine(DB_URL)
+# Database connection string (fallback for backward compatibility)
+DB_URL = os.getenv("DATABASE_URL", "postgresql://postgres:madmaxfuryroad@localhost/sediment_cores")
+
+# Create a SQLAlchemy engine - use managed engine if available
+def _get_engine():
+    """Get the database engine, using database manager if available."""
+    if _use_database_manager:
+        try:
+            return get_managed_engine()
+        except Exception:
+            pass
+    return create_engine(DB_URL)
+
+# Initialize engine
+engine = _get_engine()
 
 def get_connection():
-    """Get a database connection."""
+    """Get a database connection.
+    
+    Supports both PostgreSQL (connected mode) and SQLite (portable mode)
+    when used with the database_manager module.
+    """
+    global engine
+    if _use_database_manager:
+        try:
+            db_manager = get_database_manager()
+            if db_manager.engine is None:
+                db_manager.initialize()
+            engine = db_manager.engine
+        except Exception:
+            pass
     return engine.connect()
 
 def fetch_cores():
@@ -23,16 +54,36 @@ def fetch_cores():
     with get_connection() as conn:
         return pd.read_sql(query, conn)
 
+def _is_sqlite():
+    """Check if currently using SQLite database."""
+    if _use_database_manager:
+        try:
+            from database_manager import DatabaseMode
+            db_manager = get_database_manager()
+            return db_manager.mode == DatabaseMode.SQLITE
+        except Exception:
+            pass
+    return False
+
 def get_rbr_core_files():
     """Fetch RBR sensor core files from the database."""
     try:
-        with engine.connect() as connection:
-            query = """
-                SELECT c.core_name, s.file_path
-                FROM cores c
-                JOIN sensor_files s ON c.core_id = s.core_id
-                WHERE s.sensor_type ILIKE '%RBR%';
-            """
+        with get_connection() as connection:
+            # Use LIKE for SQLite, ILIKE for PostgreSQL
+            if _is_sqlite():
+                query = """
+                    SELECT c.core_name, s.file_path
+                    FROM cores c
+                    JOIN sensor_files s ON c.core_id = s.core_id
+                    WHERE LOWER(s.sensor_type) LIKE '%rbr%';
+                """
+            else:
+                query = """
+                    SELECT c.core_name, s.file_path
+                    FROM cores c
+                    JOIN sensor_files s ON c.core_id = s.core_id
+                    WHERE s.sensor_type ILIKE '%RBR%';
+                """
             df = pd.read_sql(query, connection)
 
             # Group file paths by core name
@@ -99,7 +150,7 @@ def fetch_last_record():
 def get_mscl_core_files():
     """Fetch MSCL core files from the database."""
     try:
-        with engine.connect() as connection:
+        with get_connection() as connection:
             query = """
                 SELECT c.core_name, m.file_path, m.file_name, m.remarks
                 FROM cores c
@@ -114,7 +165,7 @@ def get_mscl_core_files():
 def get_sensor_core_files():
     """Fetch all sensor core files from the database."""
     try:
-        with engine.connect() as connection:
+        with get_connection() as connection:
             query = """
                 SELECT c.core_name, s.file_path, s.file_name, s.sensor_type, s.sensor_location, s.remarks
                 FROM cores c
@@ -129,13 +180,22 @@ def get_sensor_core_files():
 def get_star_oddi_core_files():
     """Fetch Star Oddi sensor core files from the database."""
     try:
-        with engine.connect() as connection:
-            query = """
-                SELECT c.core_name, s.file_path, s.file_name, s.sensor_location, s.remarks
-                FROM cores c
-                JOIN sensor_files s ON c.core_id = s.core_id
-                WHERE s.sensor_type ILIKE '%Star%Oddi%';
-            """
+        with get_connection() as connection:
+            # Use LIKE for SQLite, ILIKE for PostgreSQL
+            if _is_sqlite():
+                query = """
+                    SELECT c.core_name, s.file_path, s.file_name, s.sensor_location, s.remarks
+                    FROM cores c
+                    JOIN sensor_files s ON c.core_id = s.core_id
+                    WHERE LOWER(s.sensor_type) LIKE '%star%oddi%';
+                """
+            else:
+                query = """
+                    SELECT c.core_name, s.file_path, s.file_name, s.sensor_location, s.remarks
+                    FROM cores c
+                    JOIN sensor_files s ON c.core_id = s.core_id
+                    WHERE s.sensor_type ILIKE '%Star%Oddi%';
+                """
             df = pd.read_sql(query, connection)
             return df
     except Exception as e:
