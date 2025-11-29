@@ -162,11 +162,7 @@ class SyncManager:
             int: Number of records exported
         """
         # Build query with optional filtering
-        if cruise_ids and table_name in ["cruises"]:
-            placeholders = ", ".join([f":id{i}" for i in range(len(cruise_ids))])
-            query = f"SELECT * FROM {table_name} WHERE cruise_id IN ({placeholders})"
-            params = {f"id{i}": cid for i, cid in enumerate(cruise_ids)}
-        elif cruise_ids and table_name in ["cores", "winch_data"]:
+        if cruise_ids and table_name in ["cruises", "cores", "winch_data"]:
             placeholders = ", ".join([f":id{i}" for i in range(len(cruise_ids))])
             query = f"SELECT * FROM {table_name} WHERE cruise_id IN ({placeholders})"
             params = {f"id{i}": cid for i, cid in enumerate(cruise_ids)}
@@ -190,11 +186,8 @@ class SyncManager:
         if df.empty:
             return 0
         
-        # Add sync_status column if not present
-        if "sync_status" not in df.columns:
-            df["sync_status"] = "synced"
-        else:
-            df["sync_status"] = "synced"
+        # Add sync_status column (always set to synced for exported data)
+        df["sync_status"] = "synced"
         
         # Write to SQLite
         with self.sqlite_engine.connect() as sqlite_conn:
@@ -462,6 +455,7 @@ class SyncManager:
         try:
             with self.sqlite_engine.connect() as conn:
                 # Count pending and synced records for each table
+                # Safe: table names come from class constant OPERATIONAL_TABLES whitelist
                 for table in self.OPERATIONAL_TABLES:
                     try:
                         pending = conn.execute(

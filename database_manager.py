@@ -152,8 +152,10 @@ class DatabaseManager:
             @event.listens_for(self._engine, "connect")
             def set_sqlite_pragma(dbapi_connection, connection_record):
                 cursor = dbapi_connection.cursor()
-                cursor.execute("PRAGMA foreign_keys=ON")
-                cursor.close()
+                try:
+                    cursor.execute("PRAGMA foreign_keys=ON")
+                finally:
+                    cursor.close()
             
             # Initialize schema if database is new
             self._initialize_sqlite_schema()
@@ -412,11 +414,13 @@ class DatabaseManager:
             "pending_counts": {}
         }
         
+        # Whitelist of tables that have sync_status column (safe for f-string usage)
         tables_with_sync = ["cruises", "cores", "sections", "mscl_files", "sensor_files", "winch_data"]
         
         with self.get_connection() as conn:
             for table in tables_with_sync:
                 try:
+                    # Safe: table comes from hardcoded whitelist above
                     result = conn.execute(
                         text(f"SELECT COUNT(*) FROM {table} WHERE sync_status = 'pending'")
                     ).scalar()

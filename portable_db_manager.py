@@ -241,6 +241,7 @@ def sync_to_server_ui():
     
     # Determine which file to use
     sync_file = None
+    temp_path = None  # Initialize temp_path
     if uploaded_file:
         # Save uploaded file temporarily
         temp_path = f"temp_sync_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
@@ -312,7 +313,7 @@ def sync_to_server_ui():
                     
                 finally:
                     # Clean up temp file if created
-                    if uploaded_file and os.path.exists(temp_path):
+                    if temp_path and os.path.exists(temp_path):
                         os.remove(temp_path)
 
 
@@ -414,8 +415,24 @@ def settings_ui():
     
     st.write("**PostgreSQL URL:**")
     postgres_url = os.getenv("DATABASE_URL", "postgresql://postgres:***@localhost/sediment_cores")
-    # Hide password
-    display_url = postgres_url.split('@')[0].rsplit(':', 1)[0] + ':***@' + postgres_url.split('@')[1] if '@' in postgres_url else postgres_url
+    # Hide password using urllib.parse for robust URL parsing
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(postgres_url)
+        if parsed.password:
+            # Replace password with asterisks
+            masked_netloc = f"{parsed.username}:***@{parsed.hostname}"
+            if parsed.port:
+                masked_netloc += f":{parsed.port}"
+            display_url = urlunparse((
+                parsed.scheme, masked_netloc, parsed.path,
+                parsed.params, parsed.query, parsed.fragment
+            ))
+        else:
+            display_url = postgres_url
+    except Exception:
+        # Fallback: just show a generic masked URL
+        display_url = "postgresql://***:***@***/sediment_cores"
     st.code(display_url)
     
     st.write("**SQLite Path:**")
