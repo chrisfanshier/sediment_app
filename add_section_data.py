@@ -22,11 +22,13 @@ else:
         # Check for existing sections
         existing_sections = get_existing_sections(selected_core_id)
         
-        if existing_sections:
+        if existing_sections and all(len(section) >= 4 for section in existing_sections):
             st.info(f"**Existing sections for {selected_core_name}:**")
             for section in existing_sections:
                 st.write(f"Section {section[0]}: Length {section[1]} cm (Cumulative: {section[2]} - {section[3]} cm)")
             st.warning("This core already has sections. Use the Edit Section Data page to modify existing sections.")
+        elif existing_sections:
+            st.warning("This core already has section data. Use the Edit Section Data page to make changes.")
         else:
             # Step 2: Number of sections
             st.subheader("Section Configuration")
