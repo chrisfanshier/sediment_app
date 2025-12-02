@@ -1,7 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
-from db_util import get_connection, fetch_cores
+from db_util import get_connection
 from plotting import plot_mscl_data, plot_mscl_data_compare
 from utils import parse_mscl_out_file
 from config import get_full_path  # Import the utility function for constructing full paths
@@ -14,15 +14,53 @@ def visualize_mscl_data():
     if 'comparison_settings_expanded' not in st.session_state:
         st.session_state['comparison_settings_expanded'] = False
 
-    # Fetch list of cores
-    cores = fetch_cores()
-    core_options = {f"{name} (ID: {id})": id for id, name in zip(cores['core_id'], cores['core_name'])}
-
     col1, col2 = st.columns([1, 3])
 
     with col1:
         st.header("Controls")
         with st.expander("Core and File Selection", expanded=True):
+            # First: Select Cruise (only show cruises with MSCL data)
+            with get_connection() as conn:
+                query = """
+                    SELECT DISTINCT c.cruise_id, c.cruise_name, v.vessel_name
+                    FROM cruises c
+                    JOIN cores co ON c.cruise_id = co.cruise_id
+                    JOIN mscl_files mf ON co.core_id = mf.core_id
+                    JOIN vessels v ON c.vessel_id = v.vessel_id
+                    ORDER BY c.cruise_name
+                """
+                cruises_with_mscl = pd.read_sql(query, conn)
+            
+            if cruises_with_mscl.empty:
+                st.warning("No cruises found with MSCL data")
+                st.stop()
+            
+            cruise_options = {
+                f"{row['cruise_name']} - {row['vessel_name']}": row['cruise_id'] 
+                for _, row in cruises_with_mscl.iterrows()
+            }
+            selected_cruise = st.selectbox("Select Cruise:", options=list(cruise_options.keys()))
+            cruise_id = cruise_options[selected_cruise]
+            
+            # Second: Select Core (only cores with MSCL data for selected cruise)
+            with get_connection() as conn:
+                query = """
+                    SELECT DISTINCT co.core_id, co.core_name
+                    FROM cores co
+                    JOIN mscl_files mf ON co.core_id = mf.core_id
+                    WHERE co.cruise_id = %s
+                    ORDER BY co.core_name
+                """
+                cores_with_mscl = pd.read_sql(query, conn, params=(cruise_id,))
+            
+            if cores_with_mscl.empty:
+                st.warning("No cores with MSCL data found for this cruise")
+                st.stop()
+            
+            core_options = {
+                f"{row['core_name']} (ID: {row['core_id']})": row['core_id'] 
+                for _, row in cores_with_mscl.iterrows()
+            }
             selected_core_label = st.selectbox("Select Core to Visualize MSCL Data", list(core_options.keys()))
             selected_core_id = core_options[selected_core_label]
 
@@ -130,79 +168,98 @@ def visualize_mscl_data():
                 with st.expander("Comparison Settings", expanded=st.session_state.get('comparison_settings_expanded', False)):
                     st.session_state['compare_enabled'] = st.checkbox("Compare with Another Core", value=st.session_state.get('compare_enabled', False))
                     if st.session_state['compare_enabled']:
-                        other_core_options = core_options.copy()
-                        del other_core_options[selected_core_label]
-                        second_core_label = st.selectbox("Select Second Core", list(other_core_options.keys()))
-                        second_core_id = other_core_options[second_core_label]
+                        st.markdown("### Select Second Core for Comparison")
+                        
+                        # Second cruise selection
+                        second_cruise_label = st.selectbox("Select Cruise (Second Core):", options=list(cruise_options.keys()), key="second_cruise")
+                        second_cruise_id = cruise_options[second_cruise_label]
+                        
+                        # Second core selection based on second cruise
                         with get_connection() as conn:
-                            query = "SELECT file_name, file_path FROM mscl_files WHERE core_id = %s"
-                            df_files_2 = pd.read_sql(query, conn, params=(second_core_id,))
-                        if not df_files_2.empty:
-                            selected_file_label_2 = st.selectbox("Select MSCL Data File for Second Core", df_files_2['file_name'])
-                            file_row_2 = df_files_2[df_files_2['file_name'] == selected_file_label_2].iloc[0]
-                            # Combine file_path and file_name to create the full relative path
-                            relative_path_2 = os.path.join(file_row_2['file_path'], file_row_2['file_name'])
-                            uploaded_file_path_2 = get_full_path(relative_path_2)
-
-                            # Debugging information for second core
-                            st.write(f"File Path from Database (Second Core): {file_row_2['file_path']}")
-                            st.write(f"File Name from Database (Second Core): {file_row_2['file_name']}")
-                            st.write(f"Relative Path (Second Core): {relative_path_2}")
-                            st.write(f"Full Path (Second Core): {uploaded_file_path_2}")
-
-                            try:
-                                # Parse the second MSCL file
-                                df2 = parse_mscl_out_file(uploaded_file_path_2)
-                                if df2 is not None:
-                                    # Apply the same dropout filter to the second core if enabled
-                                    if enable_dropout and filter_column in df2.columns:
-                                        filtered_df2 = df2[df2[filter_column] >= threshold].copy()
-                                    else:
-                                        filtered_df2 = df2.copy()
-                                    # Apply LOWESS smoothing to second core if enabled
-                                    if enable_smooth and smooth_column in filtered_df2.columns:
-                                        max_points2 = len(filtered_df2)
-                                        lowess_frac2 = smooth_points / max_points2 if max_points2 > 0 else 0.2
-                                        try:
-                                            from statsmodels.nonparametric.smoothers_lowess import lowess
-                                            valid2 = filtered_df2[[smooth_column, "SB DEPTH"]].dropna()
-                                            smoothed2 = lowess(
-                                                endog=valid2[smooth_column], exog=valid2["SB DEPTH"], frac=lowess_frac2, return_sorted=False
-                                            )
-                                            filtered_df2.loc[valid2.index, smooth_column + "_LOWESS"] = smoothed2
-                                        except ImportError:
-                                            st.error("statsmodels is required for LOWESS smoothing. Please install it with 'pip install statsmodels'.")
-                                    # Plot type: Overlay or Side by Side
-                                    plot_type = st.radio("Plot Type", ["Overlay", "Side by Side"])
-                                    st.markdown("### Adjustments for Second Core")
-                                    x_offset = st.number_input("X Offset", value=0.0, step=0.1)
-                                    y_offset = st.number_input("Y Offset (Depth)", value=0.0, step=0.1)
-                                    x_scale = st.number_input("X Scale (stretch/compress)", value=1.0, step=0.1, min_value=0.1)
-                                    y_scale = st.number_input("Y Scale (stretch/compress)", value=1.0, step=0.1, min_value=0.1)
-                                    with col2:
-                                        plot_mscl_data_compare(
-                                            df1=filtered_df,
-                                            df2=filtered_df2,
-                                            x_col=plot_param,
-                                            y_col="SB DEPTH",
-                                            core_name_1=selected_core_label,
-                                            core_name_2=second_core_label,
-                                            plot_type=plot_type,
-                                            x_min=x_min,
-                                            x_max=x_max,
-                                            y_min=y_min,
-                                            y_max=y_max,
-                                            x_offset=x_offset,
-                                            y_offset=y_offset,
-                                            x_scale=x_scale,
-                                            y_scale=y_scale
-                                        )
-                                else:
-                                    st.warning("Could not parse second MSCL data file.")
-                            except Exception as e:
-                                st.error(f"An error occurred while processing the second file: {e}")
+                            query = """
+                                SELECT DISTINCT co.core_id, co.core_name
+                                FROM cores co
+                                JOIN mscl_files mf ON co.core_id = mf.core_id
+                                WHERE co.cruise_id = %s
+                                ORDER BY co.core_name
+                            """
+                            cores_with_mscl_2 = pd.read_sql(query, conn, params=(second_cruise_id,))
+                        
+                        if cores_with_mscl_2.empty:
+                            st.warning("No cores with MSCL data found for the selected cruise")
                         else:
-                            st.info("No MSCL data files found for the selected second core.")
+                            second_core_options = {
+                                f"{row['core_name']} (ID: {row['core_id']})": row['core_id'] 
+                                for _, row in cores_with_mscl_2.iterrows()
+                            }
+                            
+                            second_core_label = st.selectbox("Select Second Core", list(second_core_options.keys()), key="second_core")
+                            second_core_id = second_core_options[second_core_label]
+                            
+                            with get_connection() as conn:
+                                query = "SELECT file_name, file_path FROM mscl_files WHERE core_id = %s"
+                                df_files_2 = pd.read_sql(query, conn, params=(second_core_id,))
+                            
+                            if not df_files_2.empty:
+                                selected_file_label_2 = st.selectbox("Select MSCL Data File for Second Core", df_files_2['file_name'], key="second_file")
+                                file_row_2 = df_files_2[df_files_2['file_name'] == selected_file_label_2].iloc[0]
+                                relative_path_2 = os.path.join(file_row_2['file_path'], file_row_2['file_name'])
+                                uploaded_file_path_2 = get_full_path(relative_path_2)
+
+                                st.write(f"File Path from Database (Second Core): {file_row_2['file_path']}")
+                                st.write(f"File Name from Database (Second Core): {file_row_2['file_name']}")
+                                st.write(f"Relative Path (Second Core): {relative_path_2}")
+                                st.write(f"Full Path (Second Core): {uploaded_file_path_2}")
+
+                                try:
+                                    df2 = parse_mscl_out_file(uploaded_file_path_2)
+                                    if df2 is not None:
+                                        if enable_dropout and filter_column in df2.columns:
+                                            filtered_df2 = df2[df2[filter_column] >= threshold].copy()
+                                        else:
+                                            filtered_df2 = df2.copy()
+                                        if enable_smooth and smooth_column in filtered_df2.columns:
+                                            max_points2 = len(filtered_df2)
+                                            lowess_frac2 = smooth_points / max_points2 if max_points2 > 0 else 0.2
+                                            try:
+                                                from statsmodels.nonparametric.smoothers_lowess import lowess
+                                                valid2 = filtered_df2[[smooth_column, "SB DEPTH"]].dropna()
+                                                smoothed2 = lowess(
+                                                    endog=valid2[smooth_column], exog=valid2["SB DEPTH"], frac=lowess_frac2, return_sorted=False
+                                                )
+                                                filtered_df2.loc[valid2.index, smooth_column + "_LOWESS"] = smoothed2
+                                            except ImportError:
+                                                st.error("statsmodels is required for LOWESS smoothing. Please install it with 'pip install statsmodels'.")
+                                        plot_type = st.radio("Plot Type", ["Overlay", "Side by Side"])
+                                        st.markdown("### Adjustments for Second Core")
+                                        x_offset = st.number_input("X Offset", value=0.0, step=0.1)
+                                        y_offset = st.number_input("Y Offset (Depth)", value=0.0, step=0.1)
+                                        x_scale = st.number_input("X Scale (stretch/compress)", value=1.0, step=0.1, min_value=0.1)
+                                        y_scale = st.number_input("Y Scale (stretch/compress)", value=1.0, step=0.1, min_value=0.1)
+                                        with col2:
+                                            plot_mscl_data_compare(
+                                                df1=filtered_df,
+                                                df2=filtered_df2,
+                                                x_col=plot_param,
+                                                y_col="SB DEPTH",
+                                                core_name_1=selected_core_label,
+                                                core_name_2=second_core_label,
+                                                plot_type=plot_type,
+                                                x_min=x_min,
+                                                x_max=x_max,
+                                                y_min=y_min,
+                                                y_max=y_max,
+                                                x_offset=x_offset,
+                                                y_offset=y_offset,
+                                                x_scale=x_scale,
+                                                y_scale=y_scale
+                                            )
+                                    else:
+                                        st.warning("Could not parse second MSCL data file.")
+                                except Exception as e:
+                                    st.error(f"An error occurred while processing the second file: {e}")
+                            else:
+                                st.info("No MSCL data files found for the selected second core.")
                     else:
                         if df is not None and not filtered_df.empty and plot_param:
                             with col2:
