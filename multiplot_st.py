@@ -324,9 +324,10 @@ with st.sidebar:
         query = text("""
             SELECT DISTINCT c.cruise_id, c.cruise_name, v.vessel_name
             FROM cruises c
-            JOIN cores co ON c.cruise_id = co.cruise_id
-            JOIN sensor_files sf ON co.core_id = sf.core_id
-            JOIN vessels v ON c.vessel_id = v.vessel_id
+            LEFT JOIN cores co ON c.cruise_id = co.cruise_id
+            LEFT JOIN sensor_files sf ON co.core_id = sf.core_id
+            LEFT JOIN vessels v ON c.vessel_id = v.vessel_id
+            WHERE sf.file_id IS NOT NULL
             ORDER BY c.cruise_name
         """)
         cruises_with_sensors = pd.read_sql(query, conn)
@@ -350,8 +351,8 @@ with st.sidebar:
             query = text("""
                 SELECT DISTINCT c.core_id, c.core_name 
                 FROM cores c
-                JOIN sensor_files sf ON c.core_id = sf.core_id
-                WHERE c.cruise_id = :cruise_id 
+                LEFT JOIN sensor_files sf ON c.core_id = sf.core_id
+                WHERE c.cruise_id = :cruise_id AND sf.file_id IS NOT NULL
                 ORDER BY c.core_name
             """)
             cores_df = pd.read_sql(query, conn, params={"cruise_id": cruise_id})

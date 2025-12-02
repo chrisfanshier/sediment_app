@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
+from sqlalchemy import text
 from db_util import get_connection
 from plotting import plot_mscl_data, plot_mscl_data_compare
 from utils import parse_mscl_out_file
@@ -21,14 +22,15 @@ def visualize_mscl_data():
         with st.expander("Core and File Selection", expanded=True):
             # First: Select Cruise (only show cruises with MSCL data)
             with get_connection() as conn:
-                query = """
+                query = text("""
                     SELECT DISTINCT c.cruise_id, c.cruise_name, v.vessel_name
                     FROM cruises c
-                    JOIN cores co ON c.cruise_id = co.cruise_id
-                    JOIN mscl_files mf ON co.core_id = mf.core_id
-                    JOIN vessels v ON c.vessel_id = v.vessel_id
+                    LEFT JOIN cores co ON c.cruise_id = co.cruise_id
+                    LEFT JOIN mscl_files mf ON co.core_id = mf.core_id
+                    LEFT JOIN vessels v ON c.vessel_id = v.vessel_id
+                    WHERE mf.file_id IS NOT NULL
                     ORDER BY c.cruise_name
-                """
+                """)
                 cruises_with_mscl = pd.read_sql(query, conn)
             
             if cruises_with_mscl.empty:
@@ -44,14 +46,14 @@ def visualize_mscl_data():
             
             # Second: Select Core (only cores with MSCL data for selected cruise)
             with get_connection() as conn:
-                query = """
+                query = text("""
                     SELECT DISTINCT co.core_id, co.core_name
                     FROM cores co
-                    JOIN mscl_files mf ON co.core_id = mf.core_id
-                    WHERE co.cruise_id = %s
+                    LEFT JOIN mscl_files mf ON co.core_id = mf.core_id
+                    WHERE co.cruise_id = :cruise_id AND mf.file_id IS NOT NULL
                     ORDER BY co.core_name
-                """
-                cores_with_mscl = pd.read_sql(query, conn, params=(cruise_id,))
+                """)
+                cores_with_mscl = pd.read_sql(query, conn, params={"cruise_id": cruise_id})
             
             if cores_with_mscl.empty:
                 st.warning("No cores with MSCL data found for this cruise")
@@ -176,14 +178,14 @@ def visualize_mscl_data():
                         
                         # Second core selection based on second cruise
                         with get_connection() as conn:
-                            query = """
+                            query = text("""
                                 SELECT DISTINCT co.core_id, co.core_name
                                 FROM cores co
-                                JOIN mscl_files mf ON co.core_id = mf.core_id
-                                WHERE co.cruise_id = %s
+                                LEFT JOIN mscl_files mf ON co.core_id = mf.core_id
+                                WHERE co.cruise_id = :cruise_id AND mf.file_id IS NOT NULL
                                 ORDER BY co.core_name
-                            """
-                            cores_with_mscl_2 = pd.read_sql(query, conn, params=(second_cruise_id,))
+                            """)
+                            cores_with_mscl_2 = pd.read_sql(query, conn, params={"cruise_id": second_cruise_id})
                         
                         if cores_with_mscl_2.empty:
                             st.warning("No cores with MSCL data found for the selected cruise")
