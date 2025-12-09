@@ -238,6 +238,15 @@ def visualize_mscl_data():
                                         y_offset = st.number_input("Y Offset (Depth)", value=0.0, step=0.1)
                                         x_scale = st.number_input("X Scale (stretch/compress)", value=1.0, step=0.1, min_value=0.1)
                                         y_scale = st.number_input("Y Scale (stretch/compress)", value=1.0, step=0.1, min_value=0.1)
+
+                                        #Create meta data dictionary
+                                        metadata = {
+                                            'X Offset': f"{x_offset}",
+                                            'Y Offset': f"{y_offset}",
+                                            'X Scale': f"{x_scale}",
+                                            'Y Scale': f"{y_scale}"
+                                        }
+
                                         with col2:
                                             plot_mscl_data_compare(
                                                 df1=filtered_df,
@@ -254,7 +263,8 @@ def visualize_mscl_data():
                                                 x_offset=x_offset,
                                                 y_offset=y_offset,
                                                 x_scale=x_scale,
-                                                y_scale=y_scale
+                                                y_scale=y_scale,
+                                                metadata=metadata
                                             )
                                     else:
                                         st.warning("Could not parse second MSCL data file.")

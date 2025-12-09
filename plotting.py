@@ -53,7 +53,8 @@ def plot_mscl_data_compare(
     x_offset=0.0,
     y_offset=0.0,
     x_scale=1.0,
-    y_scale=1.0
+    y_scale=1.0,
+    metadata=None
 ):
     if plot_type == "Side by Side":
         fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=(core_name_1, core_name_2))
@@ -86,6 +87,22 @@ def plot_mscl_data_compare(
             title=f"Comparison of {core_name_1} and {core_name_2} for {x_col}",
             height=1200
         )
+        # Add metadata annotation if provided
+        if metadata:
+            annotation_text = "<br>".join([f"<b>{k}:</b> {v}" for k, v in metadata.items()])
+            fig.add_annotation(
+                text=annotation_text,
+                xref="paper", yref="paper",
+                x=1.02, y=0.85,
+                xanchor="left", yanchor="top",
+                showarrow=False,
+                bordercolor="gray",
+                borderwidth=1,
+                bgcolor="white",
+                opacity=0.9,
+                font=dict(size=9, family="monospace"),
+                align="left"
+            )
     else:
         fig = go.Figure()
         fig.add_trace(go.Scatter(
@@ -115,6 +132,23 @@ def plot_mscl_data_compare(
             ),
             height=1200
         )
+        # Add metadata annotation if provided
+        if metadata:
+            annotation_text = "<br>".join([f"<b>{k}:</b> {v}" for k, v in metadata.items()])
+            fig.add_annotation(
+                text=annotation_text,
+                xref="paper", yref="paper",
+                x=1.02, y=0.85,
+                xanchor="left", yanchor="top",
+                showarrow=False,
+                bordercolor="gray",
+                borderwidth=1,
+                bgcolor="white",
+                opacity=0.9,
+                font=dict(size=9, family="monospace"),
+                align="left"
+            )
+
     st.plotly_chart(fig, use_container_width=True)
 
 def plot_rbr_downsampled(primary_df, overlay_df=None, third_df=None, y_axis="Depth (m)", max_points=1000, primary_core_name="Primary Core"):
