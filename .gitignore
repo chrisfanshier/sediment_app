@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Database
+*.sql
+*.db
+*.sqlite
+*.dump
+backups/
+*.backup
+test_shipside.sql
+
+# Environment variables & credentials
+.env
+.env.local
+config_local.py
+*password*
+*credentials*
+ssh_keys/
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Data files (don't commit uploaded data)
+uploaded_files/
+MSCL_Data/
+Sensor_Data/
+Winch_Data/
+*_data_files/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
