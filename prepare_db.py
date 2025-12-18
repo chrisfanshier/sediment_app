@@ -157,7 +157,7 @@ def add_sync_tracking():
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
             CREATE TRIGGER mscl_files_modified BEFORE UPDATE ON mscl_files 
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
-            CREATE TRIGGER sensor_files_modified ON sensor_files 
+            CREATE TRIGGER sensor_files_modified BEFORE UPDATE ON sensor_files 
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
             CREATE TRIGGER winch_data_modified BEFORE UPDATE ON winch_data
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();          
