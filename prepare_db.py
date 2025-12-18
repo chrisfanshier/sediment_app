@@ -125,8 +125,14 @@ def add_sync_tracking():
             CREATE OR REPLACE FUNCTION update_modified_at()
             RETURNS TRIGGER AS $$
             BEGIN
+                -- If sync is marking as 'synced', don't interfere
+                IF NEW.sync_status = 'synced' AND OLD.sync_status = 'pending' THEN
+                    RETURN NEW;  -- Let the sync update happen without interference
+                END IF;
+                
+                -- For all other updates, update modified_at and mark pending if created on ship
                 NEW.modified_at = CURRENT_TIMESTAMP;
-                IF NEW.created_on_ship = TRUE AND OLD.* IS DISTINCT FROM NEW.* THEN
+                IF NEW.created_on_ship = TRUE THEN
                     NEW.sync_status = 'pending';
                 END IF;
                 RETURN NEW;
@@ -151,7 +157,7 @@ def add_sync_tracking():
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
             CREATE TRIGGER mscl_files_modified BEFORE UPDATE ON mscl_files 
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
-            CREATE TRIGGER sensor_files_modified BEFORE UPDATE ON sensor_files 
+            CREATE TRIGGER sensor_files_modified ON sensor_files 
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
             CREATE TRIGGER winch_data_modified BEFORE UPDATE ON winch_data
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();          
