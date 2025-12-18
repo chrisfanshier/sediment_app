@@ -81,6 +81,7 @@ for idx, (table_name, id_column) in enumerate(SYNC_TABLES):
             count_query = text(f"""
                 SELECT COUNT(*) FROM {table_name} 
                 WHERE sync_status = 'pending'
+                AND created_on_ship = TRUE
             """)
             count = conn.execute(count_query).scalar()
             total_pending += count
@@ -89,10 +90,11 @@ for idx, (table_name, id_column) in enumerate(SYNC_TABLES):
                 st.metric(table_name.replace('_', ' ').title(), count)
             
             if count > 0:
-                # Get pending records
+                # Get pending records created on this ship
                 data_query = text(f"""
                     SELECT * FROM {table_name}
                     WHERE sync_status = 'pending'
+                    AND created_on_ship = TRUE
                     ORDER BY created_at
                 """)
                 records = conn.execute(data_query).fetchall()
