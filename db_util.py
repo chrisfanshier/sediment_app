@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import date
 
 # Database connection string
-DB_URL = "postgresql://postgres:madmaxfuryroad@localhost/test_shipside"
+DB_URL = "postgresql://postgres:madmaxfuryroad@localhost/shipside"
 
 # Create a SQLAlchemy engine
 engine = create_engine(DB_URL)
