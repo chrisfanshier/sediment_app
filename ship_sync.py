@@ -202,10 +202,13 @@ else:
                 # Update ship database with results
                 synced_count = 0
                 
+                # Create lookup dict ONCE outside the loop
+                table_to_id = {table: id_col for table, id_col in SYNC_TABLES}
+                
                 with get_connection() as conn:
                     for table_name, mappings in result.get('id_mappings', {}).items():
-                        if table_name in dict(SYNC_TABLES):
-                            id_column = dict(SYNC_TABLES)[table_name]
+                        if table_name in table_to_id:
+                            id_column = table_to_id[table_name]
                             
                             for ship_id_str, central_id in mappings.items():
                                 ship_id = int(ship_id_str)
