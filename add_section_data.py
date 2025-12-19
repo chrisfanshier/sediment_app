@@ -7,6 +7,7 @@ st.title("📏 Add Section Data")
 # Main interface
 # ...existing code...
 cores = fetch_cores()
+cores = cores[cores['core_dredge'] == 'core']
 if cores.empty:
     st.warning("No cores found. Please add cores first.")
 else:

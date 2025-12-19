@@ -3,8 +3,8 @@ import streamlit as st
 # Force wide layout for Streamlit
 st.set_page_config(layout="wide")
 
-# Sidebar navigation - add the new cruise edit option
-menu = ["Add Cruise Data", "Edit Cruise Data", "Add Core Data", "Edit Core Data", "Add Section Data", "Edit Section Data"]
+# Sidebar navigation - add the new dredge options
+menu = ["Add Cruise Data", "Edit Cruise Data", "Add Core Data", "Edit Core Data", "Add Dredge Data", "Edit Dredge Data", "Add Section Data", "Edit Section Data"]
 choice = st.sidebar.radio("Select Option", menu)
 
 # Render the selected page
@@ -51,6 +51,28 @@ elif choice == "Edit Core Data":
     edit_core_code = edit_core_code.replace("st.set_page_config(layout='wide')", '')
     
     exec(edit_core_code)
+
+elif choice == "Add Dredge Data":
+    # Execute the add_dredge_data.py file content
+    with open("add_dredge_data.py", "r", encoding="utf-8") as f:
+        add_dredge_code = f.read()
+    
+    # Remove any st.set_page_config lines to avoid conflicts
+    add_dredge_code = add_dredge_code.replace('st.set_page_config(layout="wide")', '')
+    add_dredge_code = add_dredge_code.replace("st.set_page_config(layout='wide')", '')
+    
+    exec(add_dredge_code)
+
+elif choice == "Edit Dredge Data":
+    # Execute the edit_dredge_data.py file content
+    with open("edit_dredge_data.py", "r", encoding="utf-8") as f:
+        edit_dredge_code = f.read()
+    
+    # Remove any st.set_page_config lines to avoid conflicts
+    edit_dredge_code = edit_dredge_code.replace('st.set_page_config(layout="wide")', '')
+    edit_dredge_code = edit_dredge_code.replace("st.set_page_config(layout='wide')", '')
+    
+    exec(edit_dredge_code)
 
 elif choice == "Add Section Data":
     # Execute the add_section_data.py file content
