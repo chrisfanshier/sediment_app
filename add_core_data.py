@@ -463,13 +463,13 @@ if st.session_state.show_confirmation:
                         # === CREATE JC CORE (original logic) ===
                         base_query = """
                             INSERT INTO cores (
-                                core_name, vessel_id, cruise_id, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, 
+                                core_name, vessel_id, cruise_id, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, core_dredge,
                                 time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id, data_entry_remarks
                         """
                         base_values = [
                             core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
-                            water_depth, latitude, longitude, observer or None, core_type_id, time_launched, time_on_bottom, 
+                            water_depth, latitude, longitude, observer or None, core_type_id, 'core', time_launched, time_on_bottom, 
                             time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
                             tension_at_bottom, pullout_tension, notes or None, wire_type_id, data_entry_remarks or None
                         ]
@@ -502,7 +502,7 @@ if st.session_state.show_confirmation:
                             # TC core values (same as JC but with different name, core_type, and NULL tensions)
                             tc_base_values = [
                                 tc_core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
-                                water_depth, latitude, longitude, observer or None, tc_core_type_id, time_launched, time_on_bottom, 
+                                water_depth, latitude, longitude, observer or None, tc_core_type_id, 'core', time_launched, time_on_bottom, 
                                 time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
                                 None, None, notes or None, wire_type_id, data_entry_remarks or None  # tensions = NULL, include data_entry_remarks
                             ]

@@ -52,6 +52,7 @@ with get_connection() as conn:
     FROM cores c
     LEFT JOIN cruises cr ON c.cruise_id = cr.cruise_id
     LEFT JOIN vessels v ON cr.vessel_id = v.vessel_id
+    WHERE c.core_dredge = 'core'
     ORDER BY c.core_name
     """
     all_cores = conn.execute(text(cores_query)).fetchall()
