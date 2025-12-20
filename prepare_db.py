@@ -210,9 +210,10 @@ def select_cruises_to_keep():
             delete_str = ','.join(map(str, delete_ids))
             
             print(f"\n  Deleting {len(delete_ids)} unwanted cruises...")
-            
-            # Delete in order respecting foreign keys
+
+            # Delete ct_xml rows by section_id and core_id to satisfy both constraints
             conn.execute(text(f"DELETE FROM ct_xml WHERE section_id IN (SELECT section_id FROM sections WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str})))"))
+            conn.execute(text(f"DELETE FROM ct_xml WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM sensor_files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM sensor_data WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM mscl_files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
