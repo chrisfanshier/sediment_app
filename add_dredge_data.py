@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import pandas as pd
-from db_util import get_connection
+from db_util import get_connection, add_sync_tracking
 from db_util import fetch_dropdown_values
 from db_util import fetch_last_record
 from db_util import fetch_cruise_options
@@ -547,7 +547,8 @@ if st.session_state.show_confirmation_dredge:
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension,
                                 active_passive, main_shear_pin_type_id, main_shear_pin_break,
                                 side_pin_type_id, side_pin_strength, usbl_distance, pinger_distance,
-                                notes, wire_type_id, data_entry_remarks
+                                notes, wire_type_id, data_entry_remarks,
+                                created_on_ship, sync_status
                             ) VALUES (
                                 :core_name, :vessel_id, :cruise_id, :leg, :date, :station, :water_depth, :latitude, :longitude,
                                 :latitude_end, :longitude_end, :depth_end,
@@ -557,10 +558,11 @@ if st.session_state.show_confirmation_dredge:
                                 :tension_at_surface, :tension_near_bottom, :tension_at_bottom, :pullout_tension,
                                 :active_passive, :main_shear_pin_type_id, :main_shear_pin_break,
                                 :side_pin_type_id, :side_pin_strength, :usbl_distance, :pinger_distance,
-                                :notes, :wire_type_id, :data_entry_remarks
+                                :notes, :wire_type_id, :data_entry_remarks,
+                                :created_on_ship, :sync_status
                             )
                         """
-                        
+
                         values = {
                             "core_name": core_name,
                             "vessel_id": vessel_id,
@@ -594,7 +596,9 @@ if st.session_state.show_confirmation_dredge:
                             "pinger_distance": pinger_distance,
                             "notes": notes or None,
                             "wire_type_id": wire_type_id,
-                            "data_entry_remarks": data_entry_remarks or None
+                            "data_entry_remarks": data_entry_remarks or None,
+                            "created_on_ship": True,
+                            "sync_status": "pending"
                         }
                         
                         conn.execute(text(query), values)
