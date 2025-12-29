@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import pandas as pd
-from db_util import get_connection, add_sync_tracking
+from db_util import get_connection, add_sync_tracking, fetch_cruise_options
 from datetime import date
 from sqlalchemy import text
 import re
@@ -41,15 +41,7 @@ if "show_cruise_confirmation" not in st.session_state:
 # --- Cruise Selection ---
 st.subheader("Select Cruise to Edit")
 
-# Get all cruise names for selection
-with get_connection() as conn:
-    cruises_query = """
-    SELECT cr.cruise_id, cr.cruise_name, v.vessel_name 
-    FROM cruises cr
-    LEFT JOIN vessels v ON cr.vessel_id = v.vessel_id
-    ORDER BY cr.cruise_name
-    """
-    all_cruises = conn.execute(text(cruises_query)).fetchall()
+all_cruises = fetch_cruise_options(only_created_on_ship=True)
 
 if not all_cruises:
     st.warning("No cruises found in the database.")

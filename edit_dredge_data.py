@@ -48,7 +48,7 @@ with get_connection() as conn:
     FROM cores c
     LEFT JOIN cruises cr ON c.cruise_id = cr.cruise_id
     LEFT JOIN vessels v ON cr.vessel_id = v.vessel_id
-    WHERE c.core_dredge = 'dredge'
+    WHERE c.core_dredge = 'dredge' AND c.created_on_ship = TRUE
     ORDER BY c.core_name
     """
     all_dredges = conn.execute(text(dredges_query)).fetchall()
@@ -94,7 +94,7 @@ with get_connection() as conn:
 
 # Fetch dropdown values dynamically
 vessels, core_types = fetch_dropdown_values()
-cruises = fetch_cruise_options()
+cruises = fetch_cruise_options(only_created_on_ship=True)
 
 # --- Display Edit Form ---
 st.subheader("Edit Dredge Data")

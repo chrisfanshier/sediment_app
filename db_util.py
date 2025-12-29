@@ -12,14 +12,18 @@ def get_connection():
     """Get a database connection."""
     return engine.connect()
 
-def fetch_cores():
-    """Fetch cores with cruise_name from cruises table."""
+def fetch_cores(only_created_on_ship=False):
+    """Fetch cores with cruise_name from cruises table.
+       If only_created_on_ship is True, only return cores created on ship.
+    """
     query = """
         SELECT c.core_id, c.core_name, c.core_dredge, cr.cruise_name
         FROM cores c
         JOIN cruises cr ON c.cruise_id = cr.cruise_id
-        ORDER BY cr.cruise_name, c.core_name
     """
+    if only_created_on_ship:
+        query += " WHERE c.created_on_ship = TRUE"
+    query += " ORDER BY cr.cruise_name, c.core_name"
     with get_connection() as conn:
         return pd.read_sql(query, conn)
 
@@ -154,18 +158,22 @@ def get_existing_sections(core_id):
         return result.fetchall()
 
 # filepath: c:\sediment_app\scripts\db_util.py
-def get_cores_with_sections():
-    """Get cores that have sections"""
+def get_cores_with_sections(only_created_on_ship=False):
+    """Get cores that have sections. If only_created_on_ship is True, only return ship-created cores."""
     with get_connection() as conn:
-        query = text("""
+        query = """
             SELECT DISTINCT c.core_id, c.core_name, cr.cruise_name, COUNT(s.section_id) as section_count
             FROM cores c
             JOIN sections s ON c.core_id = s.core_id
             JOIN cruises cr ON c.cruise_id = cr.cruise_id
+        """
+        if only_created_on_ship:
+            query += " WHERE c.created_on_ship = TRUE"
+        query += """
             GROUP BY c.core_id, c.core_name, cr.cruise_name
             ORDER BY cr.cruise_name, c.core_name
-        """)
-        result = conn.execute(query)
+        """
+        result = conn.execute(text(query))
         return result.fetchall()
 
 def get_sections_for_core(core_id):
@@ -238,16 +246,20 @@ def delete_all_sections_for_core(core_id):
         conn.execute(query, {"core_id": core_id})
         conn.commit()
 
-def fetch_cruise_options():
-    """Fetch cruise options with vessel information for dropdown."""
+def fetch_cruise_options(only_created_on_ship=False):
+    """Fetch cruise options with vessel information for dropdown.
+       If only_created_on_ship is True, only return cruises created on ship.
+    """
     try:
         with get_connection() as conn:
             query = """
             SELECT cr.cruise_id, cr.cruise_name, v.vessel_name, v.vessel_id
             FROM cruises cr
             LEFT JOIN vessels v ON cr.vessel_id = v.vessel_id
-            ORDER BY cr.cruise_name
             """
+            if only_created_on_ship:
+                query += " WHERE cr.created_on_ship = TRUE"
+            query += " ORDER BY cr.cruise_name"
             cruises = conn.execute(text(query)).fetchall()
             return cruises
     except Exception as e:

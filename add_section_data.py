@@ -7,7 +7,7 @@ st.title("📏 Add Section Data")
 
 # Main interface
 # ...existing code...
-cores = fetch_cores()
+cores = fetch_cores(only_created_on_ship=True)
 cores = cores[cores['core_dredge'] == 'core']
 if cores.empty:
     st.warning("No cores found. Please add cores first.")

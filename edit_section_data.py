@@ -7,7 +7,7 @@ import psycopg2
 st.title("✏️ Edit Section Data")
 
 # Main interface
-cores_with_sections = get_cores_with_sections()
+cores_with_sections = get_cores_with_sections(only_created_on_ship=True)
 
 if not cores_with_sections:
     st.warning("No cores with sections found. Please add sections first using the 'Add Section Data' page.")

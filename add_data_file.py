@@ -100,7 +100,7 @@ file_category = st.selectbox("Select File Category", ["MSCL Data", "Sensor Data"
 
 if file_category in ["MSCL Data", "Sensor Data"]:
     # For core-related files, fetch and select core
-    cores = fetch_cores()
+    cores = fetch_cores(only_created_on_ship=True)
     if cores.empty:
         st.warning("No cores found. Please add cores first.")
         st.stop()
@@ -111,7 +111,7 @@ if file_category in ["MSCL Data", "Sensor Data"]:
 
 elif file_category == "Winch Data":
     # For winch files, fetch and select cruise
-    cruises = fetch_cruise_options()
+    cruises = fetch_cruise_options(only_created_on_ship=True)
     if not cruises:
         st.warning("No cruises found. Please add a cruise first.")
         st.stop()

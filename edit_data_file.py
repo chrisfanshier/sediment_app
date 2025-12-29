@@ -28,7 +28,7 @@ st.title("✏️ Edit Data File Associations")
 st.write("Select and edit existing file associations with cores.")
 
 # Fetch list of cores
-cores = fetch_cores()
+cores = fetch_cores(only_created_on_ship=True)
 if cores.empty:
     st.warning("No cores found. Please add cores first.")
 else:

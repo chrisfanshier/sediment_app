@@ -60,7 +60,7 @@ def w_import():
 
     # Step 1: Select cruise from database
     st.subheader("📋 Select Cruise")
-    cruises = fetch_cruise_options()
+    cruises = fetch_cruise_options(only_created_on_ship=True)
     
     if not cruises:
         st.error("❌ No cruises found in database. Please add a cruise first.")

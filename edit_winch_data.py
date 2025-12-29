@@ -10,7 +10,7 @@ def edit_winch_data():
     st.write("Select and edit existing winch data files.")
     
     # Fetch list of cruises
-    cruises = fetch_cruise_options()
+    cruises = fetch_cruise_options(only_created_on_ship=True)
     if not cruises:
         st.warning("No cruises found. Please add a cruise first.")
         return

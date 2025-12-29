@@ -40,7 +40,7 @@ st.title("🧪 Add a New Sediment Core")
 
 # Fetch dropdown values dynamically
 vessels, core_types = fetch_dropdown_values()
-cruises = fetch_cruise_options()
+cruises = fetch_cruise_options(only_created_on_ship=True)
 
 # Fetch the last record for carry-forward functionality
 last_record = fetch_last_record()
