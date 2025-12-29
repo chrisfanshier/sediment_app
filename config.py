@@ -1,7 +1,7 @@
 import os
 
 # Root directory for all data files
-ROOT_DIRECTORY = os.getenv("FILE_STORAGE_ROOT", r"C:\shipside_db\data_files")
+ROOT_DIRECTORY = os.getenv("FILE_STORAGE_ROOT", r"C:\shipsideDB")
 
 # Subdirectories for specific file types
 SUBDIRECTORIES = {

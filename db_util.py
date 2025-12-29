@@ -15,7 +15,7 @@ def get_connection():
 def fetch_cores():
     """Fetch cores with cruise_name from cruises table."""
     query = """
-        SELECT c.core_id, c.core_name, cr.cruise_name
+        SELECT c.core_id, c.core_name, c.core_dredge, cr.cruise_name
         FROM cores c
         JOIN cruises cr ON c.cruise_id = cr.cruise_id
         ORDER BY cr.cruise_name, c.core_name
