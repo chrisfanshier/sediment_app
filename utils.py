@@ -362,7 +362,8 @@ def parse_winch_dat(file_path, parsing_settings):
         skiprows=header_lines,
         header=None if columns else 0,
         names=columns if columns else None,
-        low_memory=False
+        low_memory=False,
+        on_bad_lines='skip'  # <-- Add this!
     )
     
     # Execute the datetime code to create datetime column
