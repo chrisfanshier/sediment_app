@@ -240,13 +240,17 @@ elif file_category == "Winch Data":
         if custom_delim:
             delimiter = custom_delim
 
-        # Preview raw data
+        # --- Preview raw data ---
         try:
             uploaded_file.seek(0)
             if delimiter == r"\s+":
-                df_preview = pd.read_csv(uploaded_file, sep='\s+', skiprows=header_lines, nrows=20, header=None)
+                df_preview = pd.read_csv(
+                    uploaded_file, sep='\s+', skiprows=header_lines, nrows=20, header=None, on_bad_lines='skip'
+                )
             else:
-                df_preview = pd.read_csv(uploaded_file, delimiter=delimiter, skiprows=header_lines, nrows=20, header=None)
+                df_preview = pd.read_csv(
+                    uploaded_file, delimiter=delimiter, skiprows=header_lines, nrows=20, header=None, on_bad_lines='skip'
+                )
             st.write("Raw Preview (first 20 rows):", df_preview)
         except Exception as e:
             st.error(f"Error reading file: {e}")
@@ -286,9 +290,13 @@ elif file_category == "Winch Data":
                 # Read the entire dataset
                 uploaded_file.seek(0)
                 if delimiter == r"\s+":
-                    df = pd.read_csv(uploaded_file, sep='\s+', skiprows=header_lines, names=colnames, low_memory=False)
+                    df = pd.read_csv(
+                        uploaded_file, sep='\s+', skiprows=header_lines, names=colnames, low_memory=False, on_bad_lines='skip'
+                    )
                 else:
-                    df = pd.read_csv(uploaded_file, delimiter=delimiter, skiprows=header_lines, names=colnames, low_memory=False)
+                    df = pd.read_csv(
+                        uploaded_file, delimiter=delimiter, skiprows=header_lines, names=colnames, low_memory=False, on_bad_lines='skip'
+                    )
 
                 # Execute datetime creation
                 exec(f"df['datetime'] = {datetime_code}")

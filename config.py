@@ -1,7 +1,7 @@
 import os
 
 # Root directory for all data files
-ROOT_DIRECTORY = os.getenv("FILE_STORAGE_ROOT", "/home/server/project/marssam/marssam_data_files")
+ROOT_DIRECTORY = os.getenv("FILE_STORAGE_ROOT", r"C:\sediment_app\scripts\uploaded_files")
 
 # Subdirectories for specific file types
 SUBDIRECTORIES = {
@@ -48,7 +48,7 @@ WINCH_FORMATS = {
         "delimiter": ",",
         "header_lines": 0,
         "columns": ["time_stamp", "winch_id", "other_timestamp", "tension_lbs", "speed_mm", "payout_m", "checksum"],
-        "datetime_code": "pd.to_datetime(df['time_stamp'])",
+        "datetime_code": "pd.to_datetime(df['time_stamp'], errors='coerce')",
         "numeric_columns": ["tension_lbs", "speed_mm", "payout_m"]
     }
 }
