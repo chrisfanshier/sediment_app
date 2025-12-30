@@ -1174,7 +1174,7 @@ def multiplot_sensor_data():
             This application allows you to:
             
             - **📊 Plot sensor data** from multiple files simultaneously
-            - **🔗 Overlay companion data** from related cores
+            - **🔗 Plot multiple windows with overlays of sensor data for a core or dredge
             - **🔧 Add winch data** for correlation analysis
             - **⚡ Apply offsets** to align data traces
             - **📉 Downsample data** for performance in overview mode
@@ -1183,7 +1183,7 @@ def multiplot_sensor_data():
             
             **Getting Started:**
             1. Select a cruise from the dropdown
-            2. Choose a core containing sensor data
+            2. Choose a core or dredge containing sensor data
             3. Select one or more sensor files
             4. Pick a parameter to plot
             5. Adjust global/individual offsets as needed in overview mode
