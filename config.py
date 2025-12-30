@@ -48,7 +48,7 @@ WINCH_FORMATS = {
         "delimiter": ",",
         "header_lines": 0,
         "columns": ["time_stamp", "winch_id", "other_timestamp", "tension_lbs", "speed_mm", "payout_m", "checksum"],
-        "datetime_code": "pd.to_datetime(df['time_stamp'])",
+        "datetime_code": "pd.to_datetime(df['time_stamp'], errors='coerce')",
         "numeric_columns": ["tension_lbs", "speed_mm", "payout_m"]
     }
 }
