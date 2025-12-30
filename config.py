@@ -1,7 +1,7 @@
 import os
 
 # Root directory for all data files
-ROOT_DIRECTORY = os.getenv("FILE_STORAGE_ROOT", r"C:\sediment_app\scripts\uploaded_files")
+ROOT_DIRECTORY = os.getenv("FILE_STORAGE_ROOT", "/home/server/project/marssam/marssam_data_files")
 
 # Subdirectories for specific file types
 SUBDIRECTORIES = {
