@@ -46,22 +46,42 @@ def ct_explorer():
         return df
 
     def get_summary_table(df):
-        filtered = df[~(df["image_type"].isnull() & df["processing_stage"].isnull())].copy()
-        filtered["image_type_disp"] = filtered["image_type"].fillna("NULL")
-        filtered["processing_stage_disp"] = filtered["processing_stage"].fillna("NULL")
-        filtered["combo"] = filtered.apply(
-            lambda row: f"{row['image_type_disp']} | {row['processing_stage_disp']}", axis=1
-        )
-        summary = (
-            filtered.groupby(["core_name", "section_number_from_sections"])
-            .agg({"combo": lambda x: sorted(set(x))})
-            .reset_index()
-        )
-        summary["available_image_types"] = summary["combo"].apply(lambda x: ", ".join(x))
-        summary = summary.drop(columns=["combo"])
+        # Directory types and their labels
+        directory_types = ["CT Volume", "Helical", "Laminography"]
+        image_types = ["giXRayImage", "giCTOrthogonalView"]
+
+        summary_rows = []
         all_pairs = df[["core_name", "section_number_from_sections"]].drop_duplicates()
-        summary = all_pairs.merge(summary, on=["core_name", "section_number_from_sections"], how="left")
-        summary["available_image_types"] = summary["available_image_types"].fillna("")
+
+        for _, row in all_pairs.iterrows():
+            core = row["core_name"]
+            section = row["section_number_from_sections"]
+            subdf = df[(df["core_name"] == core) & (df["section_number_from_sections"] == section)]
+
+            # Directories column
+            directories = []
+            for dtype in directory_types:
+                stages = subdf.loc[subdf["image_type"] == dtype, "processing_stage"].dropna().unique()
+                if len(stages) > 0:
+                    stage_list = ", ".join(sorted(stages))
+                    directories.append(f"{dtype} ({stage_list})")
+            directories_str = "; ".join(directories)
+
+            # Images column
+            images = []
+            for itype in image_types:
+                if (subdf["image_type"] == itype).any():
+                    images.append(itype)
+            images_str = ", ".join(images)
+
+            summary_rows.append({
+                "core_name": core,
+                "section_number_from_sections": section,
+                "directories": directories_str,
+                "images": images_str
+            })
+
+        summary = pd.DataFrame(summary_rows)
         return summary
 
     try:
