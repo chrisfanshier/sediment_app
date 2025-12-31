@@ -391,6 +391,8 @@ def parse_winch_dat(file_path, parsing_settings):
     # Execute the datetime code to create datetime column (expect errors='coerce' in datetime_code)
     try:
         exec(f"df['datetime'] = {datetime_code}", {"df": df, "pd": pd})
+        if pd.api.types.is_datetime64_any_dtype(df['datetime']):
+            df['datetime'] = df['datetime'].dt.tz_localize(None)   
     except Exception as e:
         # write small diagnostic sample for debugging
         sample = df.head(200).to_csv(index=False, encoding='utf-8', errors='replace')
