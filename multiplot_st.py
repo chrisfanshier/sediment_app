@@ -103,6 +103,12 @@ def load_winch_data(winch_file_id):
                 }
         
         df = parse_winch_dat(full_file_path, parsing_settings)
+        
+        # Defensive sanitization (add this to match the robustness of winch_plot.py's downstream handling)
+        from utils import sanitize_text_columns
+        if df is not None:
+            df = sanitize_text_columns(df)
+        
         return df, file_info
         
     except Exception as e:
