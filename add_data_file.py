@@ -264,7 +264,8 @@ elif file_category == "Winch Data":
                     skiprows=header_lines,
                     nrows=20,
                     header=None,
-                    on_bad_lines='skip'  # <-- Add this
+                    on_bad_lines='skip',
+                    encoding='utf-8'
                 )
             st.write("Raw Preview (first 20 rows):", df_preview)
         except Exception as e:
@@ -313,7 +314,8 @@ elif file_category == "Winch Data":
                         skiprows=header_lines,
                         names=colnames,
                         low_memory=False,
-                        on_bad_lines='skip'  # <-- Add this
+                        on_bad_lines='skip',
+                        encoding='utf-8'
                     )
 
                 # Execute datetime creation

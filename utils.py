@@ -333,6 +333,25 @@ def process_star_oddi_data(relative_path):
         st.error(f"An error occurred while processing Star Oddi file: {e}")
         return None
 
+def _remove_control_chars_series(s: pd.Series) -> pd.Series:
+    """Remove ASCII C0/C1 control bytes and trim whitespace."""
+    return s.astype(str).str.replace(r'[\x00-\x1F\x7F-\x9F]', '', regex=True).str.strip()
+
+def sanitize_text_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Strip control/non-printable chars from all object columns in-place and return df."""
+    for c in df.select_dtypes(include=['object']).columns:
+        df[c] = _remove_control_chars_series(df[c])
+    return df
+
+def sanitize_df_for_display(df: pd.DataFrame, target_encoding: str | None = None) -> pd.DataFrame:
+    """Return a copy safe to display under target_encoding by replacing unencodable chars."""
+    import locale
+    enc = target_encoding or locale.getpreferredencoding(False) or "cp1252"
+    out = df.copy()
+    for c in out.select_dtypes(include=['object']).columns:
+        out[c] = out[c].astype(str).apply(lambda s: s.encode(enc, errors='replace').decode(enc, errors='replace'))
+    return out
+
 def parse_winch_dat(file_path, parsing_settings):
     """
     Parse winch .dat file with custom settings
@@ -355,32 +374,39 @@ def parse_winch_dat(file_path, parsing_settings):
     datetime_code = parsing_settings.get("datetime_code", "pd.to_datetime(df['datetime'])")
     numeric_columns = parsing_settings.get("numeric_columns", [])
     
-    # Read the file
+    # Read the file (keep encoding explicit if desired)
     df = pd.read_csv(
         file_path,
         delimiter=delimiter,
         skiprows=header_lines,
         header=None if columns else 0,
         names=columns if columns else None,
-        low_memory=False
+        low_memory=False,
+        on_bad_lines='skip'
     )
-    
-    # Execute the datetime code to create datetime column
+
+    # CLEAN TEXT COLUMNS FIRST (remove control bytes that later break display/encoding)
+    df = sanitize_text_columns(df)
+
+    # Execute the datetime code to create datetime column (expect errors='coerce' in datetime_code)
     try:
         exec(f"df['datetime'] = {datetime_code}", {"df": df, "pd": pd})
     except Exception as e:
-        raise ValueError(f"Error creating datetime column: {e}\nCode: {datetime_code}")
-    
+        # write small diagnostic sample for debugging
+        sample = df.head(200).to_csv(index=False, encoding='utf-8', errors='replace')
+        diag = str(file_path) + ".diag_sample.csv"
+        open(diag, "w", encoding="utf-8", errors="replace").write(sample)
+        raise ValueError(f"Error creating datetime column: {e}. Wrote sample to {diag}")
+
     # Convert specified columns to numeric
     for col in numeric_columns:
         if col in df.columns:
-            try:
-                # Remove common formatting and convert to numeric
-                df[col] = pd.to_numeric(df[col].astype(str).str.strip(), errors='coerce')
-                print(f"✅ Converted column '{col}' to numeric")
-            except Exception as e:
-                print(f"⚠️ Warning: Could not convert column '{col}' to numeric: {e}")
-    
+            df[col] = pd.to_numeric(df[col].astype(str).str.strip(), errors='coerce')
+
+    # Drop rows missing required datetime (optional, keep as default)
+    if 'datetime' in df.columns:
+        df = df[df['datetime'].notna()].reset_index(drop=True)
+
     return df
 
 
