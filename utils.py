@@ -369,6 +369,9 @@ def parse_winch_dat(file_path, parsing_settings):
     # Execute the datetime code to create datetime column
     try:
         exec(f"df['datetime'] = {datetime_code}", {"df": df, "pd": pd})
+        # Make datetime column timezone naive
+        if pd.api.types.is_datetime64_any_dtype(df['datetime']):
+            df['datetime'] = df['datetime'].dt.tz_localize(None)
     except Exception as e:
         raise ValueError(f"Error creating datetime column: {e}\nCode: {datetime_code}")
     
