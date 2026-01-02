@@ -1,35 +1,23 @@
 """
-Central VM Sync Receiver - Flask API
-Receives pending data from ships and writes to central database
-Run: python sync_api.py
-Listens on: http://10.129.222.192:5910
+Ship-to-Central Sync - Streamlit UI
+Run on ship: streamlit run ship_sync.py
 """
 
-from flask import Flask, request, jsonify
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import streamlit as st
+import requests
+from sqlalchemy import text
+from db_util import get_connection
 from datetime import datetime
-import os
-import json
+import socket
 
-app = Flask(__name__)
-
-# --- Database config ---
-PG_DB = {
-    "dbname": "sediment_cores",
-    "user": "postgres",
-    "password": "madmaxfuryroad",
-    "host": "localhost",
-    "port": 5432
-}
-
-# --- File storage config ---
-CENTRAL_FILE_ROOT = "/home/server/project/marssam/marssam_data_files"
+# Central sync endpoint
+CENTRAL_SYNC_URL = "http://10.129.222.192:5910/sync"
+CENTRAL_HEALTH_URL = "http://10.129.222.192:5910/health"
 
 # Tables that can be synced (in dependency order)
 SYNC_TABLES = {
     'vessels': 'vessel_id',
-    'cruises': 'cruise_id',
+    'cruises': 'cruise_id', 
     'cores': 'core_id',
     'sections': 'section_id',
     'mscl_files': 'file_id',
@@ -37,344 +25,423 @@ SYNC_TABLES = {
     'winch_data': 'winch_file_id',
 }
 
-# ADD THIS: Foreign key dependencies for remapping
-FK_DEPENDENCIES = {
-    'cruises': {'vessel_id': 'vessels'},
-    'cores': {'cruise_id': 'cruises', 'vessel_id': 'vessels'},
-    'sections': {'core_id': 'cores'},
-    'mscl_files': {'core_id': 'cores'},
-    'sensor_files': {'core_id': 'cores'},
-    'winch_data': {'cruise_id': 'cruises'},
-}
+st.set_page_config(page_title="Sync to Central", layout="wide")
+st.title("🔄 Sync Metadata to Central Database")
+st.info("Sync metadata records to central. Files are synced separately using file_sync.py")
 
-def get_pg_conn():
-    return psycopg2.connect(**PG_DB)
+# Sidebar - Connection info
+st.sidebar.header("Central Database")
+st.sidebar.code(CENTRAL_SYNC_URL, language="text")
 
-
-@app.route("/health", methods=["GET"])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "ok",
-        "timestamp": datetime.now().isoformat()
-    })
-
-
-@app.route("/sync", methods=["POST"])
-def receive_sync():
-    """
-    Metadata-only sync endpoint.
-    Accepts JSON body:
-      { "ship_name": "...", "timestamp": "...", "data": { table_name: [ {ship_id, central_id, data}, ... ] } }
-    Processes INSERT for records without central_id, UPDATE for records with central_id.
-    Returns id_mappings for newly inserted records.
-    """
+if st.sidebar.button("🔌 Test Connection"):
     try:
-        payload = request.get_json()
-        if not payload:
-            return jsonify({"status": "error", "error": "No JSON payload provided"}), 400
+        response = requests.get(CENTRAL_HEALTH_URL, timeout=5)
+        if response.status_code == 200:
+            st.sidebar.success("✅ Central database reachable")
+        else:
+            st.sidebar.error(f"❌ Status {response.status_code}")
+    except:
+        st.sidebar.error("❌ Cannot reach central database")
 
-        ship_name = payload.get('ship_name', 'unknown')
-        sync_timestamp = payload.get('timestamp')
-        data = payload.get('data', {})
-
-        print(f"\n{'='*70}")
-        print(f"📥 Received metadata sync from: {ship_name}")
-        print(f"   Timestamp: {sync_timestamp}")
-        print(f"   Tables: {list(data.keys())}")
-        print(f"{'='*70}\n")
-
-        conn = get_pg_conn()
-        cur = conn.cursor()
-
-        synced_count = 0
-        error_count = 0
-        errors = []
-        id_mappings = {}
-        table_counts = {}
-
-        for table_name in SYNC_TABLES.keys():
-            if table_name not in data:
-                continue
-
-            records = data[table_name]
-            id_column = SYNC_TABLES[table_name]
-            table_synced = 0
-            id_mappings[table_name] = {}
-
-            print(f"📋 Processing {table_name}: {len(records)} records")
-
-            for record in records:
-                try:
-                    ship_id = record.get('ship_id')
-                    central_id = record.get('central_id')
-                    record_data = record.get('data', {}).copy()  # CHANGE: Add .copy()
-
-                    # ADD THIS BLOCK: Remap foreign keys before insert/update
-                    if table_name in FK_DEPENDENCIES:
-                        for fk_column, parent_table in FK_DEPENDENCIES[table_name].items():
-                            if fk_column in record_data and record_data[fk_column] is not None:
-                                ship_fk_value = record_data[fk_column]
-                                
-                                # Look up central ID from mappings built in this sync batch
-                                if parent_table in id_mappings and ship_fk_value in id_mappings[parent_table]:
-                                    central_fk_value = id_mappings[parent_table][ship_fk_value]
-                                    record_data[fk_column] = central_fk_value
-                                    print(f"    🔗 Remapped {fk_column}: {ship_fk_value} → {central_fk_value}")
-
-                    if not central_id:
-                        # INSERT - CHANGE: exclude primary key column
-                        columns = [col for col in record_data.keys() if col != id_column]
-                        values = [record_data[col] for col in columns]
-                        placeholders = ','.join(['%s'] * len(columns))
-                        colnames = ','.join(columns)
-
-                        insert_query = f"""
-                            INSERT INTO {table_name} ({colnames})
-                            VALUES ({placeholders})
-                            RETURNING {id_column}
-                        """
-                        cur.execute(insert_query, values)
-                        new_central_id = cur.fetchone()[0]
-                        conn.commit()
-
-                        id_mappings[table_name][ship_id] = new_central_id
-                        table_synced += 1
-                        synced_count += 1
-
-                        print(f"  ✓ Inserted {table_name} ship_id={ship_id} → central_id={new_central_id}")
-
-                    else:
-                        # UPDATE - CHANGE: exclude primary key column
-                        columns = [col for col in record_data.keys() if col != id_column]
-                        values = [record_data[col] for col in columns]
-                        values.append(central_id)
-                        set_clause = ','.join([f"{col} = %s" for col in columns])
-
-                        update_query = f"""
-                            UPDATE {table_name}
-                            SET {set_clause}
-                            WHERE {id_column} = %s
-                        """
-                        cur.execute(update_query, values)
-                        conn.commit()
-
-                        id_mappings[table_name][ship_id] = central_id
-                        table_synced += 1
-                        synced_count += 1
-
-                        print(f"  ✓ Updated {table_name} central_id={central_id}")
-
-                except Exception as e:
-                    error_count += 1
-                    error_msg = f"{table_name} ship_id={record.get('ship_id')}: {str(e)}"
-                    errors.append(error_msg)
-                    print(f"  ✗ {error_msg}")
-                    conn.rollback()
-
-            table_counts[table_name] = table_synced
-
-        # Log metadata sync
-        try:
-            cur.execute("""
-                INSERT INTO sync_log
-                (sync_timestamp, sync_direction, table_name, records_synced, conflicts_detected, status, error_message)
-                VALUES (CURRENT_TIMESTAMP, 'ship_metadata', %s, %s, %s, %s, %s)
-            """, (
-                ship_name,
-                synced_count,
-                error_count,
-                'success' if error_count == 0 else 'partial',
-                '; '.join(errors[:5]) if errors else None
-            ))
-            conn.commit()
-        except Exception as e:
-            print(f"⚠️ Could not log metadata sync: {e}")
-            conn.rollback()
-
-        conn.close()
-
-        print(f"\n{'='*70}")
-        print(f"✅ Metadata sync complete: {synced_count} records, {error_count} errors")
-        print(f"{'='*70}\n")
-
-        return jsonify({
-            'status': 'success' if error_count == 0 else 'partial',
-            'synced_count': synced_count,
-            'error_count': error_count,
-            'errors': errors,
-            'id_mappings': id_mappings,
-            'table_counts': table_counts,
-            'timestamp': datetime.now().isoformat()
-        }), 200
-
-    except Exception as e:
-        print(f"\n✗ Metadata sync failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'status': 'error', 'error': str(e)}), 500
+st.sidebar.divider()
+st.sidebar.caption(f"**Ship:** {socket.gethostname()}")
 
 
-# Keep your original upload endpoint for backwards compatibility
-@app.route("/api/upload/<table_name>", methods=["POST"])
-def upload_record(table_name):
-    """Original single-record upload endpoint"""
-    if table_name not in SYNC_TABLES:
-        return jsonify({"error": "Table not allowed"}), 403
+def get_pending_records(table_name, id_column):
+    """
+    Get records that need syncing.
+    CRITICAL: For child tables, replace ship's FK IDs with parent's central_id
+    """
+    with get_connection() as conn:
+        
+        # WINCH_DATA: Replace cruise_id with cruise's central_id
+        if table_name == 'winch_data':
+            query = text("""
+                SELECT 
+                    wd.winch_file_id as ship_id,
+                    wd.central_id,
+                    wd.file_name,
+                    wd.file_path,
+                    wd.cruise_id as ship_cruise_id,
+                    c.central_id as cruise_central_id,
+                    wd.date,
+                    wd.created_on_ship,
+                    wd.sync_status,
+                    wd.last_synced_at
+                FROM winch_data wd
+                LEFT JOIN cruises c ON wd.cruise_id = c.cruise_id
+                WHERE wd.sync_status = 'pending'
+                AND wd.created_on_ship = TRUE
+            """)
+            
+            records = []
+            for row in conn.execute(query):
+                row_dict = dict(row._mapping)
+                ship_id = row_dict.pop('ship_id')
+                central_id = row_dict.pop('central_id')
+                ship_cruise_id = row_dict.pop('ship_cruise_id')
+                cruise_central_id = row_dict.pop('cruise_central_id')
+                
+                # Use cruise's central_id if available, otherwise ship's cruise_id
+                if cruise_central_id:
+                    row_dict['cruise_id'] = cruise_central_id
+                else:
+                    row_dict['cruise_id'] = ship_cruise_id
+                    # Warning: parent not synced yet
+                    st.warning(f"⚠️ Winch file {ship_id} references cruise {ship_cruise_id} which hasn't been synced yet!")
+                
+                records.append({
+                    'ship_id': ship_id,
+                    'central_id': central_id,
+                    'data': row_dict
+                })
+            
+            return records
+        
+        # CORES: Replace cruise_id with cruise's central_id
+        elif table_name == 'cores':
+            query = text("""
+                SELECT 
+                    co.core_id as ship_id,
+                    co.central_id,
+                    co.*,
+                    cr.central_id as cruise_central_id,
+                    co.cruise_id as ship_cruise_id
+                FROM cores co
+                LEFT JOIN cruises cr ON co.cruise_id = cr.cruise_id
+                WHERE co.sync_status = 'pending'
+                AND co.created_on_ship = TRUE
+            """)
+            
+            records = []
+            for row in conn.execute(query):
+                row_dict = dict(row._mapping)
+                ship_id = row_dict.pop('ship_id')
+                central_id = row_dict.pop('central_id')
+                cruise_central_id = row_dict.pop('cruise_central_id')
+                ship_cruise_id = row_dict.pop('ship_cruise_id')
+                
+                # Use cruise's central_id if available
+                if cruise_central_id:
+                    row_dict['cruise_id'] = cruise_central_id
+                else:
+                    row_dict['cruise_id'] = ship_cruise_id
+                    st.warning(f"⚠️ Core {row_dict.get('core_name')} references cruise that hasn't been synced yet!")
+                
+                records.append({
+                    'ship_id': ship_id,
+                    'central_id': central_id,
+                    'data': row_dict
+                })
+            
+            return records
+        
+        # MSCL_FILES: Replace core_id with core's central_id
+        elif table_name == 'mscl_files':
+            query = text("""
+                SELECT 
+                    mf.file_id as ship_id,
+                    mf.central_id,
+                    mf.*,
+                    co.central_id as core_central_id,
+                    mf.core_id as ship_core_id
+                FROM mscl_files mf
+                LEFT JOIN cores co ON mf.core_id = co.core_id
+                WHERE mf.sync_status = 'pending'
+                AND mf.created_on_ship = TRUE
+            """)
+            
+            records = []
+            for row in conn.execute(query):
+                row_dict = dict(row._mapping)
+                ship_id = row_dict.pop('ship_id')
+                central_id = row_dict.pop('central_id')
+                core_central_id = row_dict.pop('core_central_id')
+                ship_core_id = row_dict.pop('ship_core_id')
+                
+                if core_central_id:
+                    row_dict['core_id'] = core_central_id
+                else:
+                    row_dict['core_id'] = ship_core_id
+                    st.warning(f"⚠️ MSCL file {ship_id} references core that hasn't been synced yet!")
+                
+                records.append({
+                    'ship_id': ship_id,
+                    'central_id': central_id,
+                    'data': row_dict
+                })
+            
+            return records
+        
+        # SENSOR_FILES: Replace core_id with core's central_id
+        elif table_name == 'sensor_files':
+            query = text("""
+                SELECT 
+                    sf.file_id as ship_id,
+                    sf.central_id,
+                    sf.*,
+                    co.central_id as core_central_id,
+                    sf.core_id as ship_core_id
+                FROM sensor_files sf
+                LEFT JOIN cores co ON sf.core_id = co.core_id
+                WHERE sf.sync_status = 'pending'
+                AND sf.created_on_ship = TRUE
+            """)
+            
+            records = []
+            for row in conn.execute(query):
+                row_dict = dict(row._mapping)
+                ship_id = row_dict.pop('ship_id')
+                central_id = row_dict.pop('central_id')
+                core_central_id = row_dict.pop('core_central_id')
+                ship_core_id = row_dict.pop('ship_core_id')
+                
+                if core_central_id:
+                    row_dict['core_id'] = core_central_id
+                else:
+                    row_dict['core_id'] = ship_core_id
+                    st.warning(f"⚠️ Sensor file {ship_id} references core that hasn't been synced yet!")
+                
+                records.append({
+                    'ship_id': ship_id,
+                    'central_id': central_id,
+                    'data': row_dict
+                })
+            
+            return records
+        
+        # SECTIONS: Replace core_id with core's central_id
+        elif table_name == 'sections':
+            query = text("""
+                SELECT 
+                    s.section_id as ship_id,
+                    s.central_id,
+                    s.*,
+                    co.central_id as core_central_id,
+                    s.core_id as ship_core_id
+                FROM sections s
+                LEFT JOIN cores co ON s.core_id = co.core_id
+                WHERE s.sync_status = 'pending'
+                AND s.created_on_ship = TRUE
+            """)
+            
+            records = []
+            for row in conn.execute(query):
+                row_dict = dict(row._mapping)
+                ship_id = row_dict.pop('ship_id')
+                central_id = row_dict.pop('central_id')
+                core_central_id = row_dict.pop('core_central_id')
+                ship_core_id = row_dict.pop('ship_core_id')
+                
+                if core_central_id:
+                    row_dict['core_id'] = core_central_id
+                else:
+                    row_dict['core_id'] = ship_core_id
+                    st.warning(f"⚠️ Section {ship_id} references core that hasn't been synced yet!")
+                
+                records.append({
+                    'ship_id': ship_id,
+                    'central_id': central_id,
+                    'data': row_dict
+                })
+            
+            return records
+        
+        # DEFAULT: Tables without FK dependencies (vessels, cruises)
+        else:
+            query = text(f"""
+                SELECT {id_column} as ship_id, central_id, *
+                FROM {table_name}
+                WHERE sync_status = 'pending'
+                AND created_on_ship = TRUE
+            """)
+            
+            records = []
+            for row in conn.execute(query):
+                row_dict = dict(row._mapping)
+                ship_id = row_dict.pop('ship_id')
+                central_id = row_dict.pop('central_id')
+                
+                records.append({
+                    'ship_id': ship_id,
+                    'central_id': central_id,
+                    'data': row_dict
+                })
+            
+            return records
 
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "No data provided"}), 400
 
-    columns = list(data.keys())
-    values = [data[col] for col in columns]
-    placeholders = ','.join(['%s'] * len(columns))
-    colnames = ','.join(columns)
-
-    conn = get_pg_conn()
-    cur = conn.cursor()
-
-    try:
-        cur.execute(f"INSERT INTO {table_name} ({colnames}) VALUES ({placeholders})", values)
+def update_synced_records(table_name, id_column, id_mappings):
+    """Update local records with central_id and sync status"""
+    with get_connection() as conn:
+        for ship_id, central_id in id_mappings.items():
+            query = text(f"""
+                UPDATE {table_name}
+                SET central_id = :central_id,
+                    sync_status = 'synced',
+                    last_synced_at = CURRENT_TIMESTAMP
+                WHERE {id_column} = :ship_id
+            """)
+            conn.execute(query, {"central_id": central_id, "ship_id": ship_id})
         conn.commit()
-        conn.close()
-        return jsonify({"status": "inserted", "table": table_name}), 201
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        return jsonify({"error": str(e)}), 400
 
 
-@app.route("/upload_file", methods=["POST"])
-def upload_file():
-    """
-    File upload endpoint for syncing actual data files.
-    Expects:
-      - file: The file data (multipart/form-data)
-      - relative_path: The relative path from ROOT_DIRECTORY (e.g., "MSCL_Data/cruise123/file.csv")
-    Saves file to central location preserving directory structure.
-    """
-    try:
-        if 'file' not in request.files:
-            return jsonify({'status': 'error', 'error': 'No file provided'}), 400
-        
-        if 'relative_path' not in request.form:
-            return jsonify({'status': 'error', 'error': 'No relative_path provided'}), 400
-        
-        file = request.files['file']
-        relative_path = request.form['relative_path']
-        
-        # ADD THIS: Normalize path separators for Linux
-        relative_path = relative_path.replace('\\', '/')
-        
-        # ADD THIS: Strip any leading/trailing whitespace
-        relative_path = relative_path.strip()
-        
-        print(f"📥 Upload request: {relative_path}")
-        
-        if file.filename == '':
-            return jsonify({'status': 'error', 'error': 'Empty filename'}), 400
-        
-        # Construct full central path - use normpath to clean it up
-        full_path = os.path.normpath(os.path.join(CENTRAL_FILE_ROOT, relative_path))
-        
-        print(f"   Full path: {full_path}")
-        
-        # Security: prevent path traversal attacks
-        if not os.path.abspath(full_path).startswith(os.path.abspath(CENTRAL_FILE_ROOT)):
-            return jsonify({'status': 'error', 'error': 'Invalid path'}), 400
-        
-        # Create directory structure if it doesn't exist
-        dir_path = os.path.dirname(full_path)
-        os.makedirs(dir_path, exist_ok=True)
-        print(f"   Directory: {dir_path}")
-        
-        # Save the file - explicitly specify the path
-        file.save(full_path)
-        
-        # Verify it was saved
-        if not os.path.exists(full_path):
-            raise Exception(f"File not found after save: {full_path}")
-        
-        file_size = os.path.getsize(full_path)
-        print(f"   ✓ Saved: {file_size} bytes")
-        
-        # Log file sync to database
-        try:
-            conn = get_pg_conn()
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO sync_log
-                (sync_timestamp, sync_direction, table_name, records_synced, status, error_message)
-                VALUES (CURRENT_TIMESTAMP, 'ship_file', %s, 1, 'success', %s)
-            """, (
-                relative_path,
-                f"Size: {file_size} bytes"
-            ))
-            conn.commit()
-            conn.close()
-        except Exception as log_error:
-            print(f"⚠️ Could not log file upload: {log_error}")
-        
-        return jsonify({
-            'status': 'success',
-            'path': full_path,
-            'relative_path': relative_path,
-            'size_bytes': file_size,
-            'timestamp': datetime.now().isoformat()
-        }), 200
-        
-    except Exception as e:
-        print(f"✗ File upload failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'status': 'error',
-            'error': str(e)
-        }), 500
+# Main UI
+st.header("📊 Pending Records")
 
+# Count pending records for each table
+pending_counts = {}
+with get_connection() as conn:
+    for table_name in SYNC_TABLES.keys():
+        query = text(f"""
+            SELECT COUNT(*) 
+            FROM {table_name} 
+            WHERE sync_status = 'pending' 
+            AND created_on_ship = TRUE
+        """)
+        count = conn.execute(query).scalar()
+        pending_counts[table_name] = count
 
-@app.route("/check_file", methods=["POST"])
-def check_file():
-    """
-    Check if a file already exists on central.
-    Expects JSON: {"relative_path": "..."}
-    Returns: {"exists": true/false, "size": bytes or null}
-    """
-    try:
-        data = request.get_json()
-        if not data or 'relative_path' not in data:
-            return jsonify({'error': 'No relative_path provided'}), 400
-        
-        relative_path = data['relative_path']
-        full_path = os.path.join(CENTRAL_FILE_ROOT, relative_path)
-        
-        # Security check
-        if not os.path.abspath(full_path).startswith(os.path.abspath(CENTRAL_FILE_ROOT)):
-            return jsonify({'error': 'Invalid path'}), 400
-        
-        exists = os.path.exists(full_path)
-        size = os.path.getsize(full_path) if exists else None
-        
-        return jsonify({
-            'exists': exists,
-            'size_bytes': size,
-            'relative_path': relative_path
-        }), 200
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# Display counts
+cols = st.columns(len(SYNC_TABLES))
+for i, (table_name, count) in enumerate(pending_counts.items()):
+    with cols[i]:
+        st.metric(table_name, count)
 
-if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("🚢 CENTRAL SYNC RECEIVER STARTING")
-    print("="*70)
-    print(f"Listening on: http://0.0.0.0:5910")
-    print(f"Health check: http://10.129.222.192:5910/health")
-    print(f"Metadata sync: http://10.129.222.192:5910/sync")
-    print(f"File upload: http://10.129.222.192:5910/upload_file")
-    print(f"File check: http://10.129.222.192:5910/check_file")
-    print(f"File root: {CENTRAL_FILE_ROOT}")
-    print("="*70 + "\n")
+st.divider()
 
-    app.run(host="0.0.0.0", port=5910, debug=True)
+# Table selection
+st.subheader("Select Tables to Sync")
+selected_tables = st.multiselect(
+    "Choose tables:",
+    options=list(SYNC_TABLES.keys()),
+    default=[t for t, c in pending_counts.items() if c > 0],
+    help="Tables are synced in dependency order (parents before children)"
+)
+
+if not selected_tables:
+    st.info("Select tables to sync")
+else:
+    # Show what will be synced
+    st.write("**Will sync:**")
+    for table in selected_tables:
+        count = pending_counts[table]
+        if count > 0:
+            st.write(f"- {table}: {count} records")
+    
+    st.divider()
+    
+    # Sync button
+    if st.button("🚀 Sync to Central", type="primary", use_container_width=True):
+        
+        # Build payload
+        payload = {
+            'ship_name': socket.gethostname(),
+            'timestamp': datetime.now().isoformat(),
+            'data': {}
+        }
+        
+        total_records = 0
+        for table_name in selected_tables:
+            id_column = SYNC_TABLES[table_name]
+            records = get_pending_records(table_name, id_column)
+            if records:
+                payload['data'][table_name] = records
+                total_records += len(records)
+        
+        if total_records == 0:
+            st.warning("No pending records to sync")
+        else:
+            st.info(f"Syncing {total_records} records...")
+            
+            try:
+                # Send to central
+                response = requests.post(
+                    CENTRAL_SYNC_URL,
+                    json=payload,
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    
+                    # Update local records with returned id_mappings
+                    if 'id_mappings' in result:
+                        for table_name, mappings in result['id_mappings'].items():
+                            if mappings:
+                                id_column = SYNC_TABLES[table_name]
+                                update_synced_records(table_name, id_column, mappings)
+                    
+                    # Show results
+                    if result.get('status') == 'success':
+                        st.success(f"✅ Successfully synced {result['synced_count']} records!")
+                    else:
+                        st.warning(f"⚠️ Partial sync: {result['synced_count']} synced, {result['error_count']} errors")
+                    
+                    # Show details
+                    with st.expander("Sync Details"):
+                        st.json(result)
+                    
+                    # Show errors if any
+                    if result.get('errors'):
+                        with st.expander("⚠️ Errors"):
+                            for error in result['errors']:
+                                st.error(error)
+                    
+                    st.rerun()
+                
+                else:
+                    st.error(f"❌ Sync failed: {response.status_code}")
+                    st.code(response.text)
+            
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+
+# Show sync history
+st.divider()
+st.header("📜 Recent Syncs")
+
+try:
+    with get_connection() as conn:
+        # Show recently synced records
+        for table_name in selected_tables if selected_tables else []:
+            id_column = SYNC_TABLES[table_name]
+            query = text(f"""
+                SELECT {id_column} as ship_id, central_id, last_synced_at, sync_status
+                FROM {table_name}
+                WHERE sync_status = 'synced'
+                AND created_on_ship = TRUE
+                ORDER BY last_synced_at DESC
+                LIMIT 10
+            """)
+            records = conn.execute(query).fetchall()
+            
+            if records:
+                st.subheader(f"{table_name}")
+                for rec in records:
+                    st.text(f"Ship ID {rec[0]} → Central ID {rec[1]} (synced {rec[2]})")
+except:
+    pass
+
+# Footer
+st.divider()
+with st.expander("ℹ️ How Sync Works"):
+    st.markdown("""
+    ### Metadata Sync Process
+    
+    1. **Select tables** to sync (in dependency order)
+    2. **Ship sends** pending records to central
+    3. **Central assigns** new IDs and returns mappings
+    4. **Ship updates** local records with central_id
+    
+    ### Foreign Key Handling
+    
+    - When syncing child records (cores, files, etc.), the ship automatically looks up parent's `central_id`
+    - If parent hasn't been synced yet, you'll see a warning
+    - **Sync parent tables first** (cruises before cores, cores before files)
+    
+    ### After Metadata Sync
+    
+    - Use `file_sync.py` to upload actual data files
+    - Only files from synced records will appear in file_sync.py
+    """)
