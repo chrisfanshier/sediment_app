@@ -120,7 +120,30 @@ def add_sync_tracking():
         conn.commit()
         print("  ✓ Sync log created")
         
-        print("\n4. Creating triggers...")
+        print("\n4. Creating file upload tracking table...")
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS file_upload_tracking (
+                upload_id SERIAL PRIMARY KEY,
+                table_name VARCHAR(50) NOT NULL,
+                record_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                file_size_bytes BIGINT,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                upload_status VARCHAR(20) DEFAULT 'success',
+                error_message TEXT,
+                UNIQUE(table_name, record_id)
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_file_upload_tracking_lookup 
+            ON file_upload_tracking(table_name, record_id);
+            
+            CREATE INDEX IF NOT EXISTS idx_file_upload_tracking_uploaded_at 
+            ON file_upload_tracking(uploaded_at DESC);
+        """))
+        conn.commit()
+        print("  ✓ File upload tracking created")
+        
+        print("\n5. Creating triggers...")
         conn.execute(text("""
             CREATE OR REPLACE FUNCTION update_modified_at()
             RETURNS TRIGGER AS $$

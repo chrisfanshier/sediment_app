@@ -13,6 +13,7 @@ import pandas as pd
 from db_util import get_connection
 import socket
 from decimal import Decimal
+import math
 
 # Central server endpoint
 CENTRAL_SYNC_URL = "http://10.129.222.192:5910/sync"
@@ -67,6 +68,166 @@ with get_connection() as conn:
     except:
         st.sidebar.warning("Could not query local database")
 
+
+def get_pending_records_with_fk_lookup(table_name, id_column, conn):
+    """
+    Get pending records and replace ship FK values with parent's central_id.
+    This ensures foreign keys reference the correct parent IDs on central.
+    """
+    
+    # WINCH_DATA: Replace cruise_id with cruise's central_id
+    if table_name == 'winch_data':
+        query = text("""
+            SELECT 
+                wd.*,
+                c.central_id as cruise_central_id
+            FROM winch_data wd
+            LEFT JOIN cruises c ON wd.cruise_id = c.cruise_id
+            WHERE wd.sync_status = 'pending'
+            AND wd.created_on_ship = TRUE
+            ORDER BY wd.created_at
+        """)
+        records = conn.execute(query).fetchall()
+        
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            cruise_central_id = record_dict.pop('cruise_central_id', None)
+            
+            # Replace cruise_id with parent's central_id if available
+            if cruise_central_id:
+                record_dict['cruise_id'] = cruise_central_id
+            elif record_dict.get('cruise_id'):
+                st.warning(f"⚠️ Winch file references cruise that hasn't been synced yet!")
+            
+            processed.append(record_dict)
+        
+        return processed
+    
+    # CORES: Replace cruise_id with cruise's central_id
+    elif table_name == 'cores':
+        query = text("""
+            SELECT 
+                co.*,
+                cr.central_id as cruise_central_id
+            FROM cores co
+            LEFT JOIN cruises cr ON co.cruise_id = cr.cruise_id
+            WHERE co.sync_status = 'pending'
+            AND co.created_on_ship = TRUE
+            ORDER BY co.created_at
+        """)
+        records = conn.execute(query).fetchall()
+        
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            cruise_central_id = record_dict.pop('cruise_central_id', None)
+            
+            if cruise_central_id:
+                record_dict['cruise_id'] = cruise_central_id
+            elif record_dict.get('cruise_id'):
+                st.warning(f"⚠️ Core {record_dict.get('core_name')} references cruise that hasn't been synced yet!")
+            
+            processed.append(record_dict)
+        
+        return processed
+    
+    # MSCL_FILES: Replace core_id with core's central_id
+    elif table_name == 'mscl_files':
+        query = text("""
+            SELECT 
+                mf.*,
+                co.central_id as core_central_id
+            FROM mscl_files mf
+            LEFT JOIN cores co ON mf.core_id = co.core_id
+            WHERE mf.sync_status = 'pending'
+            AND mf.created_on_ship = TRUE
+            ORDER BY mf.created_at
+        """)
+        records = conn.execute(query).fetchall()
+        
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            core_central_id = record_dict.pop('core_central_id', None)
+            
+            if core_central_id:
+                record_dict['core_id'] = core_central_id
+            elif record_dict.get('core_id'):
+                st.warning(f"⚠️ MSCL file references core that hasn't been synced yet!")
+            
+            processed.append(record_dict)
+        
+        return processed
+    
+    # SENSOR_FILES: Replace core_id with core's central_id
+    elif table_name == 'sensor_files':
+        query = text("""
+            SELECT 
+                sf.*,
+                co.central_id as core_central_id
+            FROM sensor_files sf
+            LEFT JOIN cores co ON sf.core_id = co.core_id
+            WHERE sf.sync_status = 'pending'
+            AND sf.created_on_ship = TRUE
+            ORDER BY sf.created_at
+        """)
+        records = conn.execute(query).fetchall()
+        
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            core_central_id = record_dict.pop('core_central_id', None)
+            
+            if core_central_id:
+                record_dict['core_id'] = core_central_id
+            elif record_dict.get('core_id'):
+                st.warning(f"⚠️ Sensor file references core that hasn't been synced yet!")
+            
+            processed.append(record_dict)
+        
+        return processed
+    
+    # SECTIONS: Replace core_id with core's central_id
+    elif table_name == 'sections':
+        query = text("""
+            SELECT 
+                s.*,
+                co.central_id as core_central_id
+            FROM sections s
+            LEFT JOIN cores co ON s.core_id = co.core_id
+            WHERE s.sync_status = 'pending'
+            AND s.created_on_ship = TRUE
+            ORDER BY s.created_at
+        """)
+        records = conn.execute(query).fetchall()
+        
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            core_central_id = record_dict.pop('core_central_id', None)
+            
+            if core_central_id:
+                record_dict['core_id'] = core_central_id
+            elif record_dict.get('core_id'):
+                st.warning(f"⚠️ Section references core that hasn't been synced yet!")
+            
+            processed.append(record_dict)
+        
+        return processed
+    
+    # DEFAULT: Tables without FK dependencies (vessels, cruises)
+    else:
+        query = text(f"""
+            SELECT * FROM {table_name}
+            WHERE sync_status = 'pending'
+            AND created_on_ship = TRUE
+            ORDER BY created_at
+        """)
+        records = conn.execute(query).fetchall()
+        return [dict(r._mapping) for r in records]
+
+
 # Check pending changes
 st.header("📊 Pending Changes on This Ship")
 
@@ -90,14 +251,8 @@ for idx, (table_name, id_column) in enumerate(SYNC_TABLES):
                 st.metric(table_name.replace('_', ' ').title(), count)
             
             if count > 0:
-                # Get pending records created on this ship
-                data_query = text(f"""
-                    SELECT * FROM {table_name}
-                    WHERE sync_status = 'pending'
-                    AND created_on_ship = TRUE
-                    ORDER BY created_at
-                """)
-                records = conn.execute(data_query).fetchall()
+                # Get pending records with FK lookup
+                records = get_pending_records_with_fk_lookup(table_name, id_column, conn)
                 pending_data[table_name] = records
                 
     except Exception as e:
@@ -111,7 +266,7 @@ if total_pending > 0:
         for table_name, id_column in SYNC_TABLES:
             if table_name in pending_data and len(pending_data[table_name]) > 0:
                 st.subheader(f"{table_name} ({len(pending_data[table_name])} records)")
-                df = pd.DataFrame([dict(r._mapping) for r in pending_data[table_name]])
+                df = pd.DataFrame(pending_data[table_name])
                 # Show first 10 records
                 st.dataframe(df.head(10), use_container_width=True)
                 if len(df) > 10:
@@ -147,9 +302,7 @@ else:
             if table_name in pending_data:
                 sync_payload['data'][table_name] = []
                 
-                for record in pending_data[table_name]:
-                    record_dict = dict(record._mapping)
-                    
+                for record_dict in pending_data[table_name]:
                     ship_id = record_dict[id_column]
                     central_id = record_dict.get('central_id')
                     
@@ -160,13 +313,10 @@ else:
                     clean_data = {}
                     for key, value in record_dict.items():
                         if key not in sync_columns and key != id_column:
-                            # Handle special types - UPDATED TO HANDLE DECIMAL
-                            import math
-                            
+                            # Handle special types
                             if value is None:
                                 clean_data[key] = None
                             elif isinstance(value, Decimal):
-                                # Convert Decimal to float
                                 clean_data[key] = float(value)
                             elif isinstance(value, float) and math.isnan(value):
                                 clean_data[key] = None
@@ -191,7 +341,7 @@ else:
             response = requests.post(
                 CENTRAL_SYNC_URL,
                 json=sync_payload,
-                timeout=120  # 2 minute timeout
+                timeout=120
             )
             
             progress_bar.progress(0.5)
@@ -277,7 +427,7 @@ else:
                 except Exception as e:
                     st.caption(f"Note: Could not log sync locally ({str(e)})")
                 
-                # Auto-refresh after 2 seconds to show updated counts
+                # Auto-refresh after 2 seconds
                 import time
                 time.sleep(2)
                 st.rerun()
@@ -288,10 +438,8 @@ else:
                 
         except requests.exceptions.Timeout:
             st.error("❌ Request timed out. Central server may be slow or unreachable.")
-            st.caption("Try again or check your network connection.")
         except requests.exceptions.ConnectionError:
             st.error("❌ Cannot connect to central server")
-            st.caption("Make sure you're connected to VPN and central server is running.")
         except Exception as e:
             st.error(f"❌ Sync failed: {str(e)}")
             import traceback

@@ -13,7 +13,8 @@ APPS = [
     {"name": "Coring Data Entry", "script": "coring_data_entry.py", "port": 8502},
     {"name": "File Data Entry", "script": "file_data_entry.py", "port": 8503},
     {"name": "Ship Sync", "script": "ship_sync.py", "port": 8504},
-    {"name": "Winch Plotter", "script": "winch_plot.py", "port": 8505}  # <-- Add this line
+    {"name": "Winch Plotter", "script": "winch_plot.py", "port": 8505},
+    {"name": "File Sync", "script": "file_sync.py", "port": 8506}  
 ]
 
 def main():
