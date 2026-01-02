@@ -24,7 +24,7 @@ PG_DB = {
 }
 
 # --- File storage config ---
-CENTRAL_FILE_ROOT = "/home/server/project/marrsam/marssam_data_files"
+CENTRAL_FILE_ROOT = "/home/server/project/marssam/marssam_data_files"
 
 # Tables that can be synced (in dependency order)
 SYNC_TABLES = {
