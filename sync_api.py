@@ -37,6 +37,16 @@ SYNC_TABLES = {
     'winch_data': 'winch_file_id',
 }
 
+# ADD THIS: Foreign key dependencies for remapping
+FK_DEPENDENCIES = {
+    'cruises': {'vessel_id': 'vessels'},
+    'cores': {'cruise_id': 'cruises', 'vessel_id': 'vessels'},
+    'sections': {'core_id': 'cores'},
+    'mscl_files': {'core_id': 'cores'},
+    'sensor_files': {'core_id': 'cores'},
+    'winch_data': {'cruise_id': 'cruises'},
+}
+
 def get_pg_conn():
     return psycopg2.connect(**PG_DB)
 
@@ -98,11 +108,23 @@ def receive_sync():
                 try:
                     ship_id = record.get('ship_id')
                     central_id = record.get('central_id')
-                    record_data = record.get('data', {})
+                    record_data = record.get('data', {}).copy()  # CHANGE: Add .copy()
+
+                    # ADD THIS BLOCK: Remap foreign keys before insert/update
+                    if table_name in FK_DEPENDENCIES:
+                        for fk_column, parent_table in FK_DEPENDENCIES[table_name].items():
+                            if fk_column in record_data and record_data[fk_column] is not None:
+                                ship_fk_value = record_data[fk_column]
+                                
+                                # Look up central ID from mappings built in this sync batch
+                                if parent_table in id_mappings and ship_fk_value in id_mappings[parent_table]:
+                                    central_fk_value = id_mappings[parent_table][ship_fk_value]
+                                    record_data[fk_column] = central_fk_value
+                                    print(f"    🔗 Remapped {fk_column}: {ship_fk_value} → {central_fk_value}")
 
                     if not central_id:
-                        # INSERT
-                        columns = list(record_data.keys())
+                        # INSERT - CHANGE: exclude primary key column
+                        columns = [col for col in record_data.keys() if col != id_column]
                         values = [record_data[col] for col in columns]
                         placeholders = ','.join(['%s'] * len(columns))
                         colnames = ','.join(columns)
@@ -123,8 +145,8 @@ def receive_sync():
                         print(f"  ✓ Inserted {table_name} ship_id={ship_id} → central_id={new_central_id}")
 
                     else:
-                        # UPDATE
-                        columns = list(record_data.keys())
+                        # UPDATE - CHANGE: exclude primary key column
+                        columns = [col for col in record_data.keys() if col != id_column]
                         values = [record_data[col] for col in columns]
                         values.append(central_id)
                         set_clause = ','.join([f"{col} = %s" for col in columns])
