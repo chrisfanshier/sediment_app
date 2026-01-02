@@ -233,7 +233,6 @@ def upload_file():
     Saves file to central location preserving directory structure.
     """
     try:
-        # Validate request has file and path
         if 'file' not in request.files:
             return jsonify({'status': 'error', 'error': 'No file provided'}), 400
         
@@ -243,23 +242,40 @@ def upload_file():
         file = request.files['file']
         relative_path = request.form['relative_path']
         
+        # ADD THIS: Normalize path separators for Linux
+        relative_path = relative_path.replace('\\', '/')
+        
+        # ADD THIS: Strip any leading/trailing whitespace
+        relative_path = relative_path.strip()
+        
+        print(f"📥 Upload request: {relative_path}")
+        
         if file.filename == '':
             return jsonify({'status': 'error', 'error': 'Empty filename'}), 400
         
-        # Construct full central path
-        full_path = os.path.join(CENTRAL_FILE_ROOT, relative_path)
+        # Construct full central path - use normpath to clean it up
+        full_path = os.path.normpath(os.path.join(CENTRAL_FILE_ROOT, relative_path))
+        
+        print(f"   Full path: {full_path}")
         
         # Security: prevent path traversal attacks
         if not os.path.abspath(full_path).startswith(os.path.abspath(CENTRAL_FILE_ROOT)):
             return jsonify({'status': 'error', 'error': 'Invalid path'}), 400
         
         # Create directory structure if it doesn't exist
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        dir_path = os.path.dirname(full_path)
+        os.makedirs(dir_path, exist_ok=True)
+        print(f"   Directory: {dir_path}")
         
-        # Save the file
+        # Save the file - explicitly specify the path
         file.save(full_path)
         
+        # Verify it was saved
+        if not os.path.exists(full_path):
+            raise Exception(f"File not found after save: {full_path}")
+        
         file_size = os.path.getsize(full_path)
+        print(f"   ✓ Saved: {file_size} bytes")
         
         # Log file sync to database
         try:
@@ -277,8 +293,6 @@ def upload_file():
             conn.close()
         except Exception as log_error:
             print(f"⚠️ Could not log file upload: {log_error}")
-        
-        print(f"📁 File uploaded: {relative_path} ({file_size} bytes)")
         
         return jsonify({
             'status': 'success',
