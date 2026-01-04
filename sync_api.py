@@ -24,7 +24,7 @@ PG_DB = {
 }
 
 # --- File storage config ---
-CENTRAL_FILE_ROOT = "/home/server/project/marrsam/marssam_data_files"
+CENTRAL_FILE_ROOT = "/home/server/project/marssam/marssam_data_files"
 
 # Tables that can be synced (in dependency order)
 SYNC_TABLES = {
@@ -35,6 +35,16 @@ SYNC_TABLES = {
     'mscl_files': 'file_id',
     'sensor_files': 'file_id',
     'winch_data': 'winch_file_id',
+}
+
+# ADD THIS: Foreign key dependencies for remapping
+FK_DEPENDENCIES = {
+    'cruises': {'vessel_id': 'vessels'},
+    'cores': {'cruise_id': 'cruises', 'vessel_id': 'vessels'},
+    'sections': {'core_id': 'cores'},
+    'mscl_files': {'core_id': 'cores'},
+    'sensor_files': {'core_id': 'cores'},
+    'winch_data': {'cruise_id': 'cruises'},
 }
 
 def get_pg_conn():
@@ -98,11 +108,23 @@ def receive_sync():
                 try:
                     ship_id = record.get('ship_id')
                     central_id = record.get('central_id')
-                    record_data = record.get('data', {})
+                    record_data = record.get('data', {}).copy()  # CHANGE: Add .copy()
+
+                    # ADD THIS BLOCK: Remap foreign keys before insert/update
+                    if table_name in FK_DEPENDENCIES:
+                        for fk_column, parent_table in FK_DEPENDENCIES[table_name].items():
+                            if fk_column in record_data and record_data[fk_column] is not None:
+                                ship_fk_value = record_data[fk_column]
+                                
+                                # Look up central ID from mappings built in this sync batch
+                                if parent_table in id_mappings and ship_fk_value in id_mappings[parent_table]:
+                                    central_fk_value = id_mappings[parent_table][ship_fk_value]
+                                    record_data[fk_column] = central_fk_value
+                                    print(f"    🔗 Remapped {fk_column}: {ship_fk_value} → {central_fk_value}")
 
                     if not central_id:
-                        # INSERT
-                        columns = list(record_data.keys())
+                        # INSERT - CHANGE: exclude primary key column
+                        columns = [col for col in record_data.keys() if col != id_column]
                         values = [record_data[col] for col in columns]
                         placeholders = ','.join(['%s'] * len(columns))
                         colnames = ','.join(columns)
@@ -123,8 +145,8 @@ def receive_sync():
                         print(f"  ✓ Inserted {table_name} ship_id={ship_id} → central_id={new_central_id}")
 
                     else:
-                        # UPDATE
-                        columns = list(record_data.keys())
+                        # UPDATE - CHANGE: exclude primary key column
+                        columns = [col for col in record_data.keys() if col != id_column]
                         values = [record_data[col] for col in columns]
                         values.append(central_id)
                         set_clause = ','.join([f"{col} = %s" for col in columns])
@@ -233,7 +255,6 @@ def upload_file():
     Saves file to central location preserving directory structure.
     """
     try:
-        # Validate request has file and path
         if 'file' not in request.files:
             return jsonify({'status': 'error', 'error': 'No file provided'}), 400
         
@@ -243,23 +264,40 @@ def upload_file():
         file = request.files['file']
         relative_path = request.form['relative_path']
         
+        # ADD THIS: Normalize path separators for Linux
+        relative_path = relative_path.replace('\\', '/')
+        
+        # ADD THIS: Strip any leading/trailing whitespace
+        relative_path = relative_path.strip()
+        
+        print(f"📥 Upload request: {relative_path}")
+        
         if file.filename == '':
             return jsonify({'status': 'error', 'error': 'Empty filename'}), 400
         
-        # Construct full central path
-        full_path = os.path.join(CENTRAL_FILE_ROOT, relative_path)
+        # Construct full central path - use normpath to clean it up
+        full_path = os.path.normpath(os.path.join(CENTRAL_FILE_ROOT, relative_path))
+        
+        print(f"   Full path: {full_path}")
         
         # Security: prevent path traversal attacks
         if not os.path.abspath(full_path).startswith(os.path.abspath(CENTRAL_FILE_ROOT)):
             return jsonify({'status': 'error', 'error': 'Invalid path'}), 400
         
         # Create directory structure if it doesn't exist
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        dir_path = os.path.dirname(full_path)
+        os.makedirs(dir_path, exist_ok=True)
+        print(f"   Directory: {dir_path}")
         
-        # Save the file
+        # Save the file - explicitly specify the path
         file.save(full_path)
         
+        # Verify it was saved
+        if not os.path.exists(full_path):
+            raise Exception(f"File not found after save: {full_path}")
+        
         file_size = os.path.getsize(full_path)
+        print(f"   ✓ Saved: {file_size} bytes")
         
         # Log file sync to database
         try:
@@ -277,8 +315,6 @@ def upload_file():
             conn.close()
         except Exception as log_error:
             print(f"⚠️ Could not log file upload: {log_error}")
-        
-        print(f"📁 File uploaded: {relative_path} ({file_size} bytes)")
         
         return jsonify({
             'status': 'success',
