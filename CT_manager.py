@@ -199,15 +199,23 @@ def get_validation_summary(validated_records):
 
 # === PHASE 2: Save to Staging ===
 def save_to_staging(validated_records):
-    """Save validated records to staging table"""
+    """Save validated records to staging table, skipping records already in staging OR ct_xml"""
     saved_count = 0
     skipped_count = 0
     
     with engine.begin() as conn:
         # Get existing XMLs in staging
-        existing_xmls = set(
+        existing_in_staging = set(
             row[0] for row in conn.execute(text("SELECT xml_path FROM ct_xml_staging"))
         )
+        
+        # Get existing XMLs in main ct_xml table
+        existing_in_ct_xml = set(
+            row[0] for row in conn.execute(text("SELECT xml_path FROM ct_xml"))
+        )
+        
+        # Combined set of all existing XMLs
+        all_existing = existing_in_staging | existing_in_ct_xml
         
         for val in validated_records:
             if val["status"] != "valid":
@@ -216,7 +224,8 @@ def save_to_staging(validated_records):
             
             record = val["record"]
             
-            if record["xml_path"] in existing_xmls:
+            # Skip if already in staging OR already in ct_xml
+            if record["xml_path"] in all_existing:
                 skipped_count += 1
                 continue
             
@@ -314,15 +323,29 @@ def approve_and_import_staging():
 
 # === PHASE 3: View ct_xml table ===
 def get_ct_xml_summary():
-    """Get summary of what's in ct_xml (same format as staging)"""
+    """Get summary of what's in ct_xml with separate columns for CT Stack and Image data"""
     with engine.connect() as conn:
         result = conn.execute(text("""
             SELECT 
                 core_name,
                 section_number,
                 COUNT(*) as xml_count,
-                STRING_AGG(DISTINCT scan_id, ', ') as scan_types,
-                STRING_AGG(DISTINCT processing_stage, ', ') as stages
+                -- CT Stack data (has processing stages)
+                STRING_AGG(
+                    DISTINCT CASE 
+                        WHEN xml_root_tag = 'geotek-ct-stack' 
+                        THEN image_type || ' (' || processing_stage || ')' 
+                    END, 
+                    ', '
+                ) as ct_stack_data,
+                -- Image data (no processing stages)
+                STRING_AGG(
+                    DISTINCT CASE 
+                        WHEN xml_root_tag = 'geotek-image' 
+                        THEN image_type 
+                    END, 
+                    ', '
+                ) as image_data
             FROM ct_xml
             GROUP BY core_name, section_number
             ORDER BY core_name, section_number
@@ -333,9 +356,170 @@ def get_ct_xml_summary():
         return pd.DataFrame()
     
     df = pd.DataFrame(rows)
-    df.columns = ["Core", "Section", "XML Count", "Scan Types", "Processing Stages"]
+    df.columns = ["Core", "Section", "Total XMLs", "CT Stack Types", "Image Types"]
+    
+    # Replace None with empty string for cleaner display
+    df["CT Stack Types"] = df["CT Stack Types"].fillna("")
+    df["Image Types"] = df["Image Types"].fillna("")
     
     return df
+
+# Add this new function after get_ct_xml_summary()
+
+def verify_xml_paths(ct_root):
+    """Check which XMLs in database still exist at their recorded paths"""
+    with engine.connect() as conn:
+        result = conn.execute(text("""
+            SELECT 
+                id,
+                core_name,
+                section_number,
+                xml_root_tag,
+                image_type,
+                processing_stage,
+                xml_path,
+                tiff_folder
+            FROM ct_xml
+            ORDER BY core_name, section_number
+        """))
+        db_records = [dict(row._mapping) for row in result.fetchall()]
+    
+    results = {
+        "exists": [],
+        "missing": [],
+        "total": len(db_records)
+    }
+    
+    for record in db_records:
+        xml_path = record["xml_path"]
+        if os.path.exists(xml_path):
+            results["exists"].append(record)
+        else:
+            results["missing"].append(record)
+    
+    return results
+
+def create_xml_fingerprint(record):
+    """
+    Create a unique fingerprint for an XML file based on its metadata
+    This fingerprint survives path changes
+    """
+    xml_filename = os.path.basename(record["xml_path"])
+    
+    # For geotek-ct-stack: use parent folder name + filename
+    if record["xml_root_tag"] == "geotek-ct-stack":
+        # Parent folder like "A_Radiography_raw_A00000"
+        parent_folder = os.path.basename(record["tiff_folder"])
+        
+        return {
+            "core_name": record["core_name"],
+            "section_number": str(record["section_number"]),
+            "xml_root_tag": record["xml_root_tag"],
+            "image_type": record.get("image_type", ""),
+            "processing_stage": record.get("processing_stage", ""),
+            "parent_folder": parent_folder,
+            "xml_filename": xml_filename
+        }
+    
+    # For geotek-image: just use the XML filename (it's unique)
+    elif record["xml_root_tag"] == "geotek-image":
+        return {
+            "core_name": record["core_name"],
+            "section_number": str(record["section_number"]),
+            "xml_root_tag": record["xml_root_tag"],
+            "image_type": record.get("image_type", ""),
+            "xml_filename": xml_filename
+        }
+    
+    # For geotek-xray-scan-recipe: parent folder + filename
+    else:
+        parent_folder = os.path.basename(record["tiff_folder"])
+        return {
+            "core_name": record["core_name"],
+            "section_number": str(record["section_number"]),
+            "xml_root_tag": record["xml_root_tag"],
+            "parent_folder": parent_folder,
+            "xml_filename": xml_filename
+        }
+
+def fingerprint_to_string(fp):
+    """Convert fingerprint dict to hashable string"""
+    parts = [
+        fp["core_name"],
+        fp["section_number"],
+        fp["xml_root_tag"],
+        fp.get("image_type", ""),
+        fp.get("processing_stage", ""),
+        fp.get("parent_folder", ""),
+        fp["xml_filename"]
+    ]
+    return "|".join(str(p) for p in parts)
+
+def find_moved_files(ct_root, missing_records):
+    """
+    For missing database records, search filesystem to find where they moved to
+    Uses fingerprinting to match files
+    """
+    # Create fingerprints for missing files
+    missing_fingerprints = {}
+    for record in missing_records:
+        fp = create_xml_fingerprint(record)
+        fp_string = fingerprint_to_string(fp)
+        missing_fingerprints[fp_string] = record
+    
+    # Scan filesystem and create fingerprints
+    st.write(f"🔍 Scanning {ct_root} for XML files...")
+    disk_records = scan_ct_folders(ct_root)
+    
+    matches = []
+    not_found = []
+    
+    for missing_fp_string, db_record in missing_fingerprints.items():
+        found = False
+        
+        for disk_record in disk_records:
+            disk_fp = create_xml_fingerprint(disk_record)
+            disk_fp_string = fingerprint_to_string(disk_fp)
+            
+            if missing_fp_string == disk_fp_string:
+                # Found a match!
+                matches.append({
+                    "id": db_record["id"],  # Changed from xml_id to id
+                    "core_name": db_record["core_name"],
+                    "section_number": db_record["section_number"],
+                    "xml_root_tag": db_record["xml_root_tag"],
+                    "old_xml_path": db_record["xml_path"],
+                    "new_xml_path": disk_record["xml_path"],
+                    "old_tiff_folder": db_record["tiff_folder"],
+                    "new_tiff_folder": disk_record["tiff_folder"],
+                    "fingerprint": disk_fp
+                })
+                found = True
+                break
+        
+        if not found:
+            not_found.append(db_record)
+    
+    return {
+        "matches": matches,
+        "not_found": not_found
+    }
+
+def update_xml_paths(updates):
+    """Update xml_path and tiff_folder for moved files"""
+    with engine.begin() as conn:
+        for update in updates:
+            conn.execute(text("""
+                UPDATE ct_xml
+                SET xml_path = :new_xml_path,
+                    tiff_folder = :new_tiff_folder
+                WHERE id = :id
+            """), {
+                "id": update["id"],  # Changed from xml_id to id
+                "new_xml_path": update["new_xml_path"],
+                "new_tiff_folder": update["new_tiff_folder"]
+            })
+    return len(updates)
 
 # === Streamlit App ===
 def main():
@@ -350,8 +534,8 @@ def main():
             help="Path to CT data directory"
         )
     
-    tab1, tab2, tab3 = st.tabs(
-        ["1️⃣ Validate Metadata", "2️⃣ Staging & Import", "3️⃣ Database View"]
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["1️⃣ Validate Metadata", "2️⃣ Staging & Import", "3️⃣ Database View", "4️⃣ Path Updates"]
     )
     
     # === TAB 1: Validate Metadata ===
@@ -537,8 +721,8 @@ def main():
         st.header("Phase 3: Database View")
         st.write("""
         **View what's currently in the ct_xml table:**
-        - Same summary view as staging
-        - Shows all imported CT scan metadata
+        - **CT Stack Types**: Shows image types with their processing stages
+        - **Image Types**: Shows image types from geotek-image XMLs
         """)
         
         if st.button("🔄 Refresh", use_container_width=True):
@@ -564,13 +748,122 @@ def main():
             # Detailed view
             with st.expander("📋 View Detailed Records"):
                 with engine.connect() as conn:
-                    result = conn.execute(text("SELECT * FROM ct_xml ORDER BY core_name, section_number"))
+                    result = conn.execute(text("""
+                        SELECT 
+                            core_name,
+                            section_number,
+                            xml_root_tag,
+                            scan_id,
+                            image_type,
+                            processing_stage,
+                            xml_path
+                        FROM ct_xml 
+                        ORDER BY core_name, section_number, xml_root_tag, image_type
+                    """))
                     detailed = [dict(row._mapping) for row in result.fetchall()]
                 
                 if detailed:
-                    st.dataframe(pd.DataFrame(detailed), use_container_width=True)
+                    detail_df = pd.DataFrame(detailed)
+                    detail_df.columns = ["Core", "Section", "Root Tag", "Scan ID", "Image Type", "Processing Stage", "XML Path"]
+                    st.dataframe(detail_df, use_container_width=True)
         else:
             st.info("No records in ct_xml table yet. Import from staging first.")
+
+    # === TAB 4: Path Updates ===
+    with tab4:
+        st.header("Phase 4: Update Paths After Reorganization")
+        st.write("""
+        **Use this after moving/renaming directories:**
+        1. Check which database records point to missing files
+        2. Search filesystem to find where files moved to
+        3. Update database with new paths
+        """)
+        
+        if st.button("🔍 Check for Missing Files", use_container_width=True, type="primary"):
+            with st.spinner("Verifying paths..."):
+                verification = verify_xml_paths(ct_root)
+                st.session_state.path_verification = verification
+        
+        if "path_verification" in st.session_state and st.session_state.path_verification is not None:
+            verify = st.session_state.path_verification
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Records", verify["total"])
+            with col2:
+                st.metric("✅ Found", len(verify["exists"]), delta_color="normal")
+            with col3:
+                st.metric("❌ Missing", len(verify["missing"]), delta_color="inverse")
+            
+            if verify["missing"]:
+                st.markdown("---")
+                st.warning(f"⚠️ {len(verify['missing'])} XML files not found at recorded paths")
+                
+                # Show missing files
+                with st.expander("📋 View Missing Files"):
+                    missing_df = pd.DataFrame(verify["missing"])
+                    if not missing_df.empty:
+                        display_cols = ["core_name", "section_number", "xml_root_tag", "image_type", "xml_path"]
+                        st.dataframe(missing_df[display_cols], use_container_width=True)
+                
+                st.markdown("---")
+                st.subheader("🔍 Search for Moved Files")
+                st.info("This will scan the filesystem to find where these files moved to")
+                
+                if st.button("🔎 Search for Moved Files", use_container_width=True, type="primary"):
+                    with st.spinner(f"Searching {ct_root} for {len(verify['missing'])} missing files..."):
+                        search_results = find_moved_files(ct_root, verify["missing"])
+                        st.session_state.path_search_results = search_results
+                
+                if "path_search_results" in st.session_state and st.session_state.path_search_results is not None:
+                    results = st.session_state.path_search_results
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("✅ Found", len(results["matches"]))
+                    with col2:
+                        st.metric("❌ Not Found", len(results["not_found"]))
+                    
+                    if results["matches"]:
+                        st.success(f"🎉 Found {len(results['matches'])} moved files!")
+                        
+                        # Show matches
+                        with st.expander("📋 View Path Changes", expanded=True):
+                            for match in results["matches"][:10]:  # Show first 10
+                                st.write(f"**{match['core_name']} - Section {match['section_number']} - {match['xml_root_tag']}**")
+                                st.text(f"  Old: {match['old_xml_path']}")
+                                st.text(f"  New: {match['new_xml_path']}")
+                                st.text("")
+                            
+                            if len(results["matches"]) > 10:
+                                st.info(f"... and {len(results['matches']) - 10} more")
+                        
+                        st.markdown("---")
+                        if st.button("💾 Update Database Paths", use_container_width=True, type="primary"):
+                            with st.spinner("Updating paths..."):
+                                count = update_xml_paths(results["matches"])
+                            st.success(f"✅ Updated {count} records in database")
+                            # Clear session state before rerun
+                            del st.session_state.path_verification
+                            del st.session_state.path_search_results
+                            st.rerun()
+                    
+                    if results["not_found"]:
+                        st.error(f"❌ Could not find {len(results['not_found'])} files")
+                        st.write("These files may have been deleted or have different metadata")
+                        
+                        with st.expander("📋 View Files Not Found"):
+                            not_found_df = pd.DataFrame(results["not_found"])
+                            if not not_found_df.empty:
+                                display_cols = ["core_name", "section_number", "xml_root_tag", "xml_path"]
+                                st.dataframe(not_found_df[display_cols], use_container_width=True)
+            
+            else:
+                st.success("✅ All XML files found at their recorded paths!")
+        else:
+            st.info("👆 Click 'Check for Missing Files' to begin")
+
+
 
 if __name__ == "__main__":
     main()
