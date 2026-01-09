@@ -521,6 +521,22 @@ def update_xml_paths(updates):
             })
     return len(updates)
 
+def bulk_replace_path_prefix(old_prefix, new_prefix):
+    """Replace path prefix for all records (useful when moving entire drive)"""
+    with engine.begin() as conn:
+        # Update xml_path
+        result = conn.execute(text("""
+            UPDATE ct_xml
+            SET xml_path = REPLACE(xml_path, :old_prefix, :new_prefix),
+                tiff_folder = REPLACE(tiff_folder, :old_prefix, :new_prefix)
+            WHERE xml_path LIKE :pattern
+        """), {
+            "old_prefix": old_prefix,
+            "new_prefix": new_prefix,
+            "pattern": f"{old_prefix}%"
+        })
+        return result.rowcount
+
 # === Streamlit App ===
 def main():
     st.set_page_config(page_title="CT Data Manager", layout="wide")
@@ -732,11 +748,22 @@ def main():
         
         if not ct_xml_df.empty:
             st.subheader("📊 ct_xml Table Summary")
-            st.dataframe(ct_xml_df, use_container_width=True)
-            st.info(f"Total: {len(ct_xml_df)} core/section combinations in database")
+            
+            # Add dropdown filter for core name
+            all_cores = ["All Cores"] + sorted(ct_xml_df["Core"].unique().tolist())
+            selected_core = st.selectbox("Filter by Core:", all_cores, key="summary_core_filter")
+            
+            # Filter dataframe based on selection
+            if selected_core != "All Cores":
+                filtered_df = ct_xml_df[ct_xml_df["Core"] == selected_core]
+            else:
+                filtered_df = ct_xml_df
+            
+            st.dataframe(filtered_df, use_container_width=True)
+            st.info(f"Showing: {len(filtered_df)} core/section combinations")
             
             # Download button
-            csv_data = ct_xml_df.to_csv(index=False)
+            csv_data = filtered_df.to_csv(index=False)
             st.download_button(
                 label="📥 Download CSV",
                 data=csv_data,
@@ -745,7 +772,7 @@ def main():
                 use_container_width=True
             )
             
-            # Detailed view
+            # Detailed view with filters
             with st.expander("📋 View Detailed Records"):
                 with engine.connect() as conn:
                     result = conn.execute(text("""
@@ -765,19 +792,126 @@ def main():
                 if detailed:
                     detail_df = pd.DataFrame(detailed)
                     detail_df.columns = ["Core", "Section", "Root Tag", "Scan ID", "Image Type", "Processing Stage", "XML Path"]
-                    st.dataframe(detail_df, use_container_width=True)
+                    
+                    # Add filters for detailed view
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        detail_cores = ["All Cores"] + sorted(detail_df["Core"].unique().tolist())
+                        detail_selected_core = st.selectbox("Filter by Core:", detail_cores, key="detail_core_filter")
+                    
+                    # Filter by core first
+                    if detail_selected_core != "All Cores":
+                        detail_filtered = detail_df[detail_df["Core"] == detail_selected_core]
+                    else:
+                        detail_filtered = detail_df
+                    
+                    with col2:
+                        # Get sections available for selected core (keep as original type)
+                        available_sections = sorted(detail_filtered["Section"].unique().tolist())
+                        detail_sections = ["All Sections"] + available_sections  # Don't convert to string
+                        detail_selected_section = st.selectbox("Filter by Section:", detail_sections, key="detail_section_filter")
+                    
+                    # Filter by section - no conversion needed!
+                    if detail_selected_section != "All Sections":
+                        detail_filtered = detail_filtered[detail_filtered["Section"] == detail_selected_section]
+                    
+                    st.dataframe(detail_filtered, use_container_width=True)
+                    st.info(f"Showing: {len(detail_filtered)} records")
+                    
+                    # Download filtered detailed data
+                    detail_csv = detail_filtered.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Detailed CSV",
+                        data=detail_csv,
+                        file_name="ct_xml_detailed.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_detailed"
+                    )
         else:
             st.info("No records in ct_xml table yet. Import from staging first.")
 
     # === TAB 4: Path Updates ===
     with tab4:
         st.header("Phase 4: Update Paths After Reorganization")
-        st.write("""
-        **Use this after moving/renaming directories:**
-        1. Check which database records point to missing files
-        2. Search filesystem to find where files moved to
-        3. Update database with new paths
-        """)
+        
+        # Add a new section at the top for bulk path replacement
+        st.subheader("🔄 Bulk Path Replacement")
+        st.write("**Use this when you move the entire root directory to a new location**")
+        
+        with st.expander("🚚 Replace Root Path (e.g., C:\\ → E:\\)"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                old_root = st.text_input(
+                    "Old Root Path",
+                    value="C:\\Users\\chris\\Documents\\steen_tessin2025\\CT_Drive",
+                    help="The old root path prefix to replace"
+                )
+            
+            with col2:
+                new_root = st.text_input(
+                    "New Root Path",
+                    value="E:\\CT_Drive",
+                    help="The new root path prefix"
+                )
+            
+            st.warning("⚠️ This will update ALL records in the database. Make sure the paths are correct!")
+            
+            # Preview what will change
+            if st.button("🔍 Preview Changes", key="preview_bulk_replace"):
+                with engine.connect() as conn:
+                    preview = conn.execute(text("""
+                        SELECT xml_path 
+                        FROM ct_xml 
+                        WHERE xml_path LIKE :pattern
+                        LIMIT 5
+                    """), {"pattern": f"{old_root}%"}).fetchall()
+                    
+                    if preview:
+                        st.write("**Example changes (first 5):**")
+                        for row in preview:
+                            old_path = row[0]
+                            new_path = old_path.replace(old_root, new_root)
+                            st.text(f"Old: {old_path}")
+                            st.text(f"New: {new_path}")
+                            st.text("")
+                        
+                        # Count total affected
+                        count_result = conn.execute(text("""
+                            SELECT COUNT(*) 
+                            FROM ct_xml 
+                            WHERE xml_path LIKE :pattern
+                        """), {"pattern": f"{old_root}%"}).fetchone()
+                        
+                        st.info(f"📊 Total records to update: {count_result[0]}")
+                    else:
+                        st.warning("No records found with that path prefix")
+            
+            if st.button("💾 Apply Bulk Path Replacement", type="primary", key="apply_bulk_replace"):
+                if old_root and new_root and old_root != new_root:
+                    with st.spinner("Updating paths..."):
+                        count = bulk_replace_path_prefix(old_root, new_root)
+                    st.success(f"✅ Updated {count} records")
+                    
+                    # Verify by checking a few
+                    with engine.connect() as conn:
+                        sample = conn.execute(text("""
+                            SELECT xml_path 
+                            FROM ct_xml 
+                            WHERE xml_path LIKE :pattern
+                            LIMIT 3
+                        """), {"pattern": f"{new_root}%"}).fetchall()
+                        
+                        if sample:
+                            st.write("**Verification (first 3 updated paths):**")
+                            for row in sample:
+                                st.text(row[0])
+                else:
+                    st.error("Please enter valid old and new root paths")
+        
+        st.markdown("---")
         
         if st.button("🔍 Check for Missing Files", use_container_width=True, type="primary"):
             with st.spinner("Verifying paths..."):
