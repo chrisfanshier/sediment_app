@@ -241,6 +241,19 @@ if main_shear_pin_choice == "Select Pin Type":
 else:
     main_shear_pin_type_id = pin_options[main_shear_pin_choice]
 
+# Main shear pin groove diameter
+main_pin_groove_diam_input = st.text_input("Main Shear Pin Groove Diameter (inches)", 
+                                           value=str(dredge_data.main_pin_groove_diam) if dredge_data.main_pin_groove_diam is not None else "",
+                                           placeholder="Enter value or leave blank for NULL")
+if main_pin_groove_diam_input.strip() == "":
+    main_pin_groove_diam = None
+else:
+    try:
+        main_pin_groove_diam = float(main_pin_groove_diam_input)
+    except ValueError:
+        st.warning("Main Shear Pin Groove Diameter must be a numeric value.")
+        main_pin_groove_diam = None
+
 main_shear_pin_break_input = st.text_input("Main Shear Pin Break (lbs)", 
                                            value=str(dredge_data.main_shear_pin_break) if dredge_data.main_shear_pin_break is not None else "",
                                            placeholder="Enter value or leave blank for NULL")
@@ -268,6 +281,19 @@ if side_pin_choice == "Select Pin Type":
     side_pin_type_id = None
 else:
     side_pin_type_id = pin_options[side_pin_choice]
+
+# Side pin groove diameter
+side_pin_groove_diam_input = st.text_input("Side Pin Groove Diameter (inches)", 
+                                           value=str(dredge_data.side_pin_groove_diam) if dredge_data.side_pin_groove_diam is not None else "",
+                                           placeholder="Enter value or leave blank for NULL")
+if side_pin_groove_diam_input.strip() == "":
+    side_pin_groove_diam = None
+else:
+    try:
+        side_pin_groove_diam = float(side_pin_groove_diam_input)
+    except ValueError:
+        st.warning("Side Pin Groove Diameter must be a numeric value.")
+        side_pin_groove_diam = None
 
 side_pin_strength_input = st.text_input("Side Pin Strength (lbs)", 
                                         value=str(dredge_data.side_pin_strength) if dredge_data.side_pin_strength is not None else "",
@@ -477,8 +503,10 @@ if st.session_state.show_confirmation_edit_dredge:
     if pullout_tension is None: null_values.append("Max Tension")
     if active_passive is None: null_values.append("Active/Passive")
     if main_shear_pin_type_id is None: null_values.append("Main Shear Pin Type")
+    if main_pin_groove_diam is None: null_values.append("Main Shear Pin Groove Diameter")
     if main_shear_pin_break is None: null_values.append("Main Shear Pin Break")
     if side_pin_type_id is None: null_values.append("Side Pin Type")
+    if side_pin_groove_diam is None: null_values.append("Side Pin Groove Diameter")
     if side_pin_strength is None: null_values.append("Side Pin Strength")
     if usbl_distance is None: null_values.append("USBL Distance")
     if pinger_distance is None: null_values.append("Pinger Distance")
@@ -524,7 +552,8 @@ if st.session_state.show_confirmation_edit_dredge:
                             tension_at_surface = :tension_at_surface, tension_near_bottom = :tension_near_bottom,
                             tension_on_bottom = :tension_on_bottom, pullout_tension = :pullout_tension,
                             active_passive = :active_passive, main_shear_pin_type_id = :main_shear_pin_type_id,
-                            main_shear_pin_break = :main_shear_pin_break, side_pin_type_id = :side_pin_type_id,
+                            main_pin_groove_diam = :main_pin_groove_diam, main_shear_pin_break = :main_shear_pin_break, 
+                            side_pin_type_id = :side_pin_type_id, side_pin_groove_diam = :side_pin_groove_diam,
                             side_pin_strength = :side_pin_strength, usbl_distance = :usbl_distance,
                             pinger_distance = :pinger_distance, notes = :notes, wire_type_id = :wire_type_id,
                             data_entry_remarks = :data_entry_remarks
@@ -557,8 +586,10 @@ if st.session_state.show_confirmation_edit_dredge:
                         "pullout_tension": pullout_tension,
                         "active_passive": active_passive,
                         "main_shear_pin_type_id": main_shear_pin_type_id,
+                        "main_pin_groove_diam": main_pin_groove_diam,
                         "main_shear_pin_break": main_shear_pin_break,
                         "side_pin_type_id": side_pin_type_id,
+                        "side_pin_groove_diam": side_pin_groove_diam,
                         "side_pin_strength": side_pin_strength,
                         "usbl_distance": usbl_distance,
                         "pinger_distance": pinger_distance,
