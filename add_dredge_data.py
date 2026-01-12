@@ -435,6 +435,27 @@ else:
         st.warning("Side Pin Strength must be an integer value.")
         side_pin_strength = None
 
+# Groove diameter fields
+groove_diameter_main_pin = st.text_input("Groove Diameter Main Pin (inches)", value="", placeholder="Enter value or leave blank for NULL")
+if groove_diameter_main_pin.strip() == "":
+    groove_diameter_main_pin = None
+else:
+    try:
+        groove_diameter_main_pin = float(groove_diameter_main_pin)
+    except ValueError:
+        st.warning("Groove Diameter Main Pin must be a numeric value.")
+        groove_diameter_main_pin = None
+
+groove_diameter_side_pin = st.text_input("Groove Diameter Side Pin (inches)", value="", placeholder="Enter value or leave blank for NULL")
+if groove_diameter_side_pin.strip() == "":
+    groove_diameter_side_pin = None
+else:
+    try:
+        groove_diameter_side_pin = float(groove_diameter_side_pin)
+    except ValueError:
+        st.warning("Groove Diameter Side Pin must be a numeric value.")
+        groove_diameter_side_pin = None
+
 # Distance measurements
 usbl_distance = st.text_input("USBL Distance (meters)", value="", placeholder="Enter value or leave blank for NULL")
 if usbl_distance.strip() == "":
@@ -512,6 +533,8 @@ if st.session_state.show_confirmation_dredge:
     if main_shear_pin_break is None: null_values.append("Main Shear Pin Break")
     if side_pin_type_id is None: null_values.append("Side Pin Type")
     if side_pin_strength is None: null_values.append("Side Pin Strength")
+    if groove_diameter_main_pin is None: null_values.append("Groove Diameter Main Pin")
+    if groove_diameter_side_pin is None: null_values.append("Groove Diameter Side Pin")
     if usbl_distance is None: null_values.append("USBL Distance")
     if pinger_distance is None: null_values.append("Pinger Distance")
     if not notes or not notes.strip(): null_values.append("Notes")
@@ -546,7 +569,8 @@ if st.session_state.show_confirmation_dredge:
                                 wire_out_on_bottom, max_wire_out,
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension,
                                 active_passive, main_shear_pin_type_id, main_shear_pin_break,
-                                side_pin_type_id, side_pin_strength, usbl_distance, pinger_distance,
+                                side_pin_type_id, side_pin_strength, groove_diameter_main_pin, groove_diameter_side_pin,
+                                usbl_distance, pinger_distance,
                                 notes, wire_type_id, data_entry_remarks,
                                 created_on_ship, sync_status
                             ) VALUES (
@@ -557,7 +581,8 @@ if st.session_state.show_confirmation_dredge:
                                 :wire_out_on_bottom, :max_wire_out,
                                 :tension_at_surface, :tension_near_bottom, :tension_at_bottom, :pullout_tension,
                                 :active_passive, :main_shear_pin_type_id, :main_shear_pin_break,
-                                :side_pin_type_id, :side_pin_strength, :usbl_distance, :pinger_distance,
+                                :side_pin_type_id, :side_pin_strength, :groove_diameter_main_pin, :groove_diameter_side_pin,
+                                :usbl_distance, :pinger_distance,
                                 :notes, :wire_type_id, :data_entry_remarks,
                                 :created_on_ship, :sync_status
                             )
@@ -592,6 +617,8 @@ if st.session_state.show_confirmation_dredge:
                             "main_shear_pin_break": main_shear_pin_break,
                             "side_pin_type_id": side_pin_type_id,
                             "side_pin_strength": side_pin_strength,
+                            "groove_diameter_main_pin": groove_diameter_main_pin,
+                            "groove_diameter_side_pin": groove_diameter_side_pin,
                             "usbl_distance": usbl_distance,
                             "pinger_distance": pinger_distance,
                             "notes": notes or None,

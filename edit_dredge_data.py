@@ -281,6 +281,31 @@ else:
         st.warning("Side Pin Strength must be an integer value.")
         side_pin_strength = None
 
+# Groove diameter fields
+groove_diameter_main_pin_input = st.text_input("Groove Diameter Main Pin (inches)", 
+                                               value=str(dredge_data.groove_diameter_main_pin) if dredge_data.groove_diameter_main_pin is not None else "",
+                                               placeholder="Enter value or leave blank for NULL")
+if groove_diameter_main_pin_input.strip() == "":
+    groove_diameter_main_pin = None
+else:
+    try:
+        groove_diameter_main_pin = float(groove_diameter_main_pin_input)
+    except ValueError:
+        st.warning("Groove Diameter Main Pin must be a numeric value.")
+        groove_diameter_main_pin = None
+
+groove_diameter_side_pin_input = st.text_input("Groove Diameter Side Pin (inches)", 
+                                               value=str(dredge_data.groove_diameter_side_pin) if dredge_data.groove_diameter_side_pin is not None else "",
+                                               placeholder="Enter value or leave blank for NULL")
+if groove_diameter_side_pin_input.strip() == "":
+    groove_diameter_side_pin = None
+else:
+    try:
+        groove_diameter_side_pin = float(groove_diameter_side_pin_input)
+    except ValueError:
+        st.warning("Groove Diameter Side Pin must be a numeric value.")
+        groove_diameter_side_pin = None
+
 # Distance measurements
 usbl_distance_input = st.text_input("USBL Distance (meters)", 
                                     value=str(dredge_data.usbl_distance) if dredge_data.usbl_distance is not None else "",
@@ -480,6 +505,8 @@ if st.session_state.show_confirmation_edit_dredge:
     if main_shear_pin_break is None: null_values.append("Main Shear Pin Break")
     if side_pin_type_id is None: null_values.append("Side Pin Type")
     if side_pin_strength is None: null_values.append("Side Pin Strength")
+    if groove_diameter_main_pin is None: null_values.append("Groove Diameter Main Pin")
+    if groove_diameter_side_pin is None: null_values.append("Groove Diameter Side Pin")
     if usbl_distance is None: null_values.append("USBL Distance")
     if pinger_distance is None: null_values.append("Pinger Distance")
     if not notes or not notes.strip(): null_values.append("Notes")
@@ -525,7 +552,8 @@ if st.session_state.show_confirmation_edit_dredge:
                             tension_on_bottom = :tension_on_bottom, pullout_tension = :pullout_tension,
                             active_passive = :active_passive, main_shear_pin_type_id = :main_shear_pin_type_id,
                             main_shear_pin_break = :main_shear_pin_break, side_pin_type_id = :side_pin_type_id,
-                            side_pin_strength = :side_pin_strength, usbl_distance = :usbl_distance,
+                            side_pin_strength = :side_pin_strength, groove_diameter_main_pin = :groove_diameter_main_pin,
+                            groove_diameter_side_pin = :groove_diameter_side_pin, usbl_distance = :usbl_distance,
                             pinger_distance = :pinger_distance, notes = :notes, wire_type_id = :wire_type_id,
                             data_entry_remarks = :data_entry_remarks
                         WHERE core_id = :core_id
@@ -560,6 +588,8 @@ if st.session_state.show_confirmation_edit_dredge:
                         "main_shear_pin_break": main_shear_pin_break,
                         "side_pin_type_id": side_pin_type_id,
                         "side_pin_strength": side_pin_strength,
+                        "groove_diameter_main_pin": groove_diameter_main_pin,
+                        "groove_diameter_side_pin": groove_diameter_side_pin,
                         "usbl_distance": usbl_distance,
                         "pinger_distance": pinger_distance,
                         "notes": notes or None,
