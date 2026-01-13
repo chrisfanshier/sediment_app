@@ -569,7 +569,7 @@ if st.session_state.show_confirmation_dredge:
                                 wire_out_on_bottom, max_wire_out,
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension,
                                 active_passive, main_shear_pin_type_id, main_shear_pin_break,
-                                side_pin_type_id, side_pin_strength, groove_diameter_main_pin, groove_diameter_side_pin,
+                                side_pin_type_id, side_pin_strength, main_pin_groove_diam, side_pin_groove_diam,
                                 usbl_distance, pinger_distance,
                                 notes, wire_type_id, data_entry_remarks,
                                 created_on_ship, sync_status
@@ -581,7 +581,7 @@ if st.session_state.show_confirmation_dredge:
                                 :wire_out_on_bottom, :max_wire_out,
                                 :tension_at_surface, :tension_near_bottom, :tension_at_bottom, :pullout_tension,
                                 :active_passive, :main_shear_pin_type_id, :main_shear_pin_break,
-                                :side_pin_type_id, :side_pin_strength, :groove_diameter_main_pin, :groove_diameter_side_pin,
+                                :side_pin_type_id, :side_pin_strength, :main_pin_groove_diam, :side_pin_groove_diam,
                                 :usbl_distance, :pinger_distance,
                                 :notes, :wire_type_id, :data_entry_remarks,
                                 :created_on_ship, :sync_status
@@ -617,8 +617,8 @@ if st.session_state.show_confirmation_dredge:
                             "main_shear_pin_break": main_shear_pin_break,
                             "side_pin_type_id": side_pin_type_id,
                             "side_pin_strength": side_pin_strength,
-                            "groove_diameter_main_pin": groove_diameter_main_pin,
-                            "groove_diameter_side_pin": groove_diameter_side_pin,
+                            "main_pin_groove_diam": groove_diameter_main_pin,
+                            "side_pin_groove_diam": groove_diameter_side_pin,
                             "usbl_distance": usbl_distance,
                             "pinger_distance": pinger_distance,
                             "notes": notes or None,
