@@ -50,6 +50,13 @@ WINCH_FORMATS = {
         "columns": ["time_stamp", "winch_id", "other_timestamp", "tension_lbs", "speed_mm", "payout_m", "checksum"],
         "datetime_code": "pd.to_datetime(df['time_stamp'], errors='coerce')",
         "numeric_columns": ["tension_lbs", "speed_mm", "payout_m"]
+    },
+    "Thompson": {
+        "delimiter": ",",
+        "header_lines": 0,
+        "columns": ["Date", "Time", "Winch", "LCi90_time", "Tension", "Rate", "Payout_", "Mystery"],
+        "datetime_code": "pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d/%m/%Y %H:%M:%S.%f', errors='coerce')",
+        "numeric_columns": ["Tension", "Speed_mmpe", "Payout_m"]
     }
 }
 
