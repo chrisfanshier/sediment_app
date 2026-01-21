@@ -4,7 +4,7 @@ import streamlit as st
 st.set_page_config(layout="wide")
 
 # Sidebar navigation
-menu = ["Add Data File", "Edit Data File", "Edit Winch Data"]
+menu = ["Add Data File", "Edit Data File", "Edit Winch Data", "Edit USBL Files"]
 choice = st.sidebar.radio("Select Option", menu)
 
 # Render the selected page
@@ -40,3 +40,14 @@ elif choice == "Edit Winch Data":
     edit_winch_code = edit_winch_code.replace("st.set_page_config(layout='wide')", '')
     
     exec(edit_winch_code)
+
+elif choice == "Edit USBL Files":
+    # Execute the edit_usbl.py file content
+    with open("edit_usbl.py", "r", encoding="utf-8") as f:
+        edit_usbl_code = f.read()
+    
+    # Remove any st.set_page_config lines to avoid conflicts
+    edit_usbl_code = edit_usbl_code.replace('st.set_page_config(layout="wide")', '')
+    edit_usbl_code = edit_usbl_code.replace("st.set_page_config(layout='wide')", '')
+    
+    exec(edit_usbl_code)

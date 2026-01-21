@@ -247,4 +247,21 @@ def fetch_cruise_options():
     except Exception as e:
         print(f"Error fetching cruise options: {e}")
         return []
+    
+def insert_usbl_file(cruise_id, file_name, file_path, sampling_device=None, transponder_type=None, remarks=None):
+    """Insert a USBL file record."""
+    with get_connection() as conn:
+        query = text("""
+            INSERT INTO usbl_files (cruise_id, file_name, file_path, sampling_device, transponder_type, remarks)
+            VALUES (:cruise_id, :file_name, :file_path, :sampling_device, :transponder_type, :remarks)
+        """)
+        conn.execute(query, {
+            "cruise_id": cruise_id,
+            "file_name": file_name,
+            "file_path": file_path,
+            "sampling_device": sampling_device or None,
+            "transponder_type": transponder_type or None,
+            "remarks": remarks or None
+        })
+        conn.commit()
 

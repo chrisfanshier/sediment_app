@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import json
-from db_util import get_connection, fetch_cores, fetch_cruise_options
+from db_util import get_connection, fetch_cores, fetch_cruise_options, insert_usbl_file
 from sqlalchemy import text
 from config import ROOT_DIRECTORY, SUBDIRECTORIES, get_full_path, WINCH_FORMATS
 
@@ -84,7 +84,7 @@ def insert_winch_data(file_name, file_path, cruise_id, start_time, end_time, set
         conn.commit()
 
 # Step 1: Select file category first
-file_category = st.selectbox("Select File Category", ["MSCL Data", "Sensor Data", "Winch Data"])
+file_category = st.selectbox("Select File Category", ["MSCL Data", "Sensor Data", "Winch Data", "USBL Data"])
 
 if file_category in ["MSCL Data", "Sensor Data"]:
     # For core-related files, fetch and select core
@@ -377,3 +377,51 @@ elif file_category == "Winch Data":
                     st.error(f"❌ Error saving file: {e}")
                     import traceback
                     st.code(traceback.format_exc())
+
+elif file_category == "USBL Data":
+    st.subheader("📡 USBL Data File")
+
+    # Choose cruise (foreign key) — same pattern as Winch
+    cruises = fetch_cruise_options()
+    if not cruises:
+        st.warning("No cruises found. Please add a cruise first.")
+        st.stop()
+
+    cruise_options = ["Select Cruise"] + [f"{r[1]} - {r[2]} (ID: {r[0]})" for r in cruises]
+    cruise_choice = st.selectbox("Choose a cruise*", cruise_options, key="usbl_cruise")
+
+    if cruise_choice != "Select Cruise":
+        cruise_id = int(cruise_choice.split("ID: ")[1].rstrip(")"))
+        cruise_name = cruise_choice.split(" - ")[0]
+        st.success(f"✅ Selected cruise: **{cruise_name}**")
+    else:
+        st.warning("Please select a cruise to continue.")
+        st.stop()
+
+    sampling_device = st.text_input("Sampling Device (e.g., dredge, multicore, etc")
+    transponder_type = st.text_input("Transponder Type (e.g., Ranger2, etc)")
+    remarks = st.text_area("Remarks (optional)", placeholder="Enter any remarks about this USBL file")
+
+    uploaded_files = st.file_uploader("Upload USBL File(s)", type=["csv", "txt", "usbl"], accept_multiple_files=True, key="usbl_uploader")
+
+    if uploaded_files:
+        if st.button("Save USBL File(s)"):
+            try:
+                with st.spinner(f"Processing {len(uploaded_files)} USBL file(s)..."):
+                    saved = []
+                    for f in uploaded_files:
+                        uploaded_file_path = upload_file(f, "USBL Data")
+                        insert_usbl_file(
+                            cruise_id,
+                            f.name,
+                            uploaded_file_path,
+                            sampling_device,
+                            transponder_type,
+                            remarks
+                        )
+                        saved.append(os.path.join(ROOT_DIRECTORY, uploaded_file_path, f.name))
+                    st.success(f"Saved {len(saved)} USBL file(s) successfully!")
+                    for p in saved:
+                        st.write(f"- {p}")
+            except Exception as e:
+                st.error(f"Error saving USBL file(s): {e}")
