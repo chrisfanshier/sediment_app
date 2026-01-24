@@ -387,4 +387,68 @@ def parse_winch_dat(file_path, parsing_settings):
     
     return df
 
+import re
+
+def parse_usbl_first_last(fileobj, filename):
+    """
+    Read first and last $PSONLLD time tokens from a file-like object and
+    return (first_dt, last_dt) as naive pandas.Timestamp anchored to the
+    YYYYMMDD found in the filename. Returns (None, None) on failure.
+    """
+    try:
+        m = re.search(r'(\d{8})', filename)
+        if not m:
+            return None, None
+        file_date = pd.to_datetime(m.group(1), format="%Y%m%d", errors="coerce")
+        if pd.isna(file_date):
+            return None, None
+
+        time_re = re.compile(r'\$PSONLLD,(\d{6}(?:\.\d+)?)')
+        first_s = last_s = None
+
+        # iterate lines without loading whole file into memory
+        fileobj.seek(0)
+        for raw in fileobj:
+            line = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+            mm = time_re.search(line)
+            if not mm:
+                continue
+            t = mm.group(1)
+            if first_s is None:
+                first_s = t
+            last_s = t
+
+        if not first_s or not last_s:
+            return None, None
+
+        def hhmmss_to_td(s):
+            s = str(s)
+            if '.' in s:
+                main, frac = s.split('.', 1)
+                try:
+                    frac = float("0." + frac)
+                except Exception:
+                    frac = 0.0
+            else:
+                main, frac = s, 0.0
+            main = main.zfill(6)
+            hh = int(main[:-4]) if len(main) > 4 else 0
+            mm = int(main[-4:-2])
+            ss = int(main[-2:])
+            return pd.Timedelta(seconds=hh * 3600 + mm * 60 + ss + frac)
+
+        td_first = hhmmss_to_td(first_s)
+        td_last = hhmmss_to_td(last_s)
+
+        first_dt = pd.Timestamp(file_date) + td_first
+        last_dt = pd.Timestamp(file_date) + td_last
+
+        # if first > last, assume first line belongs to previous day
+        if td_first > td_last:
+            first_dt -= pd.Timedelta(days=1)
+
+        return first_dt, last_dt
+    except Exception:
+        return None, None
+
 

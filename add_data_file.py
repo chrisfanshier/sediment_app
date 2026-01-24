@@ -5,6 +5,7 @@ import json
 from db_util import get_connection, fetch_cores, fetch_cruise_options, insert_usbl_file
 from sqlalchemy import text
 from config import ROOT_DIRECTORY, SUBDIRECTORIES, get_full_path, WINCH_FORMATS
+from utils import parse_usbl_first_last
 
 # --- Add Manage Files Page ---
 st.title("📂 Manage Associated Data Files")
@@ -425,39 +426,45 @@ elif file_category == "USBL Data":
                 parts = stem.split("_")
                 date_str = parts[1] if len(parts) > 1 else None
 
+                # Primary: parse first/last timestamps from file (handles midnight rollover)
                 f.seek(0)
-                df_times = pd.read_csv(
-                    f,
-                    header=None,
-                    usecols=[1],
-                    names=["utc_time"],
-                    dtype=str,
-                    on_bad_lines='skip'
-                )
+                start_dt, end_dt = parse_usbl_first_last(f, f.name)
 
-                if date_str:
-                    dt_series = pd.to_datetime(
-                        date_str + " " + df_times["utc_time"].astype(str),
-                        format="%Y%m%d %H%M%S.%f",
-                        utc=True,
-                        errors="coerce"
+                # Fallback: previous per-line datetime parsing using csv column if helper fails
+                if start_dt is None or end_dt is None:
+                    f.seek(0)
+                    df_times = pd.read_csv(
+                        f,
+                        header=None,
+                        usecols=[1],
+                        names=["utc_time"],
+                        dtype=str,
+                        on_bad_lines='skip'
                     )
-                    if dt_series.isna().all():
+
+                    if date_str:
                         dt_series = pd.to_datetime(
                             date_str + " " + df_times["utc_time"].astype(str),
-                            format="%Y%m%d %H%M%S",
+                            format="%Y%m%d %H%M%S.%f",
                             utc=True,
                             errors="coerce"
                         )
-                else:
-                    dt_series = pd.to_datetime(df_times["utc_time"].astype(str), utc=True, errors="coerce")
+                        if dt_series.isna().all():
+                            dt_series = pd.to_datetime(
+                                date_str + " " + df_times["utc_time"].astype(str),
+                                format="%Y%m%d %H%M%S",
+                                utc=True,
+                                errors="coerce"
+                            )
+                    else:
+                        dt_series = pd.to_datetime(df_times["utc_time"].astype(str), utc=True, errors="coerce")
 
-                if dt_series.dropna().empty:
-                    start_dt = None
-                    end_dt = None
-                else:
-                    start_dt = dt_series.min()
-                    end_dt = dt_series.max()
+                    if dt_series.dropna().empty:
+                        start_dt = None
+                        end_dt = None
+                    else:
+                        start_dt = dt_series.min()
+                        end_dt = dt_series.max()
             except Exception:
                 start_dt = None
                 end_dt = None
