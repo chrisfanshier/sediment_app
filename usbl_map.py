@@ -64,18 +64,37 @@ else:
                 usbl_df["start_time"] = pd.Series(dtype="datetime64[ns]")
                 usbl_df["end_time"] = pd.Series(dtype="datetime64[ns]")
 
-            # compute associated usbl files per core row
+            # --- build per-USBL-file table that lists associated core (if any) ---
             results = []
-            for _, core in df_dredge.iterrows():
-                mask = (usbl_df["start_time"] <= core["end_datetime"]) & (usbl_df["end_time"] >= core["start_datetime"])
-                matched = usbl_df.loc[mask, "file_name"].astype(str).tolist()
-                results.append({
-                    "core_name": core.get("core_name"),
-                    "start_datetime": core["start_datetime"],
-                    "end_datetime": core["end_datetime"],
-                    "usbl_files": ", ".join(matched) if matched else ""
-                })
+            for _, dredge in df_dredge.iterrows():
+                mask = (
+                    (usbl_df["start_time"] <= dredge["end_datetime"]) &
+                    (usbl_df["end_time"] >= dredge["start_datetime"])
+                )
+                usbl_matches = usbl_df.loc[mask].copy()
+                if not usbl_matches.empty:
+                    usbl_matches["dredge_core"] = dredge.get("core_name")
+                    usbl_matches["dredge_start"] = dredge["start_datetime"]
+                    usbl_matches["dredge_end"] = dredge["end_datetime"]
+                    results.append(usbl_matches)
 
-            out = pd.DataFrame(results)
-            st.subheader(f"Cores and associated USBL files for cruise: {selected}")
-            st.dataframe(out, use_container_width=True)
+            if results:
+                matched_all = pd.concat(results, ignore_index=True)
+                # include any USBL files that had no match (show core empty)
+                unmatched = usbl_df[~usbl_df["usbl_file_id"].isin(matched_all["usbl_file_id"])].copy()
+                if not unmatched.empty:
+                    unmatched["dredge_core"] = ""
+                    unmatched["dredge_start"] = pd.NaT
+                    unmatched["dredge_end"] = pd.NaT
+                out = pd.concat([matched_all, unmatched], ignore_index=True, sort=False)
+            else:
+                # no matches at all: show all usbl files with empty core columns
+                out = usbl_df.copy()
+                out["dredge_core"] = ""
+                out["dredge_start"] = pd.NaT
+                out["dredge_end"] = pd.NaT
+
+            # pick and display relevant columns
+            display_cols = ["file_name", "start_time", "end_time", "dredge_core", "dredge_start", "dredge_end"]
+            st.subheader(f"USBL files and associated cores for cruise: {selected}")
+            st.dataframe(out[display_cols].sort_values(["dredge_core", "start_time"]).reset_index(drop=True), use_container_width=True)
