@@ -21,10 +21,16 @@ else:
     if selected and selected != "-- choose --":
         cruise_id = cruise_map[selected]
 
-        # load cores for cruise (assumes table columns match your snippet)
+        # load cores for cruise
         with get_connection() as conn:
             cores = pd.read_sql(
                 text("SELECT * FROM cores WHERE cruise_id = :cruise_id ORDER BY core_name"),
+                conn,
+                params={"cruise_id": cruise_id}
+            )
+
+            usbl_df = pd.read_sql(
+                text("SELECT usbl_file_id, file_name, start_time, end_time, file_path FROM usbl_files WHERE cruise_id = :cruise_id"),
                 conn,
                 params={"cruise_id": cruise_id}
             )
@@ -50,6 +56,26 @@ else:
             # handle midnight rollover
             df_dredge.loc[df_dredge["end_datetime"] < df_dredge["start_datetime"], "end_datetime"] += pd.Timedelta(days=1)
 
-            out = df_dredge[["core_name", "start_datetime", "end_datetime"]]
-            st.subheader(f"Cores and deployment windows for cruise: {selected}")
+            # prepare USBL times
+            if not usbl_df.empty:
+                usbl_df["start_time"] = pd.to_datetime(usbl_df["start_time"], errors="coerce")
+                usbl_df["end_time"] = pd.to_datetime(usbl_df["end_time"], errors="coerce")
+            else:
+                usbl_df["start_time"] = pd.Series(dtype="datetime64[ns]")
+                usbl_df["end_time"] = pd.Series(dtype="datetime64[ns]")
+
+            # compute associated usbl files per core row
+            results = []
+            for _, core in df_dredge.iterrows():
+                mask = (usbl_df["start_time"] <= core["end_datetime"]) & (usbl_df["end_time"] >= core["start_datetime"])
+                matched = usbl_df.loc[mask, "file_name"].astype(str).tolist()
+                results.append({
+                    "core_name": core.get("core_name"),
+                    "start_datetime": core["start_datetime"],
+                    "end_datetime": core["end_datetime"],
+                    "usbl_files": ", ".join(matched) if matched else ""
+                })
+
+            out = pd.DataFrame(results)
+            st.subheader(f"Cores and associated USBL files for cruise: {selected}")
             st.dataframe(out, use_container_width=True)
