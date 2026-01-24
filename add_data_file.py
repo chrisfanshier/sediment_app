@@ -31,6 +31,18 @@ def upload_file(file, file_type):
     # Return only the relative directory (not the full path)
     return subdirectory
 
+# convert pandas Timestamp / datetime-like to timezone-aware Python datetime (UTC)
+def _to_utc_py(dt):
+    if dt is None:
+        return None
+    ts = pd.to_datetime(dt)
+    # pandas Timestamp has .tz; localize if naive, else convert
+    if ts.tz is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return ts.to_pydatetime()
+
 # Define the insert functions for specialized tables
 def insert_mscl_file(core_id, file_name, file_path, file_type, remarks):
     with get_connection() as conn:
@@ -405,23 +417,96 @@ elif file_category == "USBL Data":
     uploaded_files = st.file_uploader("Upload USBL File(s)", type=["csv", "txt", "usbl"], accept_multiple_files=True, key="usbl_uploader")
 
     if uploaded_files:
-        if st.button("Save USBL File(s)"):
+        # --- Compute start/end times for each uploaded file and show to user before saving ---
+        usbl_rows = []
+        for f in uploaded_files:
             try:
-                with st.spinner(f"Processing {len(uploaded_files)} USBL file(s)..."):
-                    saved = []
-                    for f in uploaded_files:
-                        uploaded_file_path = upload_file(f, "USBL Data")
-                        insert_usbl_file(
-                            cruise_id,
-                            f.name,
-                            uploaded_file_path,
-                            sampling_device,
-                            transponder_type,
-                            remarks
+                stem = os.path.splitext(f.name)[0]
+                parts = stem.split("_")
+                date_str = parts[1] if len(parts) > 1 else None
+
+                f.seek(0)
+                df_times = pd.read_csv(
+                    f,
+                    header=None,
+                    usecols=[1],
+                    names=["utc_time"],
+                    dtype=str,
+                    on_bad_lines='skip'
+                )
+
+                if date_str:
+                    dt_series = pd.to_datetime(
+                        date_str + " " + df_times["utc_time"].astype(str),
+                        format="%Y%m%d %H%M%S.%f",
+                        utc=True,
+                        errors="coerce"
+                    )
+                    if dt_series.isna().all():
+                        dt_series = pd.to_datetime(
+                            date_str + " " + df_times["utc_time"].astype(str),
+                            format="%Y%m%d %H%M%S",
+                            utc=True,
+                            errors="coerce"
                         )
-                        saved.append(os.path.join(ROOT_DIRECTORY, uploaded_file_path, f.name))
-                    st.success(f"Saved {len(saved)} USBL file(s) successfully!")
-                    for p in saved:
-                        st.write(f"- {p}")
-            except Exception as e:
-                st.error(f"Error saving USBL file(s): {e}")
+                else:
+                    dt_series = pd.to_datetime(df_times["utc_time"].astype(str), utc=True, errors="coerce")
+
+                if dt_series.dropna().empty:
+                    start_dt = None
+                    end_dt = None
+                else:
+                    start_dt = dt_series.min()
+                    end_dt = dt_series.max()
+            except Exception:
+                start_dt = None
+                end_dt = None
+            finally:
+                try:
+                    f.seek(0)
+                except Exception:
+                    pass
+
+            usbl_rows.append({
+                "file_obj": f,
+                "file_name": f.name,
+                # keep pandas.Timestamp (or None); convert to Python datetime when inserting
+                "start_time": start_dt,
+                "end_time": end_dt
+            })
+
+        # show preview of detected times
+        preview_df = pd.DataFrame([
+            {
+                "file_name": r["file_name"],
+                "start_time": (r["start_time"].isoformat() if r["start_time"] is not None else None),
+                "end_time": (r["end_time"].isoformat() if r["end_time"] is not None else None)
+            } for r in usbl_rows
+        ])
+        st.write("Detected start/end times from uploaded USBL files:")
+        st.table(preview_df)
+        
+        # allow user to save after previewing computed times
+        if st.button("Save USBL File(s)"):
+             try:
+                 with st.spinner(f"Processing {len(usbl_rows)} USBL file(s)..."):
+                     saved = []
+                     for r in usbl_rows:
+                         f = r["file_obj"]
+                         uploaded_file_path = upload_file(f, "USBL Data")
+                         insert_usbl_file(
+                             cruise_id=cruise_id,
+                             file_name=r["file_name"],
+                             file_path=uploaded_file_path,
+                             sampling_device=sampling_device,
+                             transponder_type=transponder_type,
+                             remarks=remarks,
+                             start_time=_to_utc_py(r["start_time"]),
+                             end_time=_to_utc_py(r["end_time"])
+                         )
+                         saved.append(os.path.join(ROOT_DIRECTORY, uploaded_file_path, r["file_name"]))
+                     st.success(f"Saved {len(saved)} USBL file(s) successfully!")
+                     for p in saved:
+                         st.write(f"- {p}")
+             except Exception as e:
+                 st.error(f"Error saving USBL file(s): {e}")

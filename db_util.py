@@ -248,12 +248,23 @@ def fetch_cruise_options():
         print(f"Error fetching cruise options: {e}")
         return []
     
-def insert_usbl_file(cruise_id, file_name, file_path, sampling_device=None, transponder_type=None, remarks=None):
-    """Insert a USBL file record."""
+
+def _to_naive_utc(dt):
+    if dt is None:
+        return None
+    ts = pd.to_datetime(dt, utc=True)
+    py = ts.to_pydatetime()
+    return py.replace(tzinfo=None)
+
+def insert_usbl_file(cruise_id, file_name, file_path, sampling_device, transponder_type, remarks, start_time=None, end_time=None):
+    """Insert USBL file metadata. start_time/end_time are Python datetimes or None."""
     with get_connection() as conn:
         query = text("""
-            INSERT INTO usbl_files (cruise_id, file_name, file_path, sampling_device, transponder_type, remarks)
-            VALUES (:cruise_id, :file_name, :file_path, :sampling_device, :transponder_type, :remarks)
+            INSERT INTO usbl_files (
+                cruise_id, file_name, file_path, sampling_device, transponder_type, remarks, start_time, end_time
+            ) VALUES (
+                :cruise_id, :file_name, :file_path, :sampling_device, :transponder_type, :remarks, :start_time, :end_time
+            )
         """)
         conn.execute(query, {
             "cruise_id": cruise_id,
@@ -261,7 +272,10 @@ def insert_usbl_file(cruise_id, file_name, file_path, sampling_device=None, tran
             "file_path": file_path,
             "sampling_device": sampling_device or None,
             "transponder_type": transponder_type or None,
-            "remarks": remarks or None
+            "remarks": remarks or None,
+            "start_time": _to_naive_utc(start_time),
+            "end_time": _to_naive_utc(end_time)
         })
         conn.commit()
+
 
