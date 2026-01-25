@@ -5,7 +5,7 @@ from sqlalchemy import text
 from pathlib import Path
 import json
 import os
-from utils import process_star_oddi_data
+from utils import process_star_oddi_data, parse_winch_dat
 from config import get_full_path
 
 st.title("Export Dredge Sensor + USBL + Winch Data")
@@ -76,6 +76,10 @@ end_datetime = pd.to_datetime(core_info[date_col]) + pd.to_timedelta(str(core_in
 if end_datetime < start_datetime:
     end_datetime += pd.Timedelta(days=1)
 
+# Make timezone-aware (UTC) to match USBL data
+start_datetime = start_datetime.tz_localize('UTC')
+end_datetime = end_datetime.tz_localize('UTC')
+
 st.subheader(f"Processing: {selected_core}")
 st.write(f"**Deployment window:**")
 st.write(f"- Start: {start_datetime}")
@@ -115,8 +119,10 @@ if not sensor_files.empty:
             df = process_star_oddi_data(file_path)
             
             if df is not None:
-                # Set Timestamp as index
+                # Set Timestamp as index and make timezone-aware
                 df.set_index('Timestamp', inplace=True)
+                if df.index.tz is None:
+                    df.index = df.index.tz_localize('UTC')
                 
                 # Store with descriptive key
                 key = f"{sensor_type}_{row['file_id']}"
@@ -228,8 +234,8 @@ with get_connection() as conn:
 
 if not usbl_files.empty:
     # Filter USBL files by time overlap
-    usbl_files["start_time"] = pd.to_datetime(usbl_files["start_time"], errors="coerce")
-    usbl_files["end_time"] = pd.to_datetime(usbl_files["end_time"], errors="coerce")
+    usbl_files["start_time"] = pd.to_datetime(usbl_files["start_time"], errors="coerce", utc=True)
+    usbl_files["end_time"] = pd.to_datetime(usbl_files["end_time"], errors="coerce", utc=True)
     
     mask = (usbl_files["start_time"] <= end_datetime) & (usbl_files["end_time"] >= start_datetime)
     matched_usbl = usbl_files[mask]
@@ -284,42 +290,6 @@ else:
 # ============================================================================
 st.subheader("Loading winch data...")
 
-def load_winch_file(file_path, settings_json):
-    """Load a winch file using the settings from the database"""
-    try:
-        settings = json.loads(settings_json)
-        
-        # Read CSV with settings
-        df = pd.read_csv(
-            file_path,
-            delimiter=settings['delimiter'],
-            skiprows=settings['header_lines'],
-            names=settings['columns'],
-            dtype=str  # Read everything as string first
-        )
-        
-        # Parse datetime using the code from settings
-        datetime_col = settings['datetime_code'].split("['")[1].split("']")[0]  # Extract column name
-        df['datetime'] = pd.to_datetime(df[datetime_col], errors='coerce')
-        
-        # Convert numeric columns
-        for col in settings.get('numeric_columns', []):
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        # Set datetime as index
-        df.set_index('datetime', inplace=True)
-        
-        # Keep relevant columns (drop checksum, IDs, etc.)
-        keep_cols = [col for col in settings.get('numeric_columns', []) if col in df.columns]
-        winch_df = df[keep_cols].copy()
-        
-        return winch_df
-        
-    except Exception as e:
-        st.error(f"Error loading winch file: {e}")
-        return None
-
 # Get winch files that overlap with this core's time window
 with get_connection() as conn:
     winch_files = pd.read_sql(
@@ -334,8 +304,8 @@ with get_connection() as conn:
 
 if not winch_files.empty:
     # Parse start/end times (they're stored as text in the database)
-    winch_files["start_time"] = pd.to_datetime(winch_files["start_time"], errors="coerce")
-    winch_files["end_time"] = pd.to_datetime(winch_files["end_time"], errors="coerce")
+    winch_files["start_time"] = pd.to_datetime(winch_files["start_time"], errors="coerce", utc=True)
+    winch_files["end_time"] = pd.to_datetime(winch_files["end_time"], errors="coerce", utc=True)
     
     # Filter by time overlap with core deployment
     mask = (winch_files["start_time"] <= end_datetime) & (winch_files["end_time"] >= start_datetime)
@@ -350,12 +320,17 @@ if not winch_files.empty:
         # Combine file_path (subdirectory) and file_name
         relative_path = os.path.join(row['file_path'], row['file_name'])
         file_path = get_full_path(relative_path)
-        settings = row['settings']
+        settings = json.loads(row['settings'])
         
         try:
-            df = load_winch_file(file_path, settings)
+            df = parse_winch_dat(file_path, settings)
             
-            if df is not None:
+            if df is not None and 'datetime' in df.columns:
+                # Set datetime as index and make timezone-aware
+                df.set_index('datetime', inplace=True)
+                if df.index.tz is None:
+                    df.index = df.index.tz_localize('UTC')
+                
                 winch_dfs.append(df)
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} records, {df.index[0]} to {df.index[-1]}")
             else:
