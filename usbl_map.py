@@ -3,7 +3,7 @@ import pandas as pd
 from db_util import get_connection
 from sqlalchemy import text
 
-st.title("Cruises with USBL Data")
+st.title("Cores and associated USBL files (Cruise → Core)")
 
 with get_connection() as conn:
     cruises = pd.read_sql(
@@ -15,86 +15,77 @@ with get_connection() as conn:
 
 if cruises.empty:
     st.info("No cruises with USBL files found.")
-else:
-    cruise_map = {row.cruise_name: row.cruise_id for _, row in cruises.iterrows()}
-    selected = st.selectbox("Select cruise", ["-- choose --"] + list(cruise_map.keys()), key="cruise_with_usbl_select")
-    if selected and selected != "-- choose --":
-        cruise_id = cruise_map[selected]
+    st.stop()
 
-        # load cores for cruise
-        with get_connection() as conn:
-            cores = pd.read_sql(
-                text("SELECT * FROM cores WHERE cruise_id = :cruise_id ORDER BY core_name"),
-                conn,
-                params={"cruise_id": cruise_id}
-            )
+cruise_map = {row.cruise_name: row.cruise_id for _, row in cruises.iterrows()}
+selected = st.selectbox("Select cruise", ["-- choose --"] + list(cruise_map.keys()), key="cruise_with_usbl_select")
+if not selected or selected == "-- choose --":
+    st.stop()
 
-            usbl_df = pd.read_sql(
-                text("SELECT usbl_file_id, file_name, start_time, end_time, file_path FROM usbl_files WHERE cruise_id = :cruise_id"),
-                conn,
-                params={"cruise_id": cruise_id}
-            )
+cruise_id = cruise_map[selected]
 
-        if cores.empty:
-            st.info("No cores for selected cruise.")
-        else:
-            df_dredge = cores.copy()
+with get_connection() as conn:
+    cores = pd.read_sql(
+        text("SELECT * FROM cores WHERE cruise_id = :cruise_id ORDER BY core_name"),
+        conn,
+        params={"cruise_id": cruise_id}
+    )
+    usbl_df = pd.read_sql(
+        text("SELECT usbl_file_id, file_name, start_time, end_time FROM usbl_files WHERE cruise_id = :cruise_id"),
+        conn,
+        params={"cruise_id": cruise_id}
+    )
 
-            # coerce times to timedeltas (treat invalid/missing as 0) and dates safely
-            launch_td = pd.to_timedelta(df_dredge["time_launched"].astype(str), errors="coerce").fillna(pd.Timedelta(0))
-            recover_td = pd.to_timedelta(df_dredge["time_recovered"].astype(str), errors="coerce").fillna(pd.Timedelta(0))
+if cores.empty:
+    st.info("No cores for selected cruise.")
+    st.stop()
 
-            df_dredge["start_datetime"] = pd.to_datetime(df_dredge["date"], errors="coerce") + launch_td
-            df_dredge["end_datetime"] = pd.to_datetime(df_dredge["date"], errors="coerce") + recover_td
+if usbl_df.empty:
+    st.info("No USBL files for selected cruise.")
+    st.stop()
 
-            # drop rows where date parsing failed
-            bad = df_dredge[["start_datetime", "end_datetime"]].isna().any(axis=1)
-            if bad.any():
-                st.warning(f"Dropped {bad.sum()} core rows with invalid date/time")
-                df_dredge = df_dredge.loc[~bad].copy()
+# normalize/parse core start/end datetimes using the simple convention
+date_col = next((c for c in ("date", "core_date") if c in cores.columns), None)
+launch_col = next((c for c in ("time_launched", "time_launch", "time_launched_utc") if c in cores.columns), None)
+recover_col = next((c for c in ("time_recovered", "time_recover", "time_recovered_utc") if c in cores.columns), None)
 
-            # handle midnight rollover
-            df_dredge.loc[df_dredge["end_datetime"] < df_dredge["start_datetime"], "end_datetime"] += pd.Timedelta(days=1)
+if not (date_col and launch_col and recover_col):
+    st.error("Cores missing required date/time columns (date + time_launched + time_recovered).")
+    st.write("Available core columns:", list(cores.columns))
+    st.stop()
 
-            # prepare USBL times
-            if not usbl_df.empty:
-                usbl_df["start_time"] = pd.to_datetime(usbl_df["start_time"], errors="coerce")
-                usbl_df["end_time"] = pd.to_datetime(usbl_df["end_time"], errors="coerce")
-            else:
-                usbl_df["start_time"] = pd.Series(dtype="datetime64[ns]")
-                usbl_df["end_time"] = pd.Series(dtype="datetime64[ns]")
+df_dredge = cores.copy()
+df_dredge[launch_col] = df_dredge[launch_col].astype(str)
+df_dredge[recover_col] = df_dredge[recover_col].astype(str)
 
-            # --- build per-USBL-file table that lists associated core (if any) ---
-            results = []
-            for _, dredge in df_dredge.iterrows():
-                mask = (
-                    (usbl_df["start_time"] <= dredge["end_datetime"]) &
-                    (usbl_df["end_time"] >= dredge["start_datetime"])
-                )
-                usbl_matches = usbl_df.loc[mask].copy()
-                if not usbl_matches.empty:
-                    usbl_matches["dredge_core"] = dredge.get("core_name")
-                    usbl_matches["dredge_start"] = dredge["start_datetime"]
-                    usbl_matches["dredge_end"] = dredge["end_datetime"]
-                    results.append(usbl_matches)
+# safe parsing (invalid -> NaT)
+df_dredge["start_datetime"] = pd.to_datetime(df_dredge[date_col], errors="coerce") + pd.to_timedelta(df_dredge[launch_col], errors="coerce")
+df_dredge["end_datetime"] = pd.to_datetime(df_dredge[date_col], errors="coerce") + pd.to_timedelta(df_dredge[recover_col], errors="coerce")
 
-            if results:
-                matched_all = pd.concat(results, ignore_index=True)
-                # include any USBL files that had no match (show core empty)
-                unmatched = usbl_df[~usbl_df["usbl_file_id"].isin(matched_all["usbl_file_id"])].copy()
-                if not unmatched.empty:
-                    unmatched["dredge_core"] = ""
-                    unmatched["dredge_start"] = pd.NaT
-                    unmatched["dredge_end"] = pd.NaT
-                out = pd.concat([matched_all, unmatched], ignore_index=True, sort=False)
-            else:
-                # no matches at all: show all usbl files with empty core columns
-                out = usbl_df.copy()
-                out["dredge_core"] = ""
-                out["dredge_start"] = pd.NaT
-                out["dredge_end"] = pd.NaT
+bad = df_dredge[["start_datetime", "end_datetime"]].isna().any(axis=1)
+if bad.any():
+    st.warning(f"Dropped {bad.sum()} core rows with invalid date/time")
+    df_dredge = df_dredge.loc[~bad].copy()
 
-            # pick and display relevant columns
-            display_cols = ["file_name", "start_time", "end_time", "dredge_core", "dredge_start", "dredge_end"]
-            st.subheader(f"USBL files and associated cores for cruise: {selected}")
-            st.dataframe(out[display_cols].sort_values(["dredge_core", "start_time"]).reset_index(drop=True), use_container_width=True)
+# midnight rollover
+df_dredge.loc[df_dredge["end_datetime"] < df_dredge["start_datetime"], "end_datetime"] += pd.Timedelta(days=1)
+
+# parse USBL file datetimes
+usbl_df["start_time"] = pd.to_datetime(usbl_df["start_time"], errors="coerce")
+usbl_df["end_time"] = pd.to_datetime(usbl_df["end_time"], errors="coerce")
+
+# build one-row-per-core output listing matched USBL filenames
+results = []
+for _, core in df_dredge.iterrows():
+    mask = (usbl_df["start_time"] <= core["end_datetime"]) & (usbl_df["end_time"] >= core["start_datetime"])
+    matched = usbl_df.loc[mask, "file_name"].astype(str).tolist()
+    results.append({
+        "core_name": core.get("core_name"),
+        "start_datetime": core["start_datetime"],
+        "end_datetime": core["end_datetime"],
+        "usbl_files": ", ".join(matched) if matched else ""
+    })
+
+out_df = pd.DataFrame(results)
+st.subheader(f"Cores and associated USBL files for cruise: {selected}")
+st.dataframe(out_df, use_container_width=True)
