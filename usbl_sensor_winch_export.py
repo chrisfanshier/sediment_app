@@ -383,102 +383,65 @@ else:
     combined_winch = None
 
 # ============================================================================
-# 8. COMBINE ALL DATA AND EXPORT TO CSV (using merge_asof strategy)
+# 8. COMBINE SENSOR AND USBL DATA AND EXPORT TO CSV (outer merge, no interpolation)
 # ============================================================================
-st.subheader("Combining all data sources (asof merge)...")
+st.subheader("Combining sensor and USBL data (outer merge, no interpolation)...")
 
-# Decide master timeline (highest frequency available)
-if combined_winch is not None:
-    master_df = combined_winch.copy()
-    st.write(f"Using winch data as master timeline (~20 Hz): {len(master_df)} records")
-    master_source = "winch"
-elif combined_sensors is not None:
-    master_df = combined_sensors.copy()
-    st.write(f"Using sensor data as master timeline (~10 Hz): {len(master_df)} records")
-    master_source = "sensors"
-else:
-    st.error("No high-frequency data (winch or sensors) available!")
-    st.stop()
-
-# Ensure all DataFrames have a datetime column and are sorted
-def prep_for_merge(df):
+def prep_for_merge(df, name):
     df = df.copy()
     if not df.index.name == "datetime":
         df = df.rename_axis("datetime")
     df = df.reset_index()
     df = df.sort_values("datetime")
+    # Debug: show nulls and time range
+    st.write(f"--- {name} ---")
+    st.write(f"Shape: {df.shape}")
+    st.write(f"Null datetimes: {df['datetime'].isna().sum()}")
+    st.write(f"Time range: {df['datetime'].min()} to {df['datetime'].max()}")
+    st.write(f"Columns: {list(df.columns)}")
+    st.dataframe(df.head(10), use_container_width=True)
     return df
 
-master_df = prep_for_merge(master_df)
+dfs = []
 if combined_sensors is not None:
-    sensors_df = prep_for_merge(combined_sensors)
-else:
-    sensors_df = None
-if combined_winch is not None:
-    winch_df = prep_for_merge(combined_winch)
-else:
-    winch_df = None
+    sensors_df = prep_for_merge(combined_sensors, "Sensors")
+    dfs.append(sensors_df)
 if combined_usbl is not None:
-    usbl_df = prep_for_merge(combined_usbl)
-else:
-    usbl_df = None
+    usbl_df = prep_for_merge(combined_usbl, "USBL")
+    dfs.append(usbl_df)
 
-# Merge sensors onto master timeline (if not already master)
-if master_source == "winch" and sensors_df is not None:
-    master_df = pd.merge_asof(
-        master_df.sort_values("datetime"),
-        sensors_df.sort_values("datetime"),
-        on="datetime",
-        direction="nearest",
-        tolerance=pd.Timedelta(milliseconds=200),
-        suffixes=('', '_sensor')
-    )
-    st.write("After merge_asof with sensors:")
-    st.dataframe(master_df.head(10), use_container_width=True)
+if not dfs:
+    st.error("No sensor or USBL data available for export.")
+    st.stop()
 
-# Merge winch onto master timeline if sensors are master
-if master_source == "sensors" and winch_df is not None:
-    master_df = pd.merge_asof(
-        master_df.sort_values("datetime"),
-        winch_df.sort_values("datetime"),
-        on="datetime",
-        direction="nearest",
-        tolerance=pd.Timedelta(milliseconds=50),
-        suffixes=('', '_winch')
-    )
-    st.write("After merge_asof with winch:")
-    st.dataframe(master_df.head(10), use_container_width=True)
+# Outer merge all DataFrames on 'datetime'
+merged_df = dfs[0]
+for df_next in dfs[1:]:
+    merged_df = pd.merge(merged_df, df_next, on="datetime", how="outer", suffixes=('', '_other'))
 
-# Merge USBL data (low frequency, so use a larger tolerance)
-if usbl_df is not None:
-    master_df = pd.merge_asof(
-        master_df.sort_values("datetime"),
-        usbl_df.sort_values("datetime"),
-        on="datetime",
-        direction="nearest",
-        tolerance=pd.Timedelta(seconds=2),
-        suffixes=('', '_usbl')
-    )
-    st.write("After merge_asof with USBL:")
-    st.dataframe(master_df.head(10), use_container_width=True)
+merged_df = merged_df.sort_values("datetime").reset_index(drop=True)
 
-# Set datetime as index again
-master_df = master_df.set_index("datetime")
-master_df = master_df.sort_index()
+# Debug: merged result
+st.write("--- Merged DataFrame ---")
+st.write(f"Shape: {merged_df.shape}")
+st.write(f"Null datetimes: {merged_df['datetime'].isna().sum()}")
+st.write(f"Time range: {merged_df['datetime'].min()} to {merged_df['datetime'].max()}")
+st.write(f"Columns: {list(merged_df.columns)}")
+st.dataframe(merged_df.head(20), use_container_width=True)
 
 # Filter to deployment window
-deployment_df = master_df.loc[start_datetime:end_datetime].copy()
+deployment_df = merged_df[
+    (merged_df["datetime"] >= start_datetime) & (merged_df["datetime"] <= end_datetime)
+].copy()
 
 st.write(f"**Final combined dataset (truncated to deployment):**")
 st.write(f"- Total records: {len(deployment_df)}")
 st.write(f"- Columns: {len(deployment_df.columns)}")
-st.write(f"- Time range: {deployment_df.index[0]} to {deployment_df.index[-1]}")
-st.write(f"- Master timeline source: {master_source}")
-st.dataframe(deployment_df.head(10), use_container_width=True)
-
-# Interpolate numeric columns to fill gaps (optional)
-num_cols = deployment_df.select_dtypes(include='number').columns
-deployment_df[num_cols] = deployment_df[num_cols].interpolate(method='time', limit_direction='both')
+if not deployment_df.empty:
+    st.write(f"- Time range: {deployment_df['datetime'].min()} to {deployment_df['datetime'].max()}")
+    st.dataframe(deployment_df.head(10), use_container_width=True)
+else:
+    st.warning("No data in deployment window! Check your start/end times and data time ranges.")
 
 # Show column summary
 st.write("**Column summary:**")
@@ -500,8 +463,7 @@ st.subheader("Export to CSV")
 output_filename = f"{selected_core}_combined_raw.csv"
 
 if st.button("Download CSV"):
-    export_df = deployment_df.reset_index()
-    export_df.rename(columns={'datetime': 'timestamp'}, inplace=True)
+    export_df = deployment_df.copy()
     csv = export_df.to_csv(index=False)
     st.download_button(
         label="💾 Download Combined Data CSV",
