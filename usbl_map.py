@@ -101,11 +101,13 @@ if selected_core_export and selected_core_export != "-- choose --":
     usbl_file_list = [f.strip() for f in usbl_file_list.split(",") if f.strip()]
     usbl_dfs = []
     for fname in usbl_file_list:
-        # Find file_path from usbl_df (you may need to adjust if file_path is not present)
         row = usbl_df[usbl_df["file_name"] == fname]
         if not row.empty:
+            # If file_path is not present in usbl_df, you may need to add it to your SQL query above!
             file_path = row.iloc[0].get("file_path", "")
-            full_path = get_full_path(os.path.join(file_path, fname)) if file_path else get_full_path(fname)
+            # Always use get_full_path with file_path and file_name
+            relative_path = os.path.join(file_path, fname)
+            full_path = get_full_path(relative_path)
             try:
                 df = load_usbl_file(full_path)
                 if df is not None:
