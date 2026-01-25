@@ -73,12 +73,13 @@ start_datetime = pd.to_datetime(core_info[date_col]) + pd.to_timedelta(str(core_
 end_datetime = pd.to_datetime(core_info[date_col]) + pd.to_timedelta(str(core_info[recover_col]))
 
 # Handle midnight rollover
+
 if end_datetime < start_datetime:
     end_datetime += pd.Timedelta(days=1)
 
-# Make timezone-aware (UTC) to match USBL data
-start_datetime = start_datetime.tz_localize('UTC')
-end_datetime = end_datetime.tz_localize('UTC')
+# Make timezone-naive UTC (strip tzinfo if present)
+start_datetime = start_datetime.tz_localize('UTC').tz_localize(None)
+end_datetime = end_datetime.tz_localize('UTC').tz_localize(None)
 
 st.subheader(f"Processing: {selected_core}")
 st.write(f"**Deployment window:**")
@@ -117,24 +118,19 @@ if not sensor_files.empty:
         
         try:
             df = process_star_oddi_data(file_path)
-            
             if df is not None:
-                # Set Timestamp as index and make timezone-aware
+                # Set Timestamp as index and make timezone-naive
                 df.set_index('Timestamp', inplace=True)
-                if df.index.tz is None:
-                    df.index = df.index.tz_localize('UTC')
-                
-                # Store with descriptive key
+                if hasattr(df.index, 'tz') and df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
                 key = f"{sensor_type}_{row['file_id']}"
                 sensor_dfs[key] = df
-                
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} rows, {df.index[0]} to {df.index[-1]}")
                 st.write(f"**Preview of {row['file_name']} ({sensor_type}):**")
                 st.dataframe(df.head(10), use_container_width=True)
                 st.write("Columns:", list(df.columns))
             else:
                 st.error(f"✗ Failed to parse {row['file_name']}")
-                
         except Exception as e:
             st.error(f"✗ Error loading {row['file_name']}: {e}")
     
@@ -188,7 +184,9 @@ if not usbl_files.empty:
     # Filter USBL files by time overlap
     usbl_files["start_time"] = pd.to_datetime(usbl_files["start_time"], errors="coerce", utc=True)
     usbl_files["end_time"] = pd.to_datetime(usbl_files["end_time"], errors="coerce", utc=True)
-    
+    # Make naive
+    usbl_files["start_time"] = usbl_files["start_time"].dt.tz_localize(None)
+    usbl_files["end_time"] = usbl_files["end_time"].dt.tz_localize(None)
     mask = (usbl_files["start_time"] <= end_datetime) & (usbl_files["end_time"] >= start_datetime)
     matched_usbl = usbl_files[mask]
     
@@ -203,14 +201,15 @@ if not usbl_files.empty:
         file_path = get_full_path(relative_path)
         
         try:
-            df = load_usbl_file(file_path)  # Now using the function from utils.py
-            
+            df = load_usbl_file(file_path)
             if df is not None:
+                # Make index naive if needed
+                if hasattr(df.index, 'tz') and df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
                 usbl_dfs.append(df)
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} fixes, {df.index[0]} to {df.index[-1]}")
             else:
                 st.error(f"✗ Failed to parse {row['file_name']}")
-                
         except Exception as e:
             st.error(f"✗ Error loading {row['file_name']}: {e}")
     
@@ -259,7 +258,9 @@ if not winch_files.empty:
     # Parse start/end times (they're stored as text in the database)
     winch_files["start_time"] = pd.to_datetime(winch_files["start_time"], errors="coerce", utc=True)
     winch_files["end_time"] = pd.to_datetime(winch_files["end_time"], errors="coerce", utc=True)
-    
+    # Make naive
+    winch_files["start_time"] = winch_files["start_time"].dt.tz_localize(None)
+    winch_files["end_time"] = winch_files["end_time"].dt.tz_localize(None)
     # Filter by time overlap with core deployment
     mask = (winch_files["start_time"] <= end_datetime) & (winch_files["end_time"] >= start_datetime)
     matched_winch = winch_files[mask]
@@ -277,13 +278,10 @@ if not winch_files.empty:
         
         try:
             df = parse_winch_dat(file_path, settings)
-            
             if df is not None and 'datetime' in df.columns:
-                # Set datetime as index and make timezone-aware
                 df.set_index('datetime', inplace=True)
-                if df.index.tz is None:
-                    df.index = df.index.tz_localize('UTC')
-                
+                if hasattr(df.index, 'tz') and df.index.tz is not None:
+                    df.index = df.index.tz_localize(None)
                 winch_dfs.append(df)
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} records, {df.index[0]} to {df.index[-1]}")
                 st.write(f"**Preview of {row['file_name']}:**")
@@ -291,7 +289,6 @@ if not winch_files.empty:
                 st.write("Columns:", list(df.columns))
             else:
                 st.error(f"✗ Failed to parse {row['file_name']}")
-                
         except Exception as e:
             st.error(f"✗ Error loading {row['file_name']}: {e}")
     
@@ -331,6 +328,9 @@ def prep_for_merge(df, name):
     if not df.index.name == "datetime":
         df = df.rename_axis("datetime")
     df = df.reset_index()
+    # Make datetime column naive if needed
+    if pd.api.types.is_datetime64_any_dtype(df['datetime']) and getattr(df['datetime'].dt, 'tz', None) is not None:
+        df['datetime'] = df['datetime'].dt.tz_localize(None)
     df = df.sort_values("datetime")
     # Debug: show nulls and time range
     st.write(f"--- {name} ---")
@@ -406,6 +406,9 @@ output_filename = f"{selected_core}_combined_raw.csv"
 
 if st.button("Download CSV"):
     export_df = deployment_df.copy()
+    # Make sure datetime column is naive
+    if pd.api.types.is_datetime64_any_dtype(export_df['datetime']) and getattr(export_df['datetime'].dt, 'tz', None) is not None:
+        export_df['datetime'] = export_df['datetime'].dt.tz_localize(None)
     csv = export_df.to_csv(index=False)
     st.download_button(
         label="💾 Download Combined Data CSV",
