@@ -89,7 +89,7 @@ st.subheader("Loading sensor data...")
 with get_connection() as conn:
     sensor_files = pd.read_sql(
         text("""
-            SELECT file_id, file_name, file_path, sensor_type, upload_date
+            SELECT file_id, file_name, file_path, sensor_type
             FROM sensor_files 
             WHERE core_id = :core_id
             ORDER BY sensor_type, file_name
@@ -116,7 +116,7 @@ if not sensor_files.empty:
                 df.set_index('Timestamp', inplace=True)
                 
                 # Store with descriptive key
-                key = f"{sensor_type}_{row['file_id']}"  # Changed from sensor_file_id
+                key = f"{sensor_type}_{row['file_id']}"
                 sensor_dfs[key] = df
                 
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} rows, {df.index[0]} to {df.index[-1]}")
@@ -328,7 +328,7 @@ with get_connection() as conn:
     )
 
 if not winch_files.empty:
-    # Parse start/end times
+    # Parse start/end times (they're stored as text in the database)
     winch_files["start_time"] = pd.to_datetime(winch_files["start_time"], errors="coerce")
     winch_files["end_time"] = pd.to_datetime(winch_files["end_time"], errors="coerce")
     
