@@ -101,10 +101,9 @@ if selected_core_export and selected_core_export != "-- choose --":
     usbl_file_list = [f.strip() for f in usbl_file_list.split(",") if f.strip()]
     usbl_dfs = []
     for fname in usbl_file_list:
-        # Find file_path from usbl_df
+        # Find file_path from usbl_df (you may need to adjust if file_path is not present)
         row = usbl_df[usbl_df["file_name"] == fname]
         if not row.empty:
-            # You may need to adjust this if file_path is not in usbl_df
             file_path = row.iloc[0].get("file_path", "")
             full_path = get_full_path(os.path.join(file_path, fname)) if file_path else get_full_path(fname)
             try:

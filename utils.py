@@ -9,6 +9,7 @@ from db_util import get_connection
 from db_util import get_dynamic_fields_metadata
 from config import get_full_path  # Import the utility function for constructing full paths
 from datetime import time
+from pathlib import Path
 
 def parse_mscl_out_file(relative_path):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
@@ -451,4 +452,63 @@ def parse_usbl_first_last(fileobj, filename):
     except Exception:
         return None, None
 
+def load_usbl_file(file_path):
+    """Load a USBL file and return DataFrame with datetime index"""
+    try:
+        # Read the CSV
+        df = pd.read_csv(
+            file_path,
+            header=None,
+            names=[
+                "ID","utc_time","beacon_name","fix_status","latitude_deg","longitude_deg",
+                "depth_m","northing_error_m","easting_error_m","vertical_error_m",
+                "quality","reserved_1","reserved_2","reserved_3","checksum",
+            ],
+            dtype={"utc_time": str},
+        )
+        st.write(f"Loaded USBL file: {file_path}")
+        st.write("Columns:", list(df.columns))
+        st.dataframe(df.head(10), use_container_width=True)
+        
+        # Extract date from filename
+        file_name = Path(file_path).name
+        date_str = file_name.split("_")[1]  # "PSONLLD_20251018_000000.txt" -> "20251018"
+        
+        # Build UTC datetime
+        df["datetime"] = pd.to_datetime(
+            date_str + " " + df["utc_time"].astype(str),
+            format="%Y%m%d %H%M%S.%f",
+            utc=True
+        )
+        
+        # Handle midnight rollover
+        time_values = pd.to_datetime(df["utc_time"], format="%H%M%S.%f", errors="coerce")
+        if len(time_values) > 1:
+            first_time = time_values.iloc[0]
+            last_time = time_values.iloc[-1]
+            if not pd.isna(first_time) and not pd.isna(last_time):
+                if first_time.time() > last_time.time():
+                    # Find the rollover point
+                    rollover_idx = (time_values.diff() < pd.Timedelta(0)).idxmax()
+                    if rollover_idx > 0:
+                        df.loc[:rollover_idx-1, "datetime"] -= pd.Timedelta(days=1)
+        
+        # Set datetime as index
+        df.set_index("datetime", inplace=True)
+        
+        # Keep only the columns we need
+        usbl_df = df[["latitude_deg", "longitude_deg", "depth_m", "beacon_name", 
+                      "fix_status", "quality", "northing_error_m", "easting_error_m", 
+                      "vertical_error_m"]].copy()
+        
+        st.write(f"Preview of parsed USBL data from {file_name}:")
+        st.dataframe(usbl_df.head(10), use_container_width=True)
+        st.write("Index dtype:", usbl_df.index.dtype)
+        st.write("Non-null latitude_deg:", usbl_df['latitude_deg'].notna().sum())
+        
+        return usbl_df
+        
+    except Exception as e:
+        st.error(f"Error loading USBL file: {e}")
+        return None
 
