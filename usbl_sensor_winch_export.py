@@ -5,10 +5,10 @@ from sqlalchemy import text
 from pathlib import Path
 import json
 import os
-from utils import process_star_oddi_data, parse_winch_dat
+from utils import process_star_oddi_data
 from config import get_full_path
 
-st.title("Export Dredge Sensor + USBL + Winch Data")
+st.title("Export Dredge Sensor + USBL Data")
 
 # ============================================================================
 # 1. GET CRUISE SELECTION
@@ -89,8 +89,6 @@ st.write(f"- Duration: {end_datetime - start_datetime}")
 # ============================================================================
 # 5. LOAD SENSOR FILES (Star Oddi)
 # ============================================================================
-st.subheader("Loading sensor data...")
-
 with get_connection() as conn:
     sensor_files = pd.read_sql(
         text("""
@@ -103,80 +101,36 @@ with get_connection() as conn:
         params={"core_id": core_id}
     )
 
+sensor_dfs = {}
 if not sensor_files.empty:
-    st.write(f"**Sensor files ({len(sensor_files)}):**")
-    st.dataframe(sensor_files[['file_name', 'sensor_type']], use_container_width=True)
-    
-    # Load all sensor files
-    sensor_dfs = {}
     for _, row in sensor_files.iterrows():
-        # Combine file_path (subdirectory) and file_name
         relative_path = os.path.join(row['file_path'], row['file_name'])
         file_path = get_full_path(relative_path)
         sensor_type = row['sensor_type']
-        
         try:
             df = process_star_oddi_data(file_path)
-            
             if df is not None:
-                # Set Timestamp as index and make timezone-aware
                 df.set_index('Timestamp', inplace=True)
                 if df.index.tz is None:
                     df.index = df.index.tz_localize('UTC')
-                
-                # Store with descriptive key
                 key = f"{sensor_type}_{row['file_id']}"
                 sensor_dfs[key] = df
-                
-                st.success(f"✓ Loaded {row['file_name']}: {len(df)} rows, {df.index[0]} to {df.index[-1]}")
-                st.write(f"**Preview of {row['file_name']} ({sensor_type}):**")
-                st.dataframe(df.head(10), use_container_width=True)
-                st.write("Columns:", list(df.columns))
-            else:
-                st.error(f"✗ Failed to parse {row['file_name']}")
-                
-        except Exception as e:
-            st.error(f"✗ Error loading {row['file_name']}: {e}")
-    
-    # Merge all sensor DataFrames on timestamp
-    if sensor_dfs:
-        # Start with first DataFrame
-        combined_sensors = list(sensor_dfs.values())[0].copy()
-        
-        # Join the rest (outer join to keep all timestamps)
-        for key, df in list(sensor_dfs.items())[1:]:
-            combined_sensors = combined_sensors.join(df, how='outer', rsuffix=f'_{key}')
-        
-        # Sort by timestamp
-        combined_sensors.sort_index(inplace=True)
-        
-        st.write(f"**Combined sensor data:**")
-        st.write(f"- Shape: {combined_sensors.shape}")
-        st.write(f"- Time range: {combined_sensors.index[0]} to {combined_sensors.index[-1]}")
-        st.write(f"- Columns: {list(combined_sensors.columns)}")
-        st.dataframe(combined_sensors.head(10), use_container_width=True)
-        
-        # Check sampling rate
-        time_diffs = combined_sensors.index.to_series().diff()
-        median_interval = time_diffs.median()
-        st.write(f"- Median sampling interval: {median_interval}")
-        if median_interval and median_interval.total_seconds() > 0:
-            st.write(f"- Approximate frequency: {1 / median_interval.total_seconds():.2f} Hz")
-    else:
-        combined_sensors = None
+        except Exception:
+            pass
+
+if sensor_dfs:
+    combined_sensors = list(sensor_dfs.values())[0].copy()
+    for key, df in list(sensor_dfs.items())[1:]:
+        combined_sensors = combined_sensors.join(df, how='outer', rsuffix=f'_{key}')
+    combined_sensors.sort_index(inplace=True)
 else:
-    st.info("No sensor files found for this core")
     combined_sensors = None
 
 # ============================================================================
 # 6. LOAD USBL FILES
 # ============================================================================
-st.subheader("Loading USBL data...")
-
 def load_usbl_file(file_path):
-    """Load a USBL file and return DataFrame with datetime index"""
     try:
-        # Read the CSV
         df = pd.read_csv(
             file_path,
             header=None,
@@ -187,53 +141,30 @@ def load_usbl_file(file_path):
             ],
             dtype={"utc_time": str},
         )
-        st.write(f"Loaded USBL file: {file_path}")
-        st.write("Columns:", list(df.columns))
-        st.dataframe(df.head(10), use_container_width=True)
-        
-        # Extract date from filename
         file_name = Path(file_path).name
-        date_str = file_name.split("_")[1]  # "PSONLLD_20251018_000000.txt" -> "20251018"
-        
-        # Build UTC datetime
+        date_str = file_name.split("_")[1]
         df["datetime"] = pd.to_datetime(
             date_str + " " + df["utc_time"].astype(str),
             format="%Y%m%d %H%M%S.%f",
             utc=True
         )
-        
-        # Handle midnight rollover
         time_values = pd.to_datetime(df["utc_time"], format="%H%M%S.%f", errors="coerce")
         if len(time_values) > 1:
             first_time = time_values.iloc[0]
             last_time = time_values.iloc[-1]
             if not pd.isna(first_time) and not pd.isna(last_time):
                 if first_time.time() > last_time.time():
-                    # Find the rollover point
                     rollover_idx = (time_values.diff() < pd.Timedelta(0)).idxmax()
                     if rollover_idx > 0:
                         df.loc[:rollover_idx-1, "datetime"] -= pd.Timedelta(days=1)
-        
-        # Set datetime as index
         df.set_index("datetime", inplace=True)
-        
-        # Keep only the columns we need
         usbl_df = df[["latitude_deg", "longitude_deg", "depth_m", "beacon_name", 
                       "fix_status", "quality", "northing_error_m", "easting_error_m", 
                       "vertical_error_m"]].copy()
-        
-        st.write(f"Preview of parsed USBL data from {file_name}:")
-        st.dataframe(usbl_df.head(10), use_container_width=True)
-        st.write("Index dtype:", usbl_df.index.dtype)
-        st.write("Non-null latitude_deg:", usbl_df['latitude_deg'].notna().sum())
-        
         return usbl_df
-        
-    except Exception as e:
-        st.error(f"Error loading USBL file: {e}")
+    except Exception:
         return None
 
-# Get USBL files for the cruise
 with get_connection() as conn:
     usbl_files = pd.read_sql(
         text("""
@@ -245,225 +176,63 @@ with get_connection() as conn:
         params={"cruise_id": cruise_id}
     )
 
+usbl_dfs = []
 if not usbl_files.empty:
-    # Filter USBL files by time overlap
     usbl_files["start_time"] = pd.to_datetime(usbl_files["start_time"], errors="coerce", utc=True)
     usbl_files["end_time"] = pd.to_datetime(usbl_files["end_time"], errors="coerce", utc=True)
-    
     mask = (usbl_files["start_time"] <= end_datetime) & (usbl_files["end_time"] >= start_datetime)
     matched_usbl = usbl_files[mask]
-    
-    st.write(f"**Matching USBL files ({len(matched_usbl)}):**")
-    st.dataframe(matched_usbl[['file_name', 'start_time', 'end_time']], use_container_width=True)
-    
-    # Load USBL files
-    usbl_dfs = []
     for _, row in matched_usbl.iterrows():
-        # Combine file_path (subdirectory) and file_name
         relative_path = os.path.join(row['file_path'], row['file_name'])
         file_path = get_full_path(relative_path)
-        
         try:
             df = load_usbl_file(file_path)
-            
             if df is not None:
                 usbl_dfs.append(df)
-                st.success(f"✓ Loaded {row['file_name']}: {len(df)} fixes, {df.index[0]} to {df.index[-1]}")
-            else:
-                st.error(f"✗ Failed to parse {row['file_name']}")
-                
-        except Exception as e:
-            st.error(f"✗ Error loading {row['file_name']}: {e}")
-    
-    # Concatenate all USBL files
-    if usbl_dfs:
-        combined_usbl = pd.concat(usbl_dfs)
-        combined_usbl.sort_index(inplace=True)
-        
-        # Remove duplicates if any (same timestamp)
-        combined_usbl = combined_usbl[~combined_usbl.index.duplicated(keep='first')]
-        
-        st.write(f"**Combined USBL data:**")
-        st.write(f"- Total fixes: {len(combined_usbl)}")
-        st.write(f"- Time range: {combined_usbl.index[0]} to {combined_usbl.index[-1]}")
-        st.write(f"- Unique beacons: {combined_usbl['beacon_name'].unique()}")
-        st.dataframe(combined_usbl.head(10), use_container_width=True)
-        
-        # Calculate approximate ping interval
-        time_diffs = combined_usbl.index.to_series().diff()
-        median_interval = time_diffs.median()
-        st.write(f"- Median ping interval: {median_interval}")
-    else:
-        combined_usbl = None
+        except Exception:
+            pass
+
+if usbl_dfs:
+    combined_usbl = pd.concat(usbl_dfs)
+    combined_usbl.sort_index(inplace=True)
+    combined_usbl = combined_usbl[~combined_usbl.index.duplicated(keep='first')]
 else:
-    st.info("No USBL files found for this cruise")
     combined_usbl = None
 
 # ============================================================================
-# 7. LOAD WINCH FILES
+# 7. COMBINE SENSOR AND USBL DATA AND EXPORT TO CSV (outer merge, no interpolation)
 # ============================================================================
-st.subheader("Loading winch data...")
-
-# Get winch files that overlap with this core's time window
-with get_connection() as conn:
-    winch_files = pd.read_sql(
-        text("""
-            SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
-            FROM winch_data 
-            WHERE cruise_id = :cruise_id
-        """),
-        conn,
-        params={"cruise_id": cruise_id}
-    )
-
-if not winch_files.empty:
-    # Parse start/end times (they're stored as text in the database)
-    winch_files["start_time"] = pd.to_datetime(winch_files["start_time"], errors="coerce", utc=True)
-    winch_files["end_time"] = pd.to_datetime(winch_files["end_time"], errors="coerce", utc=True)
-    
-    # Filter by time overlap with core deployment
-    mask = (winch_files["start_time"] <= end_datetime) & (winch_files["end_time"] >= start_datetime)
-    matched_winch = winch_files[mask]
-    
-    st.write(f"**Matching winch files ({len(matched_winch)}):**")
-    st.dataframe(matched_winch[['file_name', 'start_time', 'end_time']], use_container_width=True)
-    
-    # Load winch files
-    winch_dfs = []
-    for _, row in matched_winch.iterrows():
-        # Combine file_path (subdirectory) and file_name
-        relative_path = os.path.join(row['file_path'], row['file_name'])
-        file_path = get_full_path(relative_path)
-        settings = json.loads(row['settings'])
-        
-        try:
-            df = parse_winch_dat(file_path, settings)
-            
-            if df is not None and 'datetime' in df.columns:
-                # Set datetime as index and make timezone-aware
-                df.set_index('datetime', inplace=True)
-                if df.index.tz is None:
-                    df.index = df.index.tz_localize('UTC')
-                
-                winch_dfs.append(df)
-                st.success(f"✓ Loaded {row['file_name']}: {len(df)} records, {df.index[0]} to {df.index[-1]}")
-                st.write(f"**Preview of {row['file_name']}:**")
-                st.dataframe(df.head(10), use_container_width=True)
-                st.write("Columns:", list(df.columns))
-            else:
-                st.error(f"✗ Failed to parse {row['file_name']}")
-                
-        except Exception as e:
-            st.error(f"✗ Error loading {row['file_name']}: {e}")
-    
-    # Concatenate all winch files
-    if winch_dfs:
-        combined_winch = pd.concat(winch_dfs)
-        combined_winch.sort_index(inplace=True)
-        
-        # Remove duplicates if any
-        combined_winch = combined_winch[~combined_winch.index.duplicated(keep='first')]
-        
-        st.write(f"**Combined winch data:**")
-        st.write(f"- Total records: {len(combined_winch)}")
-        st.write(f"- Time range: {combined_winch.index[0]} to {combined_winch.index[-1]}")
-        st.write(f"- Columns: {list(combined_winch.columns)}")
-        st.dataframe(combined_winch.head(10), use_container_width=True)
-        
-        # Calculate sampling rate
-        time_diffs = combined_winch.index.to_series().diff()
-        median_interval = time_diffs.median()
-        st.write(f"- Median sampling interval: {median_interval}")
-        if median_interval and median_interval.total_seconds() > 0:
-            st.write(f"- Approximate frequency: {1 / median_interval.total_seconds():.2f} Hz")
-    else:
-        combined_winch = None
-else:
-    st.info("No winch files found for this cruise")
-    combined_winch = None
-
-# ============================================================================
-# 8. COMBINE SENSOR AND USBL DATA AND EXPORT TO CSV (outer merge, no interpolation)
-# ============================================================================
-st.subheader("Combining sensor and USBL data (outer merge, no interpolation)...")
-
-def prep_for_merge(df, name):
+def prep_for_merge(df):
     df = df.copy()
     if not df.index.name == "datetime":
         df = df.rename_axis("datetime")
     df = df.reset_index()
     df = df.sort_values("datetime")
-    # Debug: show nulls and time range
-    st.write(f"--- {name} ---")
-    st.write(f"Shape: {df.shape}")
-    st.write(f"Null datetimes: {df['datetime'].isna().sum()}")
-    st.write(f"Time range: {df['datetime'].min()} to {df['datetime'].max()}")
-    st.write(f"Columns: {list(df.columns)}")
-    st.dataframe(df.head(10), use_container_width=True)
     return df
 
 dfs = []
 if combined_sensors is not None:
-    sensors_df = prep_for_merge(combined_sensors, "Sensors")
+    sensors_df = prep_for_merge(combined_sensors)
     dfs.append(sensors_df)
 if combined_usbl is not None:
-    usbl_df = prep_for_merge(combined_usbl, "USBL")
+    usbl_df = prep_for_merge(combined_usbl)
     dfs.append(usbl_df)
-if combined_winch is not None:
-    winch_df = prep_for_merge(combined_winch, "Winch")
-    dfs.append(winch_df)
 
 if not dfs:
-    st.error("No sensor, USBL, or winch data available for export.")
+    st.error("No sensor or USBL data available for export.")
     st.stop()
 
-# Outer merge all DataFrames on 'datetime'
 merged_df = dfs[0]
 for df_next in dfs[1:]:
     merged_df = pd.merge(merged_df, df_next, on="datetime", how="outer", suffixes=('', '_other'))
 
 merged_df = merged_df.sort_values("datetime").reset_index(drop=True)
 
-# Debug: merged result
-st.write("--- Merged DataFrame ---")
-st.write(f"Shape: {merged_df.shape}")
-st.write(f"Null datetimes: {merged_df['datetime'].isna().sum()}")
-st.write(f"Time range: {merged_df['datetime'].min()} to {merged_df['datetime'].max()}")
-st.write(f"Columns: {list(merged_df.columns)}")
-st.dataframe(merged_df.head(20), use_container_width=True)
-
-# Filter to deployment window
 deployment_df = merged_df[
     (merged_df["datetime"] >= start_datetime) & (merged_df["datetime"] <= end_datetime)
 ].copy()
 
-st.write(f"**Final combined dataset (truncated to deployment):**")
-st.write(f"- Total records: {len(deployment_df)}")
-st.write(f"- Columns: {len(deployment_df.columns)}")
-if not deployment_df.empty:
-    st.write(f"- Time range: {deployment_df['datetime'].min()} to {deployment_df['datetime'].max()}")
-    st.dataframe(deployment_df.head(10), use_container_width=True)
-else:
-    st.warning("No data in deployment window! Check your start/end times and data time ranges.")
-
-# Show column summary
-st.write("**Column summary:**")
-col_summary = pd.DataFrame({
-    'Column': deployment_df.columns,
-    'Non-null count': [deployment_df[col].notna().sum() for col in deployment_df.columns],
-    'Null count': [deployment_df[col].isna().sum() for col in deployment_df.columns],
-    'Data type': [deployment_df[col].dtype for col in deployment_df.columns]
-})
-st.dataframe(col_summary, use_container_width=True)
-
-# Preview the data
-st.write("**Preview (first 20 rows):**")
-st.dataframe(deployment_df.head(20), use_container_width=True)
-
-# Export to CSV
-st.subheader("Export to CSV")
-
-output_filename = f"{selected_core}_combined_raw.csv"
+output_filename = f"{selected_core}_sensors_usbl_raw.csv"
 
 if st.button("Download CSV"):
     export_df = deployment_df.copy()
