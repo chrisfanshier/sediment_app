@@ -4,6 +4,7 @@ from db_util import get_connection
 from sqlalchemy import text
 from pathlib import Path
 import json
+import os
 from utils import process_star_oddi_data
 from config import get_full_path
 
@@ -105,7 +106,9 @@ if not sensor_files.empty:
     # Load all sensor files
     sensor_dfs = {}
     for _, row in sensor_files.iterrows():
-        file_path = get_full_path(row['file_path'])
+        # Combine file_path (subdirectory) and file_name
+        relative_path = os.path.join(row['file_path'], row['file_name'])
+        file_path = get_full_path(relative_path)
         sensor_type = row['sensor_type']
         
         try:
@@ -237,7 +240,9 @@ if not usbl_files.empty:
     # Load USBL files
     usbl_dfs = []
     for _, row in matched_usbl.iterrows():
-        file_path = get_full_path(row['file_path'])
+        # Combine file_path (subdirectory) and file_name
+        relative_path = os.path.join(row['file_path'], row['file_name'])
+        file_path = get_full_path(relative_path)
         
         try:
             df = load_usbl_file(file_path)
@@ -342,7 +347,9 @@ if not winch_files.empty:
     # Load winch files
     winch_dfs = []
     for _, row in matched_winch.iterrows():
-        file_path = get_full_path(row['file_path'])
+        # Combine file_path (subdirectory) and file_name
+        relative_path = os.path.join(row['file_path'], row['file_name'])
+        file_path = get_full_path(relative_path)
         settings = row['settings']
         
         try:
