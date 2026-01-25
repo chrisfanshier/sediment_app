@@ -129,6 +129,9 @@ if not sensor_files.empty:
                 sensor_dfs[key] = df
                 
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} rows, {df.index[0]} to {df.index[-1]}")
+                st.write(f"**Preview of {row['file_name']} ({sensor_type}):**")
+                st.dataframe(df.head(10), use_container_width=True)
+                st.write("Columns:", list(df.columns))
             else:
                 st.error(f"✗ Failed to parse {row['file_name']}")
                 
@@ -150,6 +153,8 @@ if not sensor_files.empty:
         st.write(f"**Combined sensor data:**")
         st.write(f"- Shape: {combined_sensors.shape}")
         st.write(f"- Time range: {combined_sensors.index[0]} to {combined_sensors.index[-1]}")
+        st.write(f"- Columns: {list(combined_sensors.columns)}")
+        st.dataframe(combined_sensors.head(10), use_container_width=True)
         
         # Check sampling rate
         time_diffs = combined_sensors.index.to_series().diff()
@@ -182,6 +187,9 @@ def load_usbl_file(file_path):
             ],
             dtype={"utc_time": str},
         )
+        st.write(f"Loaded USBL file: {file_path}")
+        st.write("Columns:", list(df.columns))
+        st.dataframe(df.head(10), use_container_width=True)
         
         # Extract date from filename
         file_name = Path(file_path).name
@@ -213,6 +221,11 @@ def load_usbl_file(file_path):
         usbl_df = df[["latitude_deg", "longitude_deg", "depth_m", "beacon_name", 
                       "fix_status", "quality", "northing_error_m", "easting_error_m", 
                       "vertical_error_m"]].copy()
+        
+        st.write(f"Preview of parsed USBL data from {file_name}:")
+        st.dataframe(usbl_df.head(10), use_container_width=True)
+        st.write("Index dtype:", usbl_df.index.dtype)
+        st.write("Non-null latitude_deg:", usbl_df['latitude_deg'].notna().sum())
         
         return usbl_df
         
@@ -274,6 +287,7 @@ if not usbl_files.empty:
         st.write(f"- Total fixes: {len(combined_usbl)}")
         st.write(f"- Time range: {combined_usbl.index[0]} to {combined_usbl.index[-1]}")
         st.write(f"- Unique beacons: {combined_usbl['beacon_name'].unique()}")
+        st.dataframe(combined_usbl.head(10), use_container_width=True)
         
         # Calculate approximate ping interval
         time_diffs = combined_usbl.index.to_series().diff()
@@ -333,6 +347,9 @@ if not winch_files.empty:
                 
                 winch_dfs.append(df)
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} records, {df.index[0]} to {df.index[-1]}")
+                st.write(f"**Preview of {row['file_name']}:**")
+                st.dataframe(df.head(10), use_container_width=True)
+                st.write("Columns:", list(df.columns))
             else:
                 st.error(f"✗ Failed to parse {row['file_name']}")
                 
@@ -351,6 +368,7 @@ if not winch_files.empty:
         st.write(f"- Total records: {len(combined_winch)}")
         st.write(f"- Time range: {combined_winch.index[0]} to {combined_winch.index[-1]}")
         st.write(f"- Columns: {list(combined_winch.columns)}")
+        st.dataframe(combined_winch.head(10), use_container_width=True)
         
         # Calculate sampling rate
         time_diffs = combined_winch.index.to_series().diff()
@@ -375,10 +393,14 @@ st.subheader("Combining all data sources...")
 if combined_winch is not None:
     master_df = combined_winch.copy()
     st.write(f"Using winch data as master timeline (~20 Hz): {len(master_df)} records")
+    st.write("Preview of master_df (winch):")
+    st.dataframe(master_df.head(10), use_container_width=True)
     master_source = "winch"
 elif combined_sensors is not None:
     master_df = combined_sensors.copy()
     st.write(f"Using sensor data as master timeline (~10 Hz): {len(master_df)} records")
+    st.write("Preview of master_df (sensors):")
+    st.dataframe(master_df.head(10), use_container_width=True)
     master_source = "sensors"
 else:
     st.error("No high-frequency data (winch or sensors) available!")
@@ -388,17 +410,23 @@ else:
 if master_source == "winch" and combined_sensors is not None:
     master_df = master_df.join(combined_sensors, how='left', rsuffix='_sensor')
     st.write(f"Added sensor data: {len(combined_sensors)} records")
+    st.write("Preview after adding sensors:")
+    st.dataframe(master_df.head(10), use_container_width=True)
 
 # Add winch data if sensors was master
 if master_source == "sensors" and combined_winch is not None:
     master_df = master_df.join(combined_winch, how='left', rsuffix='_winch')
     st.write(f"Added winch data: {len(combined_winch)} records")
+    st.write("Preview after adding winch:")
+    st.dataframe(master_df.head(10), use_container_width=True)
 
 # Add USBL data (will have NaNs for non-ping times)
 if combined_usbl is not None:
     master_df = master_df.join(combined_usbl, how='left', rsuffix='_usbl')
     actual_fixes = master_df['latitude_deg'].notna().sum()
     st.write(f"Added USBL data: {actual_fixes} actual fixes out of {len(master_df)} total records")
+    st.write("Preview after adding USBL:")
+    st.dataframe(master_df.head(10), use_container_width=True)
 else:
     st.warning("No USBL data to add")
 
@@ -415,6 +443,8 @@ st.write(f"- Total records: {len(deployment_df)}")
 st.write(f"- Columns: {len(deployment_df.columns)}")
 st.write(f"- Time range: {deployment_df.index[0]} to {deployment_df.index[-1]}")
 st.write(f"- Master timeline source: {master_source}")
+st.write("Preview of deployment_df:")
+st.dataframe(deployment_df.head(10), use_container_width=True)
 
 # Show column summary
 st.write("**Column summary:**")
