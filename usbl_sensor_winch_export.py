@@ -409,9 +409,12 @@ if combined_sensors is not None:
 if combined_usbl is not None:
     usbl_df = prep_for_merge(combined_usbl, "USBL")
     dfs.append(usbl_df)
+if combined_winch is not None:
+    winch_df = prep_for_merge(combined_winch, "Winch")
+    dfs.append(winch_df)
 
 if not dfs:
-    st.error("No sensor or USBL data available for export.")
+    st.error("No sensor, USBL, or winch data available for export.")
     st.stop()
 
 # Outer merge all DataFrames on 'datetime'
