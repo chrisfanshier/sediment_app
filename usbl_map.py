@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 from db_util import get_connection
 from sqlalchemy import text
+import os
+from config import get_full_path
+from utils import load_usbl_file  # Assumes you have a function to load a USBL file as DataFrame
 
 st.title("Cores and associated USBL files (Cruise → Core)")
 
@@ -89,3 +92,37 @@ for _, core in df_dredge.iterrows():
 out_df = pd.DataFrame(results)
 st.subheader(f"Cores and associated USBL files for cruise: {selected}")
 st.dataframe(out_df, use_container_width=True)
+
+# --- Export all USBL data for a selected core ---
+core_names = out_df["core_name"].tolist()
+selected_core_export = st.selectbox("Select core to export all USBL data", ["-- choose --"] + core_names)
+if selected_core_export and selected_core_export != "-- choose --":
+    usbl_file_list = out_df.loc[out_df["core_name"] == selected_core_export, "usbl_files"].values[0]
+    usbl_file_list = [f.strip() for f in usbl_file_list.split(",") if f.strip()]
+    usbl_dfs = []
+    for fname in usbl_file_list:
+        # Find file_path from usbl_df
+        row = usbl_df[usbl_df["file_name"] == fname]
+        if not row.empty:
+            # You may need to adjust this if file_path is not in usbl_df
+            file_path = row.iloc[0].get("file_path", "")
+            full_path = get_full_path(os.path.join(file_path, fname)) if file_path else get_full_path(fname)
+            try:
+                df = load_usbl_file(full_path)
+                if df is not None:
+                    usbl_dfs.append(df)
+            except Exception:
+                pass
+    if usbl_dfs:
+        all_usbl = pd.concat(usbl_dfs)
+        all_usbl = all_usbl[~all_usbl.index.duplicated(keep='first')]
+        all_usbl = all_usbl.sort_index()
+        csv = all_usbl.reset_index().to_csv(index=False)
+        st.download_button(
+            label=f"💾 Download all USBL data for {selected_core_export}",
+            data=csv,
+            file_name=f"{selected_core_export}_usbl.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("No USBL data found for this core.")
