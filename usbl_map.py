@@ -34,7 +34,7 @@ with get_connection() as conn:
         params={"cruise_id": cruise_id}
     )
     usbl_df = pd.read_sql(
-        text("SELECT usbl_file_id, file_name, start_time, end_time FROM usbl_files WHERE cruise_id = :cruise_id"),
+        text("SELECT usbl_file_id, file_name, file_path, start_time, end_time FROM usbl_files WHERE cruise_id = :cruise_id"),
         conn,
         params={"cruise_id": cruise_id}
     )
@@ -103,17 +103,16 @@ if selected_core_export and selected_core_export != "-- choose --":
     for fname in usbl_file_list:
         row = usbl_df[usbl_df["file_name"] == fname]
         if not row.empty:
-            # If file_path is not present in usbl_df, you may need to add it to your SQL query above!
             file_path = row.iloc[0].get("file_path", "")
-            # Always use get_full_path with file_path and file_name
+            # Correct: join file_path and fname to make the relative path
             relative_path = os.path.join(file_path, fname)
             full_path = get_full_path(relative_path)
             try:
                 df = load_usbl_file(full_path)
                 if df is not None:
                     usbl_dfs.append(df)
-            except Exception:
-                pass
+            except Exception as e:
+                st.error(f"Error loading USBL file: {e}")
     if usbl_dfs:
         all_usbl = pd.concat(usbl_dfs)
         all_usbl = all_usbl[~all_usbl.index.duplicated(keep='first')]
