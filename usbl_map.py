@@ -6,6 +6,7 @@ import os
 from config import get_full_path
 from utils import load_usbl_file  # Assumes you have a function to load a USBL file as DataFrame
 from utils import add_utm_coords  # Make sure this is imported
+from utils import ellipse_polygon  
 import geopandas as gpd
 import tempfile
 
@@ -156,13 +157,18 @@ if selected_core_export and selected_core_export != "-- choose --":
         st.markdown("### Export USBL Error Ellipses as Polygon Layer (QGIS & ArcGIS Pro)")
 
         if st.button("Download Ellipse Polygons (GeoPackage)"):
-            ellipse_df = add_utm_coords(
-                all_usbl,
-                lat_col="latitude_deg",
-                lon_col="longitude_deg",
-                utm_zone=utm_zone,
-                northern=northern
-            )
+            # Ensure UTM coordinates exist
+            if "X_Center" not in all_usbl.columns or "Y_Center" not in all_usbl.columns:
+                ellipse_df = add_utm_coords(
+                    all_usbl,
+                    lat_col="latitude_deg",
+                    lon_col="longitude_deg",
+                    utm_zone=utm_zone,
+                    northern=northern
+                )
+            else:
+                ellipse_df = all_usbl
+
             # Build polygons
             gdf = gpd.GeoDataFrame(
                 ellipse_df,
