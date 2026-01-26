@@ -461,8 +461,8 @@ def load_usbl_file(file_path):
             header=None,
             names=[
                 "ID","utc_time","beacon_name","fix_status","latitude_deg","longitude_deg",
-                "depth_m","northing_error_m","easting_error_m","vertical_error_m",
-                "quality","reserved_1","reserved_2","reserved_3","checksum",
+                "depth_m","hor_err_major","hor_err_minor","hor_err_dir",
+                "depth_error","reserved_1","reserved_2","reserved_3","checksum",
             ],
             dtype={"utc_time": str},
         )
@@ -498,8 +498,8 @@ def load_usbl_file(file_path):
         
         # Keep only the columns we need
         usbl_df = df[["latitude_deg", "longitude_deg", "depth_m", "beacon_name", 
-                      "fix_status", "quality", "northing_error_m", "easting_error_m", 
-                      "vertical_error_m"]].copy()
+                      "fix_status", "depth_error", "hor_err_major", "hor_err_minor", 
+                      "hor_err_dir", "depth_error"]].copy()
         
         st.write(f"Preview of parsed USBL data from {file_name}:")
         st.dataframe(usbl_df.head(10), use_container_width=True)
