@@ -498,7 +498,7 @@ def load_usbl_file(file_path):
         
         # Keep only the columns we need
         usbl_df = df[["latitude_deg", "longitude_deg", "depth_m", "beacon_name", 
-                      "fix_status", "depth_error", "hor_err_major", "hor_err_minor", 
+                      "fix_status", "hor_err_major", "hor_err_minor", 
                       "hor_err_dir", "depth_error"]].copy()
         
         st.write(f"Preview of parsed USBL data from {file_name}:")
