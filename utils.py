@@ -10,6 +10,9 @@ from db_util import get_dynamic_fields_metadata
 from config import get_full_path  # Import the utility function for constructing full paths
 from datetime import time
 from pathlib import Path
+from pyproj import Transformer
+from shapely.affinity import rotate, scale, translate
+from shapely.geometry import Point
 
 def parse_mscl_out_file(relative_path):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
@@ -511,4 +514,31 @@ def load_usbl_file(file_path):
     except Exception as e:
         st.error(f"Error loading USBL file: {e}")
         return None
+
+def add_utm_coords(df, lat_col="latitude_deg", lon_col="longitude_deg", utm_zone=33, northern=True):
+    """
+    Adds UTM X/Y columns to a DataFrame using specified UTM zone and hemisphere.
+    Args:
+        df: DataFrame with latitude and longitude columns
+        lat_col: Name of latitude column
+        lon_col: Name of longitude column
+        utm_zone: Integer UTM zone (e.g., 33)
+        northern: True for northern hemisphere, False for southern
+    Returns:
+        DataFrame with added 'X_Center' and 'Y_Center' columns (in meters)
+    """
+    utm_crs = f"+proj=utm +zone={utm_zone} +{'north' if northern else 'south'} +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
+    transformer = Transformer.from_crs("epsg:4326", utm_crs, always_xy=True)
+    x, y = transformer.transform(df[lon_col].values, df[lat_col].values)
+    df = df.copy()
+    df["X_Center"] = x
+    df["Y_Center"] = y
+    return df
+
+def ellipse_polygon(x, y, semi_major, semi_minor, azimuth_deg, n_points=60):
+    circle = Point(0, 0).buffer(1, resolution=n_points)
+    ellipse = scale(circle, semi_major, semi_minor)
+    ellipse = rotate(ellipse, azimuth_deg, origin=(0, 0), use_radians=False)
+    ellipse = translate(ellipse, x, y)
+    return ellipse
 

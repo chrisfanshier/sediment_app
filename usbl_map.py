@@ -5,6 +5,9 @@ from sqlalchemy import text
 import os
 from config import get_full_path
 from utils import load_usbl_file  # Assumes you have a function to load a USBL file as DataFrame
+from utils import add_utm_coords  # Make sure this is imported
+import geopandas as gpd
+import tempfile
 
 st.title("Cores and associated USBL files (Cruise → Core)")
 
@@ -124,5 +127,60 @@ if selected_core_export and selected_core_export != "-- choose --":
             file_name=f"{selected_core_export}_usbl.csv",
             mime="text/csv"
         )
+
+        # --- UTM Ellipse Export Button ---
+        st.markdown("### Export USBL Error Ellipses with UTM Coordinates for ArcGIS Pro")
+        utm_zone = st.number_input("UTM Zone", min_value=1, max_value=60, value=33)
+        northern = st.radio("Hemisphere", ["Northern", "Southern"]) == "Northern"
+        if st.button("Download Error Ellipse Table with UTM"):
+            ellipse_df = add_utm_coords(
+                all_usbl,
+                lat_col="latitude_deg",
+                lon_col="longitude_deg",
+                utm_zone=utm_zone,
+                northern=northern
+            )
+            export_cols = ["X_Center", "Y_Center", "hor_err_major", "hor_err_minor", "hor_err_dir"]
+            arcgis_df = ellipse_df[export_cols].rename(columns={
+                "hor_err_major": "Semi_Major",
+                "hor_err_minor": "Semi_Minor",
+                "hor_err_dir": "Azimuth"
+            })
+            ellipse_csv = arcgis_df.to_csv(index=False)
+            st.download_button(
+                label="💾 Download Ellipse Table (ArcGIS, UTM)",
+                data=ellipse_csv,
+                file_name=f"{selected_core_export}_usbl_ellipses_utm.csv",
+                mime="text/csv"
+            )
+        st.markdown("### Export USBL Error Ellipses as Polygon Layer (QGIS & ArcGIS Pro)")
+
+        if st.button("Download Ellipse Polygons (GeoPackage)"):
+            ellipse_df = add_utm_coords(
+                all_usbl,
+                lat_col="latitude_deg",
+                lon_col="longitude_deg",
+                utm_zone=utm_zone,
+                northern=northern
+            )
+            # Build polygons
+            gdf = gpd.GeoDataFrame(
+                ellipse_df,
+                geometry=[
+                    ellipse_polygon(row.X_Center, row.Y_Center, row.hor_err_major, row.hor_err_minor, row.hor_err_dir)
+                    for idx, row in ellipse_df.iterrows()
+                ],
+                crs=f"EPSG:326{utm_zone:02d}" if northern else f"EPSG:327{utm_zone:02d}"
+            )
+            # Save to a temporary GeoPackage
+            with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
+                gdf.to_file(tmp.name, driver="GPKG", layer="usbl_ellipses")
+                tmp.seek(0)
+                st.download_button(
+                    label="💾 Download Ellipse Polygons (GeoPackage)",
+                    data=tmp.read(),
+                    file_name=f"{selected_core_export}_usbl_ellipses.gpkg",
+                    mime="application/geopackage+sqlite3"
+                )
     else:
         st.info("No USBL data found for this core.")
