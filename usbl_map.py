@@ -156,7 +156,7 @@ if selected_core_export and selected_core_export != "-- choose --":
             )
         st.markdown("### Export USBL Error Ellipses as Polygon Layer (QGIS & ArcGIS Pro)")
 
-        if st.button("Download Ellipse Polygons (GeoPackage)"):
+        if st.button("Download Ellipse Polygons (Shapefile, ZIP)"):
             # Ensure UTM coordinates exist
             if "X_Center" not in all_usbl.columns or "Y_Center" not in all_usbl.columns:
                 ellipse_df = add_utm_coords(
@@ -178,17 +178,23 @@ if selected_core_export and selected_core_export != "-- choose --":
                 ],
                 crs=f"EPSG:326{utm_zone:02d}" if northern else f"EPSG:327{utm_zone:02d}"
             )
-            # Save to a temporary GeoPackage (close file before writing!)
-            with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
-                tmp_path = tmp.name
-            gdf.to_file(tmp_path, driver="GPKG", layer="usbl_ellipses")
-            with open(tmp_path, "rb") as f:
-                st.download_button(
-                    label="💾 Download Ellipse Polygons (GeoPackage)",
-                    data=f.read(),
-                    file_name=f"{selected_core_export}_usbl_ellipses.gpkg",
-                    mime="application/geopackage+sqlite3"
-                )
-            os.remove(tmp_path)
+            # Save to a temporary Shapefile (as a zip for download)
+            import zipfile
+            with tempfile.TemporaryDirectory() as tmpdir:
+                shp_path = os.path.join(tmpdir, "usbl_ellipses.shp")
+                gdf.to_file(shp_path, driver="ESRI Shapefile")
+                zip_path = os.path.join(tmpdir, f"{selected_core_export}_usbl_ellipses.zip")
+                with zipfile.ZipFile(zip_path, "w") as zipf:
+                    for ext in [".shp", ".shx", ".dbf", ".prj", ".cpg"]:
+                        file = os.path.join(tmpdir, f"usbl_ellipses{ext}")
+                        if os.path.exists(file):
+                            zipf.write(file, arcname=f"usbl_ellipses{ext}")
+                with open(zip_path, "rb") as f:
+                    st.download_button(
+                        label="💾 Download Ellipse Polygons (Shapefile, ZIP)",
+                        data=f.read(),
+                        file_name=f"{selected_core_export}_usbl_ellipses.zip",
+                        mime="application/zip"
+                    )
     else:
         st.info("No USBL data found for this core.")
