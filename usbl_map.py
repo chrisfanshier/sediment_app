@@ -178,15 +178,17 @@ if selected_core_export and selected_core_export != "-- choose --":
                 ],
                 crs=f"EPSG:326{utm_zone:02d}" if northern else f"EPSG:327{utm_zone:02d}"
             )
-            # Save to a temporary GeoPackage
+            # Save to a temporary GeoPackage (close file before writing!)
             with tempfile.NamedTemporaryFile(suffix=".gpkg", delete=False) as tmp:
-                gdf.to_file(tmp.name, driver="GPKG", layer="usbl_ellipses")
-                tmp.seek(0)
+                tmp_path = tmp.name
+            gdf.to_file(tmp_path, driver="GPKG", layer="usbl_ellipses")
+            with open(tmp_path, "rb") as f:
                 st.download_button(
                     label="💾 Download Ellipse Polygons (GeoPackage)",
-                    data=tmp.read(),
+                    data=f.read(),
                     file_name=f"{selected_core_export}_usbl_ellipses.gpkg",
                     mime="application/geopackage+sqlite3"
                 )
+            os.remove(tmp_path)
     else:
         st.info("No USBL data found for this core.")
