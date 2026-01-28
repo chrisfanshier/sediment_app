@@ -11,16 +11,71 @@ import numpy as np
 
 st.title("Export Dredge Sensor + USBL + Winch Data")
 
+# --- Add these functions at the top of your script ---
+
+@st.cache_data(show_spinner="Loading cruise/core lists...")
+def get_cruise_core_lists():
+    with get_connection() as conn:
+        cruises = pd.read_sql(
+            text("SELECT DISTINCT c.cruise_id, c.cruise_name "
+                 "FROM cruises c JOIN cores co ON c.cruise_id = co.cruise_id "
+                 "ORDER BY c.cruise_name"),
+            conn
+        )
+        cores = pd.read_sql(
+            text("SELECT * FROM cores WHERE cruise_id = :cruise_id ORDER BY core_name"),
+            conn,
+            params={"cruise_id": cruises.iloc[0]['cruise_id']} if not cruises.empty else {}
+        )
+    return cruises, cores
+
+@st.cache_data(show_spinner="Loading sensor files...")
+def load_sensor_files(core_id):
+    with get_connection() as conn:
+        sensor_files = pd.read_sql(
+            text("""
+                SELECT file_id, file_name, file_path, sensor_type
+                FROM sensor_files 
+                WHERE core_id = :core_id
+                ORDER BY sensor_type, file_name
+            """),
+            conn,
+            params={"core_id": core_id}
+        )
+    return sensor_files
+
+@st.cache_data(show_spinner="Loading USBL files...")
+def load_usbl_files(cruise_id):
+    with get_connection() as conn:
+        usbl_files = pd.read_sql(
+            text("""
+                SELECT usbl_file_id, file_name, file_path, start_time, end_time
+                FROM usbl_files 
+                WHERE cruise_id = :cruise_id
+            """),
+            conn,
+            params={"cruise_id": cruise_id}
+        )
+    return usbl_files
+
+@st.cache_data(show_spinner="Loading winch files...")
+def load_winch_files(cruise_id):
+    with get_connection() as conn:
+        winch_files = pd.read_sql(
+            text("""
+                SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
+                FROM winch_data 
+                WHERE cruise_id = :cruise_id
+            """),
+            conn,
+            params={"cruise_id": cruise_id}
+        )
+    return winch_files
+
 # ============================================================================
 # 1. GET CRUISE SELECTION
 # ============================================================================
-with get_connection() as conn:
-    cruises = pd.read_sql(
-        text("SELECT DISTINCT c.cruise_id, c.cruise_name "
-             "FROM cruises c JOIN cores co ON c.cruise_id = co.cruise_id "
-             "ORDER BY c.cruise_name"),
-        conn
-    )
+cruises, cores = get_cruise_core_lists()
 
 if cruises.empty:
     st.info("No cruises with cores found.")
@@ -93,17 +148,7 @@ st.write(f"- Duration: {end_datetime - start_datetime}")
 # ============================================================================
 st.subheader("Loading sensor data...")
 
-with get_connection() as conn:
-    sensor_files = pd.read_sql(
-        text("""
-            SELECT file_id, file_name, file_path, sensor_type
-            FROM sensor_files 
-            WHERE core_id = :core_id
-            ORDER BY sensor_type, file_name
-        """),
-        conn,
-        params={"core_id": core_id}
-    )
+sensor_files = load_sensor_files(core_id)
 
 if not sensor_files.empty:
     st.write(f"**Sensor files ({len(sensor_files)}):**")
@@ -170,16 +215,7 @@ else:
 # ============================================================================
 st.subheader("Loading USBL data...")
 
-with get_connection() as conn:
-    usbl_files = pd.read_sql(
-        text("""
-            SELECT usbl_file_id, file_name, file_path, start_time, end_time
-            FROM usbl_files 
-            WHERE cruise_id = :cruise_id
-        """),
-        conn,
-        params={"cruise_id": cruise_id}
-    )
+usbl_files = load_usbl_files(cruise_id)
 
 if not usbl_files.empty:
     # Filter USBL files by time overlap
@@ -244,16 +280,7 @@ else:
 st.subheader("Loading winch data...")
 
 # Get winch files that overlap with this core's time window
-with get_connection() as conn:
-    winch_files = pd.read_sql(
-        text("""
-            SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
-            FROM winch_data 
-            WHERE cruise_id = :cruise_id
-        """),
-        conn,
-        params={"cruise_id": cruise_id}
-    )
+winch_files = load_winch_files(cruise_id)
 
 if not winch_files.empty:
     # Parse start/end times (they're stored as text in the database)
@@ -486,3 +513,76 @@ if st.button("Download Aggregated CSV"):
     )
     st.success(f"Ready to download {output_filename}")
     st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
+
+# Aggregate by USBL windows
+st.subheader("Aggregate by USBL windows")
+
+def aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_methods):
+    # usbl_df must have a datetime index or column
+    usbl_df = usbl_df.sort_values("datetime").reset_index(drop=True)
+    result_rows = []
+    for i, row in usbl_df.iterrows():
+        t0 = row["datetime"]
+        # Define window: halfway to previous and next USBL fix
+        if i == 0:
+            t_start = t0
+        else:
+            t_start = t0 - (t0 - usbl_df.loc[i-1, "datetime"]) / 2
+        if i == len(usbl_df) - 1:
+            t_end = t0
+        else:
+            t_end = t0 + (usbl_df.loc[i+1, "datetime"] - t0) / 2
+
+        # Aggregate sensor data in this window
+        sensor_window = sensor_df[(sensor_df.index >= t_start) & (sensor_df.index < t_end)]
+        winch_window = winch_df[(winch_df.index >= t_start) & (winch_df.index < t_end)]
+
+        agg_row = row.to_dict()
+        for col, (method, thresh) in agg_methods.items():
+            if col in sensor_window.columns:
+                data = sensor_window[col].dropna()
+            elif col in winch_window.columns:
+                data = winch_window[col].dropna()
+            else:
+                agg_row[col] = np.nan
+                continue
+
+            if len(data) == 0:
+                agg_row[col] = np.nan
+            elif method == "mean":
+                agg_row[col] = data.mean()
+            elif method == "max":
+                agg_row[col] = data.max()
+            elif method == "min":
+                agg_row[col] = data.min()
+            elif method == "count > threshold":
+                agg_row[col] = np.sum(data > thresh)
+            elif method == "count < threshold":
+                agg_row[col] = np.sum(data < thresh)
+        result_rows.append(agg_row)
+    return pd.DataFrame(result_rows)
+
+usbl_df = combined_usbl.copy()
+sensor_df = combined_sensors.copy()
+winch_df = combined_winch.copy()
+
+if usbl_df is not None and sensor_df is not None and winch_df is not None:
+    st.write("Aggregating by USBL windows...")
+    agg_df = aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_methods)
+    st.write("**Preview of aggregated export:**")
+    st.dataframe(agg_df.head(20), use_container_width=True)
+
+    output_filename = f"{selected_core}_usbl_aggregated_windows.csv"
+
+    if st.button("Download Aggregated CSV"):
+        csv = agg_df.to_csv(index=False)
+        st.download_button(
+            label="💾 Download Aggregated USBL Data CSV",
+            data=csv,
+            file_name=output_filename,
+            mime="text/csv"
+        )
+        st.success(f"Ready to download {output_filename}")
+        st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
+else:
+    st.info("No data available for USBL window aggregation")
