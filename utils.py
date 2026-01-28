@@ -495,18 +495,16 @@ def load_usbl_file(file_path):
                     rollover_idx = (time_values.diff() < pd.Timedelta(0)).idxmax()
                     if rollover_idx > 0:
                         df.loc[:rollover_idx-1, "datetime"] -= pd.Timedelta(days=1)
-        
-        # Set datetime as index
-        df.set_index("datetime", inplace=True)
+
         
         # Keep only the columns we need
-        usbl_df = df[["latitude_deg", "longitude_deg", "depth_m", "beacon_name", 
+        usbl_df = df[["datetime", "latitude_deg", "longitude_deg", "depth_m", "beacon_name", 
                       "fix_status", "hor_err_major", "hor_err_minor", 
                       "hor_err_dir", "depth_error"]].copy()
         
         st.write(f"Preview of parsed USBL data from {file_name}:")
         st.dataframe(usbl_df.head(10), use_container_width=True)
-        st.write("Index dtype:", usbl_df.index.dtype)
+        st.write("Datetime dtype:", usbl_df['datetime'].dtype)
         st.write("Non-null latitude_deg:", usbl_df['latitude_deg'].notna().sum())
         
         return usbl_df

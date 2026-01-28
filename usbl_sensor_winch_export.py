@@ -165,36 +165,42 @@ if not sensor_files.empty:
         try:
             df = process_star_oddi_data(file_path)
             if df is not None:
-                # Set Timestamp as index and make timezone-naive
+                # Rename Timestamp to datetime and make timezone-naive
                 if 'Timestamp' in df.columns and 'datetime' not in df.columns:
                     df = df.rename(columns={'Timestamp': 'datetime'})
                 if pd.api.types.is_datetime64_any_dtype(df['datetime']) and getattr(df['datetime'].dt, 'tz', None) is not None:
                     df['datetime'] = df['datetime'].dt.tz_localize(None)
                 sensor_dfs[row['file_name']] = df
-                st.success(f"✓ Loaded {row['file_name']}: {len(df)} rows, {df.index[0]} to {df.index[-1]}")
+                st.success(f"✓ Loaded {row['file_name']}: {len(df)} rows, {df['datetime'].min()} to {df['datetime'].max()}")
                 st.write(f"**Preview of {row['file_name']} ({sensor_type}):**")
                 st.dataframe(df.head(10), use_container_width=True)
                 st.write("Columns:", list(df.columns))
             else:
                 st.error(f"✗ Failed to parse {row['file_name']}")
         except Exception as e:
-            st.error(f"✗ Error loading {row['file_name']}: {e}")
+            st.error(f"✗ Error loading {row['file_name']}: {e}")   
     
-    # Merge all sensor DataFrames on timestamp
+    # Merge all sensor DataFrames on datetime column
     if sensor_dfs:
         # Start with first DataFrame
         combined_sensors = list(sensor_dfs.values())[0].copy()
         
-        # Join the rest (outer join to keep all timestamps)
+        # Merge the rest (outer merge to keep all timestamps)
         for key, df in list(sensor_dfs.items())[1:]:
-            combined_sensors = combined_sensors.join(df, how='outer', rsuffix=f'_{key}')
+            combined_sensors = pd.merge(
+                combined_sensors, 
+                df, 
+                on='datetime', 
+                how='outer', 
+                suffixes=('', f'_{key}')
+            )
         
-        # Sort by timestamp
-        combined_sensors.sort_index(inplace=True)
+        # Sort by datetime
+        combined_sensors = combined_sensors.sort_values('datetime').reset_index(drop=True)
         
         st.write(f"**Combined sensor data:**")
         st.write(f"- Shape: {combined_sensors.shape}")
-        st.write(f"- Time range: {combined_sensors.index[0]} to {combined_sensors.index[-1]}")
+        st.write(f"- Time range: {combined_sensors['datetime'].min()} to {combined_sensors['datetime'].max()}")
         st.write(f"- Columns: {list(combined_sensors.columns)}")
         st.dataframe(combined_sensors.head(10), use_container_width=True)
         
@@ -243,11 +249,11 @@ if not usbl_files.empty:
         try:
             df = load_usbl_file(file_path)
             if df is not None:
-                # Make index naive if needed
-                if hasattr(df.index, 'tz') and df.index.tz is not None:
-                    df.index = df.index.tz_localize(None)
+                # Make datetime column naive if needed
+                if 'datetime' in df.columns and pd.api.types.is_datetime64_any_dtype(df['datetime']) and getattr(df['datetime'].dt, 'tz', None) is not None:
+                    df['datetime'] = df['datetime'].dt.tz_localize(None)
                 usbl_dfs.append(df)
-                st.success(f"✓ Loaded {row['file_name']}: {len(df)} fixes, {df.index[0]} to {df.index[-1]}")
+                st.success(f"✓ Loaded {row['file_name']}: {len(df)} fixes, {df['datetime'].min()} to {df['datetime'].max()}")
             else:
                 st.error(f"✗ Failed to parse {row['file_name']}")
         except Exception as e:
@@ -255,20 +261,20 @@ if not usbl_files.empty:
     
     # Concatenate all USBL files
     if usbl_dfs:
-        combined_usbl = pd.concat(usbl_dfs)
-        combined_usbl.sort_index(inplace=True)
+        combined_usbl = pd.concat(usbl_dfs, ignore_index=True)
+        combined_usbl = combined_usbl.sort_values('datetime').reset_index(drop=True)
         
         # Remove duplicates if any (same timestamp)
-        combined_usbl = combined_usbl[~combined_usbl.index.duplicated(keep='first')]
+        combined_usbl = combined_usbl.drop_duplicates(subset=['datetime'], keep='first')
         
         st.write(f"**Combined USBL data:**")
         st.write(f"- Total fixes: {len(combined_usbl)}")
-        st.write(f"- Time range: {combined_usbl.index[0]} to {combined_usbl.index[-1]}")
+        st.write(f"- Time range: {combined_usbl['datetime'].min()} to {combined_usbl['datetime'].max()}")
         st.write(f"- Unique beacons: {combined_usbl['beacon_name'].unique()}")
         st.dataframe(combined_usbl.head(10), use_container_width=True)
         
         # Calculate approximate ping interval
-        time_diffs = combined_usbl.index.to_series().diff()
+        time_diffs = combined_usbl['datetime'].diff()
         median_interval = time_diffs.median()
         st.write(f"- Median ping interval: {median_interval}")
     else:
@@ -310,11 +316,11 @@ if not winch_files.empty:
         try:
             df = parse_winch_dat(file_path, settings)
             if df is not None and 'datetime' in df.columns:
-                df.set_index('datetime', inplace=True)
-                if hasattr(df.index, 'tz') and df.index.tz is not None:
-                    df.index = df.index.tz_localize(None)
+                # Make datetime column naive if needed
+                if pd.api.types.is_datetime64_any_dtype(df['datetime']) and getattr(df['datetime'].dt, 'tz', None) is not None:
+                    df['datetime'] = df['datetime'].dt.tz_localize(None)
                 winch_dfs.append(df)
-                st.success(f"✓ Loaded {row['file_name']}: {len(df)} records, {df.index[0]} to {df.index[-1]}")
+                st.success(f"✓ Loaded {row['file_name']}: {len(df)} records, {df['datetime'].min()} to {df['datetime'].max()}")
                 st.write(f"**Preview of {row['file_name']}:**")
                 st.dataframe(df.head(10), use_container_width=True)
                 st.write("Columns:", list(df.columns))
@@ -325,20 +331,20 @@ if not winch_files.empty:
     
     # Concatenate all winch files
     if winch_dfs:
-        combined_winch = pd.concat(winch_dfs)
-        combined_winch.sort_index(inplace=True)
+        combined_winch = pd.concat(winch_dfs, ignore_index=True)
+        combined_winch = combined_winch.sort_values('datetime').reset_index(drop=True)
         
         # Remove duplicates if any
-        combined_winch = combined_winch[~combined_winch.index.duplicated(keep='first')]
+        combined_winch = combined_winch.drop_duplicates(subset=['datetime'], keep='first')
         
         st.write(f"**Combined winch data:**")
         st.write(f"- Total records: {len(combined_winch)}")
-        st.write(f"- Time range: {combined_winch.index[0]} to {combined_winch.index[-1]}")
+        st.write(f"- Time range: {combined_winch['datetime'].min()} to {combined_winch['datetime'].max()}")
         st.write(f"- Columns: {list(combined_winch.columns)}")
         st.dataframe(combined_winch.head(10), use_container_width=True)
         
         # Calculate sampling rate
-        time_diffs = combined_winch.index.to_series().diff()
+        time_diffs = combined_winch['datetime'].diff()
         median_interval = time_diffs.median()
         st.write(f"- Median sampling interval: {median_interval}")
         if median_interval and median_interval.total_seconds() > 0:
@@ -467,7 +473,7 @@ agg_candidates = [
     col for col in deployment_df.columns 
     if col not in ['datetime', 'latitude_deg', 'longitude_deg', 'beacon_name']
 ]
-selected_cols = st.multiselect("Select columns to aggregate", agg_candidates, default=agg_candidates[:3])
+selected_cols = st.multiselect("Select columns to aggregate", agg_candidates, default=agg_candidates[:3] if len(agg_candidates) >= 3 else agg_candidates)
 
 # Let user choose aggregation method for each selected column
 agg_methods = {}
@@ -500,28 +506,39 @@ for col, (method, thresh) in agg_methods.items():
         agg_dict[col] = lambda x, t=thresh: np.sum(x < t)
 
 # Perform aggregation
-agg_df = usbl_rows.groupby(group_cols).agg(agg_dict).reset_index()
-
-st.write("**Preview of aggregated export:**")
-st.dataframe(agg_df.head(20), use_container_width=True)
-
-output_filename = f"{selected_core}_usbl_aggregated.csv"
-
-if st.button("Download Aggregated CSV"):
-    csv = agg_df.to_csv(index=False)
-    st.download_button(
-        label="💾 Download Aggregated USBL Data CSV",
-        data=csv,
-        file_name=output_filename,
-        mime="text/csv"
-    )
-    st.success(f"Ready to download {output_filename}")
-    st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
+if len(usbl_rows) > 0 and len(agg_dict) > 0:
+    agg_df = usbl_rows.groupby(group_cols).agg(agg_dict).reset_index()
+    
+    st.write("**Preview of aggregated export:**")
+    st.dataframe(agg_df.head(20), use_container_width=True)
+    
+    output_filename = f"{selected_core}_usbl_aggregated.csv"
+    
+    if st.button("Download Aggregated CSV", key="download_agg_1"):
+        csv = agg_df.to_csv(index=False)
+        st.download_button(
+            label="💾 Download Aggregated USBL Data CSV",
+            data=csv,
+            file_name=output_filename,
+            mime="text/csv"
+        )
+        st.success(f"Ready to download {output_filename}")
+        st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
+else:
+    st.info("No USBL data available for aggregation")
 
 # Aggregate by USBL windows
 st.subheader("Aggregate by USBL windows")
 
 def aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_methods):
+    # Ensure datetime is a column, not index
+    if 'datetime' not in usbl_df.columns:
+        usbl_df = usbl_df.reset_index()
+    if 'datetime' not in sensor_df.columns:
+        sensor_df = sensor_df.reset_index()
+    if 'datetime' not in winch_df.columns:
+        winch_df = winch_df.reset_index()
+    
     usbl_df = usbl_df.sort_values("datetime").reset_index(drop=True)
     result_rows = []
     for i, row in usbl_df.iterrows():
@@ -565,25 +582,22 @@ def aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_m
         result_rows.append(agg_row)
     return pd.DataFrame(result_rows)
 
-usbl_df = combined_usbl.copy()
-sensor_df = combined_sensors.copy()
-winch_df = combined_winch.copy()
-
-if usbl_df is not None and sensor_df is not None and winch_df is not None:
+if combined_usbl is not None and combined_sensors is not None and combined_winch is not None and len(selected_cols) > 0:
     st.write("Aggregating by USBL windows...")
-    agg_df = aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_methods)
+    agg_df = aggregate_by_usbl_windows(combined_usbl, combined_sensors, combined_winch, selected_cols, agg_methods)
     st.write("**Preview of aggregated export:**")
     st.dataframe(agg_df.head(20), use_container_width=True)
 
     output_filename = f"{selected_core}_usbl_aggregated_windows.csv"
 
-    if st.button("Download Aggregated CSV"):
+    if st.button("Download Aggregated CSV (Windows)", key="download_agg_2"):
         csv = agg_df.to_csv(index=False)
         st.download_button(
             label="💾 Download Aggregated USBL Data CSV",
             data=csv,
             file_name=output_filename,
-            mime="text/csv"
+            mime="text/csv",
+            key="download_agg_windows"
         )
         st.success(f"Ready to download {output_filename}")
         st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
