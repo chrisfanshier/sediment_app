@@ -265,96 +265,274 @@ if selected_core_export and selected_core_export != "-- choose --":
                 except Exception as e:
                     st.error(f"❌ Error loading file: {str(e)}")
     
-    # --- Merge sensor data with USBL data ---
-    if not sensor_files_df.empty and usbl_dfs:
+    # --- Winch data for this cruise ---
+    if usbl_dfs:
         st.markdown("---")
-        st.subheader("Merge Sensor Data with USBL")
+        st.subheader("Winch Data")
         
-        # Collect all sensor data and available columns
-        sensor_data_dict = {}  # {file_name: dataframe}
-        all_sensor_columns = {}  # {file_name: [list of numeric columns]}
+        # Get the time range from USBL data
+        usbl_times = all_usbl.reset_index()
+        usbl_times['datetime'] = pd.to_datetime(usbl_times['datetime']).dt.tz_localize(None)
+        usbl_start = usbl_times['datetime'].min()
+        usbl_end = usbl_times['datetime'].max()
         
-        for idx, sensor_row in sensor_files_df.iterrows():
-            file_name = sensor_row['file_name']
-            file_path = sensor_row['file_path']
-            sensor_type = sensor_row['sensor_type'] if sensor_row['sensor_type'] else "Unknown"
+        st.write(f"**USBL time range:** {usbl_start} to {usbl_end}")
+        
+        # Query winch files for this cruise
+        with get_connection() as conn:
+            winch_query = text("""
+                SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
+                FROM winch_data
+                WHERE cruise_id = :cruise_id
+                ORDER BY start_time
+            """)
+            winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
+        
+        if winch_files_df.empty:
+            st.info("No winch files found for this cruise.")
+            winch_data_available = False
+        else:
+            # Parse timestamps row by row AND remove timezone in one step
+            def parse_and_strip_tz(x):
+                dt = pd.to_datetime(x, errors="coerce")
+                if dt is pd.NaT:
+                    return dt
+                # Remove timezone if present
+                if hasattr(dt, 'tz') and dt.tz is not None:
+                    return dt.tz_localize(None)
+                return dt
             
-            relative_path = os.path.join(file_path, file_name)
-            file_ext = os.path.splitext(file_name)[1].lower()
-            sensor_type_lower = sensor_type.lower()
+            winch_files_df["start_time"] = winch_files_df["start_time"].apply(parse_and_strip_tz)
+            winch_files_df["end_time"] = winch_files_df["end_time"].apply(parse_and_strip_tz)
             
-            try:
-                from utils import process_rsk_data, process_star_oddi_data
+            # Find overlapping winch files
+            overlap_mask = (
+                (winch_files_df['start_time'] <= usbl_end) & 
+                (winch_files_df['end_time'] >= usbl_start)
+            )
+            overlapping_winch = winch_files_df[overlap_mask]
+            
+            if overlapping_winch.empty:
+                st.info("No winch files overlap with USBL time range.")
+                winch_data_available = False
+            else:
+                st.write(f"Found {len(overlapping_winch)} winch file(s) overlapping with USBL data:")
+                st.dataframe(overlapping_winch[['file_name', 'start_time', 'end_time']], use_container_width=True)
+                winch_data_available = True
                 
-                if file_ext == '.rsk' or 'rbr' in sensor_type_lower:
-                    df = process_rsk_data(relative_path)
-                elif file_ext in ['.dat', '.acc'] or 'star-oddi' in sensor_type_lower or 'staroddi' in sensor_type_lower:
-                    df = process_star_oddi_data(relative_path)
-                else:
-                    continue
-                
-                if df is not None:
-                    if 'datetime' not in df.columns:
-                        if 'Timestamp' in df.columns:
-                            df['datetime'] = df['Timestamp']
-                        else:
-                            continue
+                # Cache function for loading winch data
+                @st.cache_data
+                def load_and_parse_winch_files(winch_rows):
+                    """Load and parse winch files, returning combined dataframe"""
+                    from utils import parse_winch_dat
+                    import json
                     
-                    # Get numeric columns (exclude datetime, timestamp, index)
-                    numeric_cols = [col for col in df.select_dtypes(include=['number']).columns 
-                                   if col.lower() not in ['index', 'datetime']]
-                    
-                    if numeric_cols:
-                        sensor_data_dict[file_name] = df
-                        all_sensor_columns[file_name] = numeric_cols
+                    winch_dfs = []
+                    for _, winch_row in winch_rows.iterrows():
+                        file_name = winch_row['file_name']
+                        file_path = winch_row['file_path']
+                        settings = winch_row['settings']
                         
-            except Exception as e:
-                st.warning(f"Could not load {file_name} for merging: {str(e)}")
+                        try:
+                            # Parse settings
+                            try:
+                                settings_dict = json.loads(settings) if settings else {}
+                            except json.JSONDecodeError:
+                                settings_dict = {}
+                            
+                            # Construct full file path
+                            relative_path = os.path.join(file_path, file_name)
+                            full_file_path = get_full_path(relative_path)
+                            
+                            # Use the settings from the database
+                            if settings_dict:
+                                parsing_settings = {
+                                    "delimiter": settings_dict.get("delimiter", ","),
+                                    "header_lines": settings_dict.get("header_lines", 0),
+                                    "columns": settings_dict.get("columns", []),
+                                    "datetime_code": settings_dict.get("datetime_code", "pd.to_datetime(df['datetime'])")
+                                }
+                                if "numeric_columns" in settings_dict:
+                                    parsing_settings["numeric_columns"] = settings_dict["numeric_columns"]
+                            else:
+                                # Fallback settings
+                                file_ext = os.path.splitext(file_name)[1].lower()
+                                if file_ext == '.dat':
+                                    parsing_settings = {
+                                        "delimiter": r"\s+",
+                                        "header_lines": 0,
+                                        "datetime_code": "pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute', 'second']])"
+                                    }
+                                else:
+                                    parsing_settings = {
+                                        "delimiter": ",",
+                                        "header_lines": 0,
+                                        "datetime_code": "pd.to_datetime(df['datetime'])"
+                                    }
+                            
+                            # Parse the file
+                            df = parse_winch_dat(full_file_path, parsing_settings)
+                            
+                            if df is not None:
+                                # Ensure datetime column exists
+                                if 'datetime' not in df.columns:
+                                    continue
+                                
+                                # Add source file column
+                                df['source_file'] = file_name
+                                winch_dfs.append(df)
+                                
+                        except Exception as e:
+                            st.warning(f"Could not load {file_name}: {str(e)}")
+                    
+                    if winch_dfs:
+                        # Concatenate if multiple files
+                        all_winch = pd.concat(winch_dfs, ignore_index=True)
+                        all_winch = all_winch.sort_values('datetime').reset_index(drop=True)
+                        
+                        # Remove timezone if present
+                        all_winch['datetime'] = pd.to_datetime(all_winch['datetime']).dt.tz_localize(None)
+                        
+                        return all_winch
+                    return None
+                
+                # Load winch data with caching
+                with st.spinner("Loading winch data..."):
+                    # Convert to tuples for caching (dataframes aren't hashable)
+                    winch_rows_tuple = tuple(overlapping_winch.to_dict('records'))
+                    all_winch = load_and_parse_winch_files(winch_rows_tuple)
+                
+                if all_winch is not None:
+                    # Trim to USBL time range
+                    trim_mask = (all_winch['datetime'] >= usbl_start) & (all_winch['datetime'] <= usbl_end)
+                    trimmed_winch = all_winch[trim_mask].copy()
+                    
+                    st.write(f"**Winch data loaded:** {len(trimmed_winch):,} records")
+                    st.write(f"**Time range:** {trimmed_winch['datetime'].min()} to {trimmed_winch['datetime'].max()}")
+                    
+                    # Get numeric columns
+                    exclude_cols = ['index', 'datetime', 'date', 'time', 'year', 'month', 'day', 'hour', 'minute', 'second', 'source_file']
+                    winch_numeric_cols = [col for col in trimmed_winch.select_dtypes(include=['number']).columns 
+                                         if col.lower() not in exclude_cols]
+                    st.write(f"**Available parameters:** {', '.join(winch_numeric_cols)}")
+                    
+                    # Preview
+                    with st.expander("Preview Winch Data"):
+                        st.dataframe(trimmed_winch.head(20), use_container_width=True)
+                else:
+                    st.info("No winch data could be loaded.")
+                    winch_data_available = False
+    
+    # --- Combined Merge Section for Sensor + Winch Data ---
+    if not sensor_files_df.empty or (usbl_dfs and winch_data_available):
+        st.markdown("---")
+        st.subheader("Merge Sensor & Winch Data with USBL")
         
-        if sensor_data_dict:
-            st.write(f"Found {len(sensor_data_dict)} sensor file(s) available for merging")
+        # Cache function for loading sensor data
+        @st.cache_data
+        def load_and_parse_sensor_files(sensor_rows_tuple):
+            """Load and parse sensor files, returning dict of dataframes"""
+            from utils import process_rsk_data, process_star_oddi_data
+            
+            sensor_data_dict = {}
+            for sensor_row in sensor_rows_tuple:
+                file_name = sensor_row['file_name']
+                file_path = sensor_row['file_path']
+                sensor_type = sensor_row['sensor_type'] if sensor_row['sensor_type'] else "Unknown"
+                
+                relative_path = os.path.join(file_path, file_name)
+                file_ext = os.path.splitext(file_name)[1].lower()
+                sensor_type_lower = sensor_type.lower()
+                
+                try:
+                    if file_ext == '.rsk' or 'rbr' in sensor_type_lower:
+                        df = process_rsk_data(relative_path)
+                    elif file_ext in ['.dat', '.acc'] or 'star-oddi' in sensor_type_lower or 'staroddi' in sensor_type_lower:
+                        df = process_star_oddi_data(relative_path)
+                    else:
+                        continue
+                    
+                    if df is not None:
+                        if 'datetime' not in df.columns:
+                            if 'Timestamp' in df.columns:
+                                df['datetime'] = df['Timestamp']
+                            else:
+                                continue
+                        
+                        # Remove timezone
+                        df['datetime'] = pd.to_datetime(df['datetime']).dt.tz_localize(None)
+                        
+                        sensor_data_dict[file_name] = df
+                        
+                except Exception as e:
+                    st.warning(f"Could not load {file_name}: {str(e)}")
+            
+            return sensor_data_dict
+        
+        # Collect available columns from both sensor and winch data
+        all_merge_columns = {}  # {source_file: {column: dataframe}}
+        
+        # Load sensor data if available
+        if not sensor_files_df.empty:
+            with st.spinner("Loading sensor data..."):
+                sensor_rows_tuple = tuple(sensor_files_df.to_dict('records'))
+                sensor_data_dict = load_and_parse_sensor_files(sensor_rows_tuple)
+            
+            for file_name, df in sensor_data_dict.items():
+                numeric_cols = [col for col in df.select_dtypes(include=['number']).columns 
+                               if col.lower() not in ['index', 'datetime']]
+                for col in numeric_cols:
+                    all_merge_columns[f"{file_name}::{col}"] = (df, col, "sensor")
+        
+        # Add winch data if available
+        if winch_data_available and all_winch is not None:
+            for col in winch_numeric_cols:
+                all_merge_columns[f"WINCH::{col}"] = (trimmed_winch, col, "winch")
+        
+        if all_merge_columns:
+            st.write(f"**Found {len(all_merge_columns)} column(s) available for merging**")
             
             # Let user select columns and aggregation method
             st.write("**Select columns to merge with USBL data:**")
             
-            merge_configs = []  # List of {file_name, column, method, threshold}
+            merge_configs = []  # List of {source_key, column, method, threshold, df}
             
-            for file_name, columns in all_sensor_columns.items():
-                with st.expander(f"📊 {file_name}"):
-                    for col in columns:
-                        col1, col2, col3 = st.columns([3, 2, 2])
-                        
-                        with col1:
-                            include = st.checkbox(f"{col}", key=f"merge_{file_name}_{col}")
-                        
-                        if include:
-                            with col2:
-                                method = st.selectbox(
-                                    "Method",
-                                    ["mean", "count > threshold", "count < threshold"],
-                                    key=f"method_{file_name}_{col}"
-                                )
-                            
-                            with col3:
-                                if "threshold" in method:
-                                    threshold = st.number_input(
-                                        "Threshold",
-                                        value=0.0,
-                                        step=0.1,
-                                        key=f"threshold_{file_name}_{col}"
-                                    )
-                                else:
-                                    threshold = None
-                            
-                            merge_configs.append({
-                                'file_name': file_name,
-                                'column': col,
-                                'method': method,
-                                'threshold': threshold
-                            })
+            for source_key, (df, column, data_type) in all_merge_columns.items():
+                col1, col2, col3 = st.columns([3, 2, 2])
+                
+                with col1:
+                    include = st.checkbox(f"{source_key}", key=f"merge_{source_key}")
+                
+                if include:
+                    with col2:
+                        method = st.selectbox(
+                            "Method",
+                            ["mean", "count > threshold", "count < threshold"],
+                            key=f"method_{source_key}"
+                        )
+                    
+                    with col3:
+                        if "threshold" in method:
+                            threshold = st.number_input(
+                                "Threshold",
+                                value=0.0,
+                                step=0.1,
+                                key=f"threshold_{source_key}"
+                            )
+                        else:
+                            threshold = None
+                    
+                    merge_configs.append({
+                        'source_key': source_key,
+                        'column': column,
+                        'method': method,
+                        'threshold': threshold,
+                        'df': df,
+                        'data_type': data_type
+                    })
             
             if merge_configs and st.button("Generate Merged USBL Data"):
-                with st.spinner("Merging sensor data with USBL..."):
+                with st.spinner("Merging data with USBL..."):
                     try:
                         # Start with the concatenated USBL data
                         merged_usbl = all_usbl.reset_index()
@@ -365,21 +543,17 @@ if selected_core_export and selected_core_export != "-- choose --":
                         # Get unique beacon names
                         beacon_names = merged_usbl['beacon_name'].unique()
                         
-                        # For each beacon, calculate time intervals and merge sensor data
+                        # For each beacon, calculate time intervals and merge data
                         for beacon in beacon_names:
                             beacon_mask = merged_usbl['beacon_name'] == beacon
-                            beacon_times = merged_usbl.loc[beacon_mask, 'datetime'].sort_values()
+                            beacon_indices = merged_usbl[beacon_mask].index
                             
                             # For each selected column, create a new column in merged_usbl
                             for config in merge_configs:
-                                file_name = config['file_name']
                                 column = config['column']
                                 method = config['method']
                                 threshold = config['threshold']
-                                
-                                # Get sensor data
-                                sensor_df = sensor_data_dict[file_name].copy()
-                                sensor_df['datetime'] = pd.to_datetime(sensor_df['datetime']).dt.tz_localize(None)
+                                source_df = config['df']
                                 
                                 # Create column name (without beacon name - GIS can filter by beacon_name)
                                 method_str = method.replace(' ', '_').replace('>', 'gt').replace('<', 'lt')
@@ -390,7 +564,6 @@ if selected_core_export and selected_core_export != "-- choose --":
                                     merged_usbl[new_col_name] = float('nan')
                                 
                                 # For each USBL measurement for this beacon
-                                beacon_indices = merged_usbl[beacon_mask].index
                                 for i, idx in enumerate(beacon_indices):
                                     current_time = merged_usbl.loc[idx, 'datetime']
                                     
@@ -402,9 +575,9 @@ if selected_core_export and selected_core_export != "-- choose --":
                                         # Last measurement - use a small window
                                         next_time = current_time + pd.Timedelta(seconds=1)
                                     
-                                    # Find sensor measurements in this interval
-                                    interval_mask = (sensor_df['datetime'] >= current_time) & (sensor_df['datetime'] < next_time)
-                                    interval_data = sensor_df.loc[interval_mask, column]
+                                    # Find data measurements in this interval
+                                    interval_mask = (source_df['datetime'] >= current_time) & (source_df['datetime'] < next_time)
+                                    interval_data = source_df.loc[interval_mask, column]
                                     
                                     # Apply aggregation method
                                     if not interval_data.empty:
@@ -420,16 +593,16 @@ if selected_core_export and selected_core_export != "-- choose --":
                                         merged_usbl.loc[idx, new_col_name] = value
                         
                         # Show preview
-                        st.success(f"✅ Merged data created with {len(merge_configs)} sensor column(s)")
+                        st.success(f"✅ Merged data created with {len(merge_configs)} column(s)")
                         st.write("**Preview of merged data:**")
                         st.dataframe(merged_usbl.head(20), use_container_width=True)
                         
                         # Download button
                         merged_csv = merged_usbl.to_csv(index=False)
                         st.download_button(
-                            label=f"💾 Download Merged USBL + Sensor Data",
+                            label=f"💾 Download Merged USBL + Sensor + Winch Data",
                             data=merged_csv,
-                            file_name=f"{selected_core_export}_usbl_sensor_merged.csv",
+                            file_name=f"{selected_core_export}_usbl_merged.csv",
                             mime="text/csv"
                         )
                         
@@ -438,7 +611,7 @@ if selected_core_export and selected_core_export != "-- choose --":
                         import traceback
                         st.code(traceback.format_exc())
         else:
-            st.info("No sensor files with numeric columns available for merging.")
+            st.info("No columns available for merging.")
     
     # --- Winch data for this cruise ---
     if usbl_dfs:
