@@ -528,8 +528,12 @@ if selected_core_export and selected_core_export != "-- choose --":
                         usbl_final_cols = required_usbl_cols + [c for c in optional_usbl_cols if c in usbl_export.columns]
                         usbl_export_final = usbl_export[usbl_final_cols]
                         
+                        # Format datetime to milliseconds (3 decimals) for CSV export
+                        usbl_export_csv = usbl_export_final.copy()
+                        usbl_export_csv['datetime'] = usbl_export_csv['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S.%f').str[:-3] + '+00:00'
+                        
                         # Convert to CSV and store in session state
-                        st.session_state['dredge_usbl_csv'] = usbl_export_final.to_csv(index=False)
+                        st.session_state['dredge_usbl_csv'] = usbl_export_csv.to_csv(index=False)
                         st.session_state['dredge_usbl_stats'] = f"{len(usbl_export_final)} points, {len(usbl_final_cols)} columns"
                         
                         st.success(f"✅ USBL file ready: {st.session_state['dredge_usbl_stats']}")
@@ -576,14 +580,17 @@ if selected_core_export and selected_core_export != "-- choose --":
                                 if sensor_export['datetime'].dt.tz is None:
                                     sensor_export['datetime'] = sensor_export['datetime'].dt.tz_localize('UTC')
                                 
-                                # Convert to CSV and store in session state
-                                st.session_state['dredge_sensor_csv'] = sensor_export.to_csv(index=False)
-                                
-                                # Calculate stats
+                                # Calculate stats first (before formatting)
                                 time_diffs = sensor_export['datetime'].diff().dt.total_seconds()
                                 median_dt = time_diffs.median()
                                 freq = 1 / median_dt if median_dt > 0 else 0
                                 
+                                # Format datetime to milliseconds (3 decimals) for CSV export
+                                sensor_export_csv = sensor_export.copy()
+                                sensor_export_csv['datetime'] = sensor_export_csv['datetime'].dt.strftime('%Y-%m-%d %H:%M:%S.%f').str[:-3] + '+00:00'
+                                
+                                # Convert to CSV and store in session state
+                                st.session_state['dredge_sensor_csv'] = sensor_export_csv.to_csv(index=False)
                                 st.session_state['dredge_sensor_stats'] = f"{len(sensor_export):,} records, {len(sensor_export.columns)-1} columns, ~{freq:.1f} Hz"
                                 
                                 st.success(f"✅ Sensor file ready: {st.session_state['dredge_sensor_stats']}")
