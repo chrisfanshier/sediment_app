@@ -470,6 +470,10 @@ if selected_core_export and selected_core_export != "-- choose --":
             winch_files_df['start_time'] = pd.to_datetime(winch_files_df['start_time'], errors='coerce').dt.tz_localize(None)
             winch_files_df['end_time'] = pd.to_datetime(winch_files_df['end_time'], errors='coerce').dt.tz_localize(None)
             
+            # Debug: show all winch files
+            st.write(f"**Found {len(winch_files_df)} winch file(s) for this cruise:**")
+            st.dataframe(winch_files_df[['file_name', 'start_time', 'end_time']], use_container_width=True)
+            
             # Find overlapping winch files
             overlap_mask = (
                 (winch_files_df['start_time'] <= usbl_end) & 
