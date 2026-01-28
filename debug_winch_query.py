@@ -81,3 +81,31 @@ if pd.api.types.is_datetime64_any_dtype(winch_files_df["end_time"]):
 
 print(f"\nAfter tz_localize(None):")
 print(winch_files_df[['file_name', 'start_time', 'end_time']].head(5))
+
+
+print("\n" + "=" * 80)
+print("STEP 6: Examine the exact string format")
+print("=" * 80)
+
+# Re-query
+with engine.connect() as conn:
+    winch_query = text("""
+        SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
+        FROM winch_data
+        WHERE cruise_id = :cruise_id
+        ORDER BY start_time
+    """)
+    winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
+
+# Look at row 1 (the one with timezone)
+row1_start = winch_files_df['start_time'].iloc[1]
+print(f"Row 1 start_time:")
+print(f"  Value: {row1_start}")
+print(f"  Repr: {repr(row1_start)}")
+print(f"  Length: {len(row1_start)}")
+print(f"  Bytes: {row1_start.encode('utf-8')}")
+
+# Try parsing just that one value
+test_parse = pd.to_datetime(row1_start, errors='coerce')
+print(f"\nDirect parse result: {test_parse}")
+print(f"Direct parse type: {type(test_parse)}")
