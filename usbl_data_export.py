@@ -528,13 +528,13 @@ if selected_core_export and selected_core_export != "-- choose --":
                         usbl_final_cols = required_usbl_cols + [c for c in optional_usbl_cols if c in usbl_export.columns]
                         usbl_export_final = usbl_export[usbl_final_cols]
                         
-                        # Convert to CSV
-                        usbl_csv = usbl_export_final.to_csv(index=False)
+                        # Convert to CSV and store in session state
+                        st.session_state['dredge_usbl_csv'] = usbl_export_final.to_csv(index=False)
+                        st.session_state['dredge_usbl_stats'] = f"{len(usbl_export_final)} points, {len(usbl_final_cols)} columns"
                         
-                        st.success(f"✅ USBL file ready: {len(usbl_export_final)} points, {len(usbl_final_cols)} columns")
+                        st.success(f"✅ USBL file ready: {st.session_state['dredge_usbl_stats']}")
                         
                         # === SENSOR FILE ===
-                        sensor_csv = None
                         if has_sensor or has_winch:
                             # Collect all unique datetimes
                             all_datetimes = []
@@ -576,76 +576,80 @@ if selected_core_export and selected_core_export != "-- choose --":
                                 if sensor_export['datetime'].dt.tz is None:
                                     sensor_export['datetime'] = sensor_export['datetime'].dt.tz_localize('UTC')
                                 
-                                # Convert to CSV
-                                sensor_csv = sensor_export.to_csv(index=False)
+                                # Convert to CSV and store in session state
+                                st.session_state['dredge_sensor_csv'] = sensor_export.to_csv(index=False)
                                 
                                 # Calculate stats
                                 time_diffs = sensor_export['datetime'].diff().dt.total_seconds()
                                 median_dt = time_diffs.median()
                                 freq = 1 / median_dt if median_dt > 0 else 0
                                 
-                                st.success(f"✅ Sensor file ready: {len(sensor_export):,} records, "
-                                         f"{len(sensor_export.columns)-1} columns, ~{freq:.1f} Hz")
-                        
-                        # === DOWNLOAD BUTTONS ===
-                        st.markdown("### 📥 Download Files for Dredge App")
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            st.download_button(
-                                label="📍 Download USBL Data",
-                                data=usbl_csv,
-                                file_name=f"{selected_core_export}_dredgeapp_usbl.csv",
-                                mime="text/csv",
-                                help="USBL position data with error ellipses and UTM coordinates"
-                            )
-                        
-                        with col2:
-                            if sensor_csv:
-                                st.download_button(
-                                    label="📊 Download Sensor Data",
-                                    data=sensor_csv,
-                                    file_name=f"{selected_core_export}_dredgeapp_sensor.csv",
-                                    mime="text/csv",
-                                    help="Combined sensor and winch time series data"
-                                )
-                            else:
-                                st.info("No sensor/winch data to export")
-                        
-                        # === USAGE INSTRUCTIONS ===
-                        with st.expander("ℹ️ How to use in Dredge App"):
-                            st.markdown(f"""
-                            **Step 1:** Download both files above
-                            
-                            **Step 2:** Open Dredge App:
-                            ```bash
-                            cd dredge_app
-                            python dredge_app.py
-                            ```
-                            
-                            **Step 3:** Load the files:
-                            - Click "Load USBL Data" → select `{selected_core_export}_dredgeapp_usbl.csv`
-                            - Click "Load Sensor Data" → select `{selected_core_export}_dredgeapp_sensor.csv`
-                            
-                            **Step 4:** Analyze:
-                            - Select sensor columns from dropdown to plot
-                            - Drag red region on time series to highlight location points
-                            - Click "Save Selected Region" to name and save regions
-                            - Export data with region tags as CSV or shapefile
-                            
-                            **Features:**
-                            - Interactive time series plotting with auto-downsampling
-                            - Linked selection between time series and location map
-                            - Error ellipse visualization
-                            - Multiple region selection and tagging
-                            - Export tagged data for further GIS analysis
-                            """)
+                                st.session_state['dredge_sensor_stats'] = f"{len(sensor_export):,} records, {len(sensor_export.columns)-1} columns, ~{freq:.1f} Hz"
+                                
+                                st.success(f"✅ Sensor file ready: {st.session_state['dredge_sensor_stats']}")
+                        else:
+                            st.session_state['dredge_sensor_csv'] = None
                         
                     except Exception as e:
                         st.error(f"❌ Export failed: {str(e)}")
                         import traceback
                         st.code(traceback.format_exc())
+            
+            # === DOWNLOAD BUTTONS (always show if data exists in session state) ===
+            if 'dredge_usbl_csv' in st.session_state and st.session_state['dredge_usbl_csv']:
+                st.markdown("### 📥 Download Files for Dredge App")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.download_button(
+                        label="📍 Download USBL Data",
+                        data=st.session_state['dredge_usbl_csv'],
+                        file_name=f"{selected_core_export}_dredgeapp_usbl.csv",
+                        mime="text/csv",
+                        help="USBL position data with error ellipses and UTM coordinates"
+                    )
+                
+                with col2:
+                    if 'dredge_sensor_csv' in st.session_state and st.session_state['dredge_sensor_csv']:
+                        st.download_button(
+                            label="📊 Download Sensor Data",
+                            data=st.session_state['dredge_sensor_csv'],
+                            file_name=f"{selected_core_export}_dredgeapp_sensor.csv",
+                            mime="text/csv",
+                            help="Combined sensor and winch time series data"
+                        )
+                    else:
+                        st.info("No sensor/winch data to export")
+                
+                # === USAGE INSTRUCTIONS ===
+                with st.expander("ℹ️ How to use in Dredge App"):
+                    st.markdown(f"""
+                    **Step 1:** Download both files above
+                    
+                    **Step 2:** Open Dredge App:
+                    ```bash
+                    cd dredge_app
+                    python dredge_app.py
+                    ```
+                    
+                    **Step 3:** Load the files:
+                    - Click "Load USBL Data" → select `{selected_core_export}_dredgeapp_usbl.csv`
+                    - Click "Load Sensor Data" → select `{selected_core_export}_dredgeapp_sensor.csv`
+                    
+                    **Step 4:** Analyze:
+                    - Select sensor columns from dropdown to plot
+                    - Drag red region on time series to highlight location points
+                    - Click "Save Selected Region" to name and save regions
+                    - Export data with region tags as CSV or shapefile
+                    
+                    **Features:**
+                    - Interactive time series plotting with auto-downsampling
+                    - Linked selection between time series and location map
+                    - Error ellipse visualization
+                    - Multiple region selection and tagging
+                    - Export tagged data for further GIS analysis
+                    """)
         
         # ========== SECTION 6: Advanced Merge (Original Feature) ==========
         st.markdown("---")
