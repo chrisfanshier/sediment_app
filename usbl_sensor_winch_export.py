@@ -353,18 +353,19 @@ st.subheader("Combining sensor, USBL, and winch data (outer merge, no interpolat
 
 def prep_for_merge(df, name):
     df = df.copy()
-    if not df.index.name == "datetime":
-        df = df.rename_axis("datetime")
-    df = df.reset_index()
+    # Ensure 'datetime' is a column (not index)
+    if 'datetime' not in df.columns and df.index.name == 'datetime':
+        df = df.reset_index()
     # Make datetime column naive if needed
-    if pd.api.types.is_datetime64_any_dtype(df['datetime']) and getattr(df['datetime'].dt, 'tz', None) is not None:
+    if 'datetime' in df.columns and pd.api.types.is_datetime64_any_dtype(df['datetime']) and getattr(df['datetime'].dt, 'tz', None) is not None:
         df['datetime'] = df['datetime'].dt.tz_localize(None)
-    df = df.sort_values("datetime")
+    if 'datetime' in df.columns:
+        df = df.sort_values("datetime")
     # Debug: show nulls and time range
     st.write(f"--- {name} ---")
     st.write(f"Shape: {df.shape}")
-    st.write(f"Null datetimes: {df['datetime'].isna().sum()}")
-    st.write(f"Time range: {df['datetime'].min()} to {df['datetime'].max()}")
+    st.write(f"Null datetimes: {df['datetime'].isna().sum() if 'datetime' in df.columns else 'N/A'}")
+    st.write(f"Time range: {df['datetime'].min() if 'datetime' in df.columns else 'N/A'} to {df['datetime'].max() if 'datetime' in df.columns else 'N/A'}")
     st.write(f"Columns: {list(df.columns)}")
     st.dataframe(df.head(10), use_container_width=True)
     return df
