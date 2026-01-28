@@ -1,12 +1,22 @@
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-# Your database connection
+# Database connection
 DB_URL = "postgresql://postgres:madmaxfuryroad@localhost/sediment_cores"
 engine = create_engine(DB_URL)
 
-cruise_id = 25  # RR2509 cruise_id from your example
+# Test parameters - use your actual USBL time range
+usbl_start = pd.to_datetime("2025-10-22 22:11:55.900000")
+usbl_end = pd.to_datetime("2025-10-23 00:59:54.840000")
+cruise_id = 25
 
+print("=" * 80)
+print("TESTING WINCH FILE SELECTION AND PARSING")
+print("=" * 80)
+print(f"USBL time range: {usbl_start} to {usbl_end}")
+print()
+
+# Query winch files
 with engine.connect() as conn:
     winch_query = text("""
         SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
@@ -16,121 +26,51 @@ with engine.connect() as conn:
     """)
     winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
 
-print("=" * 80)
-print("STEP 1: Raw data from database")
-print("=" * 80)
-print(f"DataFrame shape: {winch_files_df.shape}")
-print(f"\nFirst 3 rows:")
-print(winch_files_df[['file_name', 'start_time', 'end_time']].head(3))
-print(f"\nstart_time dtype: {winch_files_df['start_time'].dtype}")
-print(f"end_time dtype: {winch_files_df['end_time'].dtype}")
-print(f"\nstart_time first value type: {type(winch_files_df['start_time'].iloc[0])}")
-print(f"start_time first value: {winch_files_df['start_time'].iloc[0]}")
-print(f"start_time first value repr: {repr(winch_files_df['start_time'].iloc[0])}")
+print(f"Step 1: Query returned {len(winch_files_df)} winch files")
+print(f"start_time dtype before parsing: {winch_files_df['start_time'].dtype}")
 
-print("\n" + "=" * 80)
-print("STEP 2: After pd.to_datetime with utc=True")
-print("=" * 80)
-winch_files_df["start_time"] = pd.to_datetime(winch_files_df["start_time"], errors="coerce", utc=True)
-winch_files_df["end_time"] = pd.to_datetime(winch_files_df["end_time"], errors="coerce", utc=True)
-print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
-print(f"start_time first value: {winch_files_df['start_time'].iloc[0]}")
-print(f"\nFirst 3 rows:")
-print(winch_files_df[['file_name', 'start_time', 'end_time']].head(3))
+# Parse timestamps row by row
+winch_files_df["start_time"] = winch_files_df["start_time"].apply(lambda x: pd.to_datetime(x, errors="coerce"))
+winch_files_df["end_time"] = winch_files_df["end_time"].apply(lambda x: pd.to_datetime(x, errors="coerce"))
 
-print("\n" + "=" * 80)
-print("STEP 3: After tz_localize(None)")
-print("=" * 80)
-winch_files_df["start_time"] = winch_files_df["start_time"].dt.tz_localize(None)
-winch_files_df["end_time"] = winch_files_df["end_time"].dt.tz_localize(None)
+print(f"\nStep 2: After .apply() parsing")
 print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
-print(f"start_time first value: {winch_files_df['start_time'].iloc[0]}")
-print(f"\nFirst 3 rows:")
+print(f"First value type: {type(winch_files_df['start_time'].iloc[0])}")
+print(f"First 3 parsed times:")
 print(winch_files_df[['file_name', 'start_time', 'end_time']].head(3))
 
-print("\n" + "=" * 80)
-print("STEP 4: Retry WITHOUT utc=True")
-print("=" * 80)
+# Convert to datetime dtype
+winch_files_df["start_time"] = pd.to_datetime(winch_files_df["start_time"])
+winch_files_df["end_time"] = pd.to_datetime(winch_files_df["end_time"])
 
-# Re-query to get fresh data
-with engine.connect() as conn:
-    winch_query = text("""
-        SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
-        FROM winch_data
-        WHERE cruise_id = :cruise_id
-        ORDER BY start_time
-    """)
-    winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
-
-# Parse WITHOUT utc=True
-winch_files_df["start_time"] = pd.to_datetime(winch_files_df["start_time"], errors="coerce")
-winch_files_df["end_time"] = pd.to_datetime(winch_files_df["end_time"], errors="coerce")
-
+print(f"\nStep 3: After pd.to_datetime() conversion")
 print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
-print(f"start_time first value: {winch_files_df['start_time'].iloc[0]}")
-print(f"\nFirst 5 rows:")
-print(winch_files_df[['file_name', 'start_time', 'end_time']].head(5))
 
-# Then handle timezone if present
-if pd.api.types.is_datetime64_any_dtype(winch_files_df["start_time"]):
-    if winch_files_df["start_time"].dt.tz is not None:
-        winch_files_df["start_time"] = winch_files_df["start_time"].dt.tz_localize(None)
-if pd.api.types.is_datetime64_any_dtype(winch_files_df["end_time"]):
-    if winch_files_df["end_time"].dt.tz is not None:
-        winch_files_df["end_time"] = winch_files_df["end_time"].dt.tz_localize(None)
+# Handle timezone
+if hasattr(winch_files_df["start_time"].dtype, 'tz') and winch_files_df["start_time"].dt.tz is not None:
+    print(f"Timezone detected: {winch_files_df['start_time'].dt.tz}, removing...")
+    winch_files_df["start_time"] = winch_files_df["start_time"].dt.tz_localize(None)
+    winch_files_df["end_time"] = winch_files_df["end_time"].dt.tz_localize(None)
+else:
+    print("No timezone detected or already naive")
 
-print(f"\nAfter tz_localize(None):")
-print(winch_files_df[['file_name', 'start_time', 'end_time']].head(5))
+print(f"\nStep 4: After timezone handling")
+print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
+print(f"First 3 final times:")
+print(winch_files_df[['file_name', 'start_time', 'end_time']].head(3))
 
+# Find overlapping files
+overlap_mask = (
+    (winch_files_df['start_time'] <= usbl_end) & 
+    (winch_files_df['end_time'] >= usbl_start)
+)
+overlapping_winch = winch_files_df[overlap_mask]
 
-print("\n" + "=" * 80)
-print("STEP 6: Examine the exact string format")
-print("=" * 80)
-
-# Re-query
-with engine.connect() as conn:
-    winch_query = text("""
-        SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
-        FROM winch_data
-        WHERE cruise_id = :cruise_id
-        ORDER BY start_time
-    """)
-    winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
-
-# Look at row 1 (the one with timezone)
-row1_start = winch_files_df['start_time'].iloc[1]
-print(f"Row 1 start_time:")
-print(f"  Value: {row1_start}")
-print(f"  Repr: {repr(row1_start)}")
-print(f"  Length: {len(row1_start)}")
-print(f"  Bytes: {row1_start.encode('utf-8')}")
-
-# Try parsing just that one value
-test_parse = pd.to_datetime(row1_start, errors='coerce')
-print(f"\nDirect parse result: {test_parse}")
-print(f"Direct parse type: {type(test_parse)}")
+print(f"\nStep 5: Finding overlapping files")
+print(f"Found {len(overlapping_winch)} overlapping winch file(s):")
+for idx, row in overlapping_winch.iterrows():
+    print(f"  - {row['file_name']}: {row['start_time']} to {row['end_time']}")
 
 print("\n" + "=" * 80)
-print("STEP 7: Parse row by row")
+print("SUCCESS! Timestamps parsed and overlapping files found correctly")
 print("=" * 80)
-
-# Re-query
-with engine.connect() as conn:
-    winch_query = text("""
-        SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
-        FROM winch_data
-        WHERE cruise_id = :cruise_id
-        ORDER BY start_time
-    """)
-    winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
-
-# Parse row by row
-parsed_starts = []
-for val in winch_files_df['start_time']:
-    parsed = pd.to_datetime(val, errors='coerce')
-    parsed_starts.append(parsed)
-    
-winch_files_df['start_time_parsed'] = parsed_starts
-
-print("First 5 rows:")
-print(winch_files_df[['file_name', 'start_time', 'start_time_parsed']].head(5))
