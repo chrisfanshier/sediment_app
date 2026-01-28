@@ -264,3 +264,178 @@ if selected_core_export and selected_core_export != "-- choose --":
                         
                 except Exception as e:
                     st.error(f"❌ Error loading file: {str(e)}")
+    
+    # --- Merge sensor data with USBL data ---
+    if not sensor_files_df.empty and usbl_dfs:
+        st.markdown("---")
+        st.subheader("Merge Sensor Data with USBL")
+        
+        # Collect all sensor data and available columns
+        sensor_data_dict = {}  # {file_name: dataframe}
+        all_sensor_columns = {}  # {file_name: [list of numeric columns]}
+        
+        for idx, sensor_row in sensor_files_df.iterrows():
+            file_name = sensor_row['file_name']
+            file_path = sensor_row['file_path']
+            sensor_type = sensor_row['sensor_type'] if sensor_row['sensor_type'] else "Unknown"
+            
+            relative_path = os.path.join(file_path, file_name)
+            file_ext = os.path.splitext(file_name)[1].lower()
+            sensor_type_lower = sensor_type.lower()
+            
+            try:
+                from utils import process_rsk_data, process_star_oddi_data
+                
+                if file_ext == '.rsk' or 'rbr' in sensor_type_lower:
+                    df = process_rsk_data(relative_path)
+                elif file_ext in ['.dat', '.acc'] or 'star-oddi' in sensor_type_lower or 'staroddi' in sensor_type_lower:
+                    df = process_star_oddi_data(relative_path)
+                else:
+                    continue
+                
+                if df is not None:
+                    if 'datetime' not in df.columns:
+                        if 'Timestamp' in df.columns:
+                            df['datetime'] = df['Timestamp']
+                        else:
+                            continue
+                    
+                    # Get numeric columns (exclude datetime, timestamp, index)
+                    numeric_cols = [col for col in df.select_dtypes(include=['number']).columns 
+                                   if col.lower() not in ['index', 'datetime']]
+                    
+                    if numeric_cols:
+                        sensor_data_dict[file_name] = df
+                        all_sensor_columns[file_name] = numeric_cols
+                        
+            except Exception as e:
+                st.warning(f"Could not load {file_name} for merging: {str(e)}")
+        
+        if sensor_data_dict:
+            st.write(f"Found {len(sensor_data_dict)} sensor file(s) available for merging")
+            
+            # Let user select columns and aggregation method
+            st.write("**Select columns to merge with USBL data:**")
+            
+            merge_configs = []  # List of {file_name, column, method, threshold}
+            
+            for file_name, columns in all_sensor_columns.items():
+                with st.expander(f"📊 {file_name}"):
+                    for col in columns:
+                        col1, col2, col3 = st.columns([3, 2, 2])
+                        
+                        with col1:
+                            include = st.checkbox(f"{col}", key=f"merge_{file_name}_{col}")
+                        
+                        if include:
+                            with col2:
+                                method = st.selectbox(
+                                    "Method",
+                                    ["mean", "count > threshold", "count < threshold"],
+                                    key=f"method_{file_name}_{col}"
+                                )
+                            
+                            with col3:
+                                if "threshold" in method:
+                                    threshold = st.number_input(
+                                        "Threshold",
+                                        value=0.0,
+                                        step=0.1,
+                                        key=f"threshold_{file_name}_{col}"
+                                    )
+                                else:
+                                    threshold = None
+                            
+                            merge_configs.append({
+                                'file_name': file_name,
+                                'column': col,
+                                'method': method,
+                                'threshold': threshold
+                            })
+            
+            if merge_configs and st.button("Generate Merged USBL Data"):
+                with st.spinner("Merging sensor data with USBL..."):
+                    try:
+                        # Start with the concatenated USBL data
+                        merged_usbl = all_usbl.reset_index()
+                        
+                        # Remove timezone from USBL datetime
+                        merged_usbl['datetime'] = pd.to_datetime(merged_usbl['datetime']).dt.tz_localize(None)
+                        
+                        # Get unique beacon names
+                        beacon_names = merged_usbl['beacon_name'].unique()
+                        
+                        # For each beacon, calculate time intervals and merge sensor data
+                        for beacon in beacon_names:
+                            beacon_mask = merged_usbl['beacon_name'] == beacon
+                            beacon_times = merged_usbl.loc[beacon_mask, 'datetime'].sort_values()
+                            
+                            # For each selected column, create a new column in merged_usbl
+                            for config in merge_configs:
+                                file_name = config['file_name']
+                                column = config['column']
+                                method = config['method']
+                                threshold = config['threshold']
+                                
+                                # Get sensor data
+                                sensor_df = sensor_data_dict[file_name].copy()
+                                sensor_df['datetime'] = pd.to_datetime(sensor_df['datetime']).dt.tz_localize(None)
+                                
+                                # Create column name
+                                beacon_clean = beacon.replace(' ', '_')
+                                method_str = method.replace(' ', '_').replace('>', 'gt').replace('<', 'lt')
+                                new_col_name = f"{beacon_clean}_{column}_{method_str}"
+                                
+                                # Initialize column with NaN
+                                merged_usbl[new_col_name] = float('nan')
+                                
+                                # For each USBL measurement for this beacon
+                                beacon_indices = merged_usbl[beacon_mask].index
+                                for i, idx in enumerate(beacon_indices):
+                                    current_time = merged_usbl.loc[idx, 'datetime']
+                                    
+                                    # Find next time for this beacon to define interval
+                                    if i < len(beacon_indices) - 1:
+                                        next_idx = beacon_indices[i + 1]
+                                        next_time = merged_usbl.loc[next_idx, 'datetime']
+                                    else:
+                                        # Last measurement - use a small window
+                                        next_time = current_time + pd.Timedelta(seconds=1)
+                                    
+                                    # Find sensor measurements in this interval
+                                    interval_mask = (sensor_df['datetime'] >= current_time) & (sensor_df['datetime'] < next_time)
+                                    interval_data = sensor_df.loc[interval_mask, column]
+                                    
+                                    # Apply aggregation method
+                                    if not interval_data.empty:
+                                        if method == "mean":
+                                            value = interval_data.mean()
+                                        elif method == "count > threshold":
+                                            value = (interval_data > threshold).sum()
+                                        elif method == "count < threshold":
+                                            value = (interval_data < threshold).sum()
+                                        else:
+                                            value = float('nan')
+                                        
+                                        merged_usbl.loc[idx, new_col_name] = value
+                        
+                        # Show preview
+                        st.success(f"✅ Merged data created with {len(merge_configs)} sensor column(s)")
+                        st.write("**Preview of merged data:**")
+                        st.dataframe(merged_usbl.head(20), use_container_width=True)
+                        
+                        # Download button
+                        merged_csv = merged_usbl.to_csv(index=False)
+                        st.download_button(
+                            label=f"💾 Download Merged USBL + Sensor Data",
+                            data=merged_csv,
+                            file_name=f"{selected_core_export}_usbl_sensor_merged.csv",
+                            mime="text/csv"
+                        )
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error during merge: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
+        else:
+            st.info("No sensor files with numeric columns available for merging.")
