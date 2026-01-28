@@ -7,6 +7,7 @@ import json
 import os
 from utils import process_star_oddi_data, parse_winch_dat, load_usbl_file  # Now imported from utils
 from config import get_full_path
+import numpy as np
 
 st.title("Export Dredge Sensor + USBL + Winch Data")
 
@@ -418,3 +419,63 @@ if st.button("Download CSV"):
     )
     st.success(f"Ready to download {output_filename}")
     st.write(f"File will contain {len(export_df)} rows and {len(export_df.columns)} columns")
+
+# Custom USBL Aggregated Export
+
+st.subheader("Custom USBL Aggregated Export")
+
+# Only keep rows with a USBL position (e.g., 'latitude_deg' and 'longitude_deg' not null)
+usbl_rows = deployment_df[deployment_df['latitude_deg'].notnull() & deployment_df['longitude_deg'].notnull()].copy()
+
+# Let user select columns to aggregate (exclude datetime, lat/lon)
+agg_candidates = [col for col in deployment_df.columns if col not in ['datetime', 'latitude_deg', 'longitude_deg']]
+selected_cols = st.multiselect("Select columns to aggregate", agg_candidates, default=agg_candidates[:3])
+
+# Let user choose aggregation method for each selected column
+agg_methods = {}
+for col in selected_cols:
+    method = st.selectbox(
+        f"Aggregation for {col}",
+        ["mean", "max", "min", "count > threshold", "count < threshold"],
+        key=f"agg_{col}"
+    )
+    if "threshold" in method:
+        threshold = st.number_input(f"Threshold for {col}", value=float(deployment_df[col].mean()), key=f"thresh_{col}")
+        agg_methods[col] = (method, threshold)
+    else:
+        agg_methods[col] = (method, None)
+
+# Group by USBL position (timestamp, lat, lon)
+group_cols = ['datetime', 'latitude_deg', 'longitude_deg']
+agg_dict = {}
+
+for col, (method, thresh) in agg_methods.items():
+    if method == "mean":
+        agg_dict[col] = "mean"
+    elif method == "max":
+        agg_dict[col] = "max"
+    elif method == "min":
+        agg_dict[col] = "min"
+    elif method == "count > threshold":
+        agg_dict[col] = lambda x, t=thresh: np.sum(x > t)
+    elif method == "count < threshold":
+        agg_dict[col] = lambda x, t=thresh: np.sum(x < t)
+
+# Perform aggregation
+agg_df = usbl_rows.groupby(group_cols).agg(agg_dict).reset_index()
+
+st.write("**Preview of aggregated export:**")
+st.dataframe(agg_df.head(20), use_container_width=True)
+
+output_filename = f"{selected_core}_usbl_aggregated.csv"
+
+if st.button("Download Aggregated CSV"):
+    csv = agg_df.to_csv(index=False)
+    st.download_button(
+        label="💾 Download Aggregated USBL Data CSV",
+        data=csv,
+        file_name=output_filename,
+        mime="text/csv"
+    )
+    st.success(f"Ready to download {output_filename}")
+    st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
