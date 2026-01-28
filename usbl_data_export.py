@@ -439,3 +439,141 @@ if selected_core_export and selected_core_export != "-- choose --":
                         st.code(traceback.format_exc())
         else:
             st.info("No sensor files with numeric columns available for merging.")
+    
+    # --- Winch data for this cruise ---
+    if usbl_dfs:
+        st.markdown("---")
+        st.subheader("Winch Data")
+        
+        # Get the time range from USBL data
+        usbl_times = all_usbl.reset_index()
+        usbl_times['datetime'] = pd.to_datetime(usbl_times['datetime']).dt.tz_localize(None)
+        usbl_start = usbl_times['datetime'].min()
+        usbl_end = usbl_times['datetime'].max()
+        
+        st.write(f"**USBL time range:** {usbl_start} to {usbl_end}")
+        
+        # Query winch files for this cruise
+        with get_connection() as conn:
+            winch_query = text("""
+                SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
+                FROM winch_data
+                WHERE cruise_id = :cruise_id
+                ORDER BY start_time
+            """)
+            winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
+        
+        if winch_files_df.empty:
+            st.info("No winch files found for this cruise.")
+        else:
+            # Parse times
+            winch_files_df['start_time'] = pd.to_datetime(winch_files_df['start_time'], errors='coerce')
+            winch_files_df['end_time'] = pd.to_datetime(winch_files_df['end_time'], errors='coerce')
+            
+            # Find overlapping winch files
+            overlap_mask = (
+                (winch_files_df['start_time'] <= usbl_end) & 
+                (winch_files_df['end_time'] >= usbl_start)
+            )
+            overlapping_winch = winch_files_df[overlap_mask]
+            
+            if overlapping_winch.empty:
+                st.info("No winch files overlap with USBL time range.")
+            else:
+                st.write(f"Found {len(overlapping_winch)} winch file(s) overlapping with USBL data:")
+                st.dataframe(overlapping_winch[['file_name', 'start_time', 'end_time']], use_container_width=True)
+                
+                # Load and parse winch files
+                winch_dfs = []
+                for idx, winch_row in overlapping_winch.iterrows():
+                    file_name = winch_row['file_name']
+                    file_path = winch_row['file_path']
+                    settings = winch_row['settings']
+                    
+                    try:
+                        from utils import parse_winch_dat
+                        import json
+                        
+                        # Parse settings
+                        try:
+                            settings_dict = json.loads(settings) if settings else {}
+                        except json.JSONDecodeError:
+                            settings_dict = {}
+                        
+                        # Construct full file path
+                        relative_path = os.path.join(file_path, file_name)
+                        full_file_path = get_full_path(relative_path)
+                        
+                        # Use the settings from the database
+                        if settings_dict:
+                            parsing_settings = {
+                                "delimiter": settings_dict.get("delimiter", ","),
+                                "header_lines": settings_dict.get("header_lines", 0),
+                                "columns": settings_dict.get("columns", []),
+                                "datetime_code": settings_dict.get("datetime_code", "pd.to_datetime(df['datetime'])")
+                            }
+                            if "numeric_columns" in settings_dict:
+                                parsing_settings["numeric_columns"] = settings_dict["numeric_columns"]
+                        else:
+                            # Fallback settings
+                            file_ext = os.path.splitext(file_name)[1].lower()
+                            if file_ext == '.dat':
+                                parsing_settings = {
+                                    "delimiter": r"\s+",
+                                    "header_lines": 0,
+                                    "datetime_code": "pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute', 'second']])"
+                                }
+                            else:
+                                parsing_settings = {
+                                    "delimiter": ",",
+                                    "header_lines": 0,
+                                    "datetime_code": "pd.to_datetime(df['datetime'])"
+                                }
+                        
+                        # Parse the file
+                        df = parse_winch_dat(full_file_path, parsing_settings)
+                        
+                        if df is not None:
+                            # Ensure datetime column exists
+                            if 'datetime' not in df.columns:
+                                st.error(f"❌ No datetime column in {file_name}")
+                                continue
+                            
+                            winch_dfs.append(df)
+                            st.success(f"✅ Loaded {file_name}: {len(df):,} records")
+                        else:
+                            st.error(f"❌ Failed to parse {file_name}")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error loading {file_name}: {str(e)}")
+                
+                if winch_dfs:
+                    # Concatenate if multiple files
+                    if len(winch_dfs) > 1:
+                        all_winch = pd.concat(winch_dfs, ignore_index=True)
+                        all_winch = all_winch.sort_values('datetime').reset_index(drop=True)
+                        st.write(f"**Concatenated {len(winch_dfs)} winch files**")
+                    else:
+                        all_winch = winch_dfs[0]
+                    
+                    # Remove timezone if present
+                    all_winch['datetime'] = pd.to_datetime(all_winch['datetime']).dt.tz_localize(None)
+                    
+                    # Trim to USBL time range
+                    trim_mask = (all_winch['datetime'] >= usbl_start) & (all_winch['datetime'] <= usbl_end)
+                    trimmed_winch = all_winch[trim_mask].copy()
+                    
+                    st.write(f"**Trimmed to USBL time range:** {len(all_winch):,} → {len(trimmed_winch):,} records")
+                    st.write(f"**Time range:** {trimmed_winch['datetime'].min()} to {trimmed_winch['datetime'].max()}")
+                    
+                    # Get numeric columns
+                    exclude_cols = ['index', 'datetime', 'date', 'time', 'year', 'month', 'day', 'hour', 'minute', 'second']
+                    numeric_cols = [col for col in trimmed_winch.select_dtypes(include=['number']).columns 
+                                   if col.lower() not in exclude_cols]
+                    st.write(f"**Available parameters:** {', '.join(numeric_cols)}")
+                    
+                    # Preview
+                    with st.expander("Preview Winch Data"):
+                        st.dataframe(trimmed_winch.head(20), use_container_width=True)
+                else:
+                    st.info("No winch data could be loaded.")
