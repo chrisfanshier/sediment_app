@@ -47,3 +47,37 @@ print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
 print(f"start_time first value: {winch_files_df['start_time'].iloc[0]}")
 print(f"\nFirst 3 rows:")
 print(winch_files_df[['file_name', 'start_time', 'end_time']].head(3))
+
+print("\n" + "=" * 80)
+print("STEP 4: Retry WITHOUT utc=True")
+print("=" * 80)
+
+# Re-query to get fresh data
+with engine.connect() as conn:
+    winch_query = text("""
+        SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
+        FROM winch_data
+        WHERE cruise_id = :cruise_id
+        ORDER BY start_time
+    """)
+    winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
+
+# Parse WITHOUT utc=True
+winch_files_df["start_time"] = pd.to_datetime(winch_files_df["start_time"], errors="coerce")
+winch_files_df["end_time"] = pd.to_datetime(winch_files_df["end_time"], errors="coerce")
+
+print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
+print(f"start_time first value: {winch_files_df['start_time'].iloc[0]}")
+print(f"\nFirst 5 rows:")
+print(winch_files_df[['file_name', 'start_time', 'end_time']].head(5))
+
+# Then handle timezone if present
+if pd.api.types.is_datetime64_any_dtype(winch_files_df["start_time"]):
+    if winch_files_df["start_time"].dt.tz is not None:
+        winch_files_df["start_time"] = winch_files_df["start_time"].dt.tz_localize(None)
+if pd.api.types.is_datetime64_any_dtype(winch_files_df["end_time"]):
+    if winch_files_df["end_time"].dt.tz is not None:
+        winch_files_df["end_time"] = winch_files_df["end_time"].dt.tz_localize(None)
+
+print(f"\nAfter tz_localize(None):")
+print(winch_files_df[['file_name', 'start_time', 'end_time']].head(5))
