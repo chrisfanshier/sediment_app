@@ -410,7 +410,7 @@ if st.button("Download CSV"):
     # Make sure datetime column is naive
     if pd.api.types.is_datetime64_any_dtype(export_df['datetime']) and getattr(export_df['datetime'].dt, 'tz', None) is not None:
         export_df['datetime'] = export_df['datetime'].dt.tz_localize(None)
-    csv = export_df.to_csv(index=False)
+    csv = export_df.reset_index().to_csv(index=False)
     st.download_button(
         label="💾 Download Combined Data CSV",
         data=csv,
