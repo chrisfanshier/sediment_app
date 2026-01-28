@@ -29,35 +29,24 @@ with engine.connect() as conn:
 print(f"Step 1: Query returned {len(winch_files_df)} winch files")
 print(f"start_time dtype before parsing: {winch_files_df['start_time'].dtype}")
 
-# Parse timestamps row by row
-winch_files_df["start_time"] = winch_files_df["start_time"].apply(lambda x: pd.to_datetime(x, errors="coerce"))
-winch_files_df["end_time"] = winch_files_df["end_time"].apply(lambda x: pd.to_datetime(x, errors="coerce"))
+# Parse timestamps row by row AND remove timezone in one step
+def parse_and_strip_tz(x):
+    dt = pd.to_datetime(x, errors="coerce")
+    if dt is pd.NaT:
+        return dt
+    # Remove timezone if present
+    if hasattr(dt, 'tz') and dt.tz is not None:
+        return dt.tz_localize(None)
+    return dt
 
-print(f"\nStep 2: After .apply() parsing")
+winch_files_df["start_time"] = winch_files_df["start_time"].apply(parse_and_strip_tz)
+winch_files_df["end_time"] = winch_files_df["end_time"].apply(parse_and_strip_tz)
+
+print(f"\nStep 2: After .apply() parsing with timezone stripping")
 print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
 print(f"First value type: {type(winch_files_df['start_time'].iloc[0])}")
-print(f"First 3 parsed times:")
-print(winch_files_df[['file_name', 'start_time', 'end_time']].head(3))
-
-# Convert to datetime dtype
-winch_files_df["start_time"] = pd.to_datetime(winch_files_df["start_time"])
-winch_files_df["end_time"] = pd.to_datetime(winch_files_df["end_time"])
-
-print(f"\nStep 3: After pd.to_datetime() conversion")
-print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
-
-# Handle timezone
-if hasattr(winch_files_df["start_time"].dtype, 'tz') and winch_files_df["start_time"].dt.tz is not None:
-    print(f"Timezone detected: {winch_files_df['start_time'].dt.tz}, removing...")
-    winch_files_df["start_time"] = winch_files_df["start_time"].dt.tz_localize(None)
-    winch_files_df["end_time"] = winch_files_df["end_time"].dt.tz_localize(None)
-else:
-    print("No timezone detected or already naive")
-
-print(f"\nStep 4: After timezone handling")
-print(f"start_time dtype: {winch_files_df['start_time'].dtype}")
-print(f"First 3 final times:")
-print(winch_files_df[['file_name', 'start_time', 'end_time']].head(3))
+print(f"First 5 parsed times:")
+print(winch_files_df[['file_name', 'start_time', 'end_time']].head(5))
 
 # Find overlapping files
 overlap_mask = (
@@ -66,7 +55,7 @@ overlap_mask = (
 )
 overlapping_winch = winch_files_df[overlap_mask]
 
-print(f"\nStep 5: Finding overlapping files")
+print(f"\nStep 3: Finding overlapping files")
 print(f"Found {len(overlapping_winch)} overlapping winch file(s):")
 for idx, row in overlapping_winch.iterrows():
     print(f"  - {row['file_name']}: {row['start_time']} to {row['end_time']}")
