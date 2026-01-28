@@ -166,11 +166,11 @@ if not sensor_files.empty:
             df = process_star_oddi_data(file_path)
             if df is not None:
                 # Set Timestamp as index and make timezone-naive
-                df.set_index('Timestamp', inplace=True)
-                if hasattr(df.index, 'tz') and df.index.tz is not None:
-                    df.index = df.index.tz_localize(None)
-                key = f"{sensor_type}_{row['file_id']}"
-                sensor_dfs[key] = df
+                if 'Timestamp' in df.columns and 'datetime' not in df.columns:
+                    df = df.rename(columns={'Timestamp': 'datetime'})
+                if pd.api.types.is_datetime64_any_dtype(df['datetime']) and getattr(df['datetime'].dt, 'tz', None) is not None:
+                    df['datetime'] = df['datetime'].dt.tz_localize(None)
+                sensor_dfs[row['file_name']] = df
                 st.success(f"✓ Loaded {row['file_name']}: {len(df)} rows, {df.index[0]} to {df.index[-1]}")
                 st.write(f"**Preview of {row['file_name']} ({sensor_type}):**")
                 st.dataframe(df.head(10), use_container_width=True)
@@ -519,7 +519,6 @@ if st.button("Download Aggregated CSV"):
 st.subheader("Aggregate by USBL windows")
 
 def aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_methods):
-    # usbl_df must have a datetime index or column
     usbl_df = usbl_df.sort_values("datetime").reset_index(drop=True)
     result_rows = []
     for i, row in usbl_df.iterrows():
@@ -534,9 +533,9 @@ def aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_m
         else:
             t_end = t0 + (usbl_df.loc[i+1, "datetime"] - t0) / 2
 
-        # Aggregate sensor data in this window
-        sensor_window = sensor_df[(sensor_df.index >= t_start) & (sensor_df.index < t_end)]
-        winch_window = winch_df[(winch_df.index >= t_start) & (winch_df.index < t_end)]
+        # Use boolean masks on the 'datetime' column
+        sensor_window = sensor_df[(sensor_df['datetime'] >= t_start) & (sensor_df['datetime'] < t_end)]
+        winch_window = winch_df[(winch_df['datetime'] >= t_start) & (winch_df['datetime'] < t_end)]
 
         agg_row = row.to_dict()
         for col, (method, thresh) in agg_methods.items():
