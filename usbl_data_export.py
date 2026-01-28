@@ -126,7 +126,7 @@ if selected_core_export and selected_core_export != "-- choose --":
     
     if usbl_dfs:
         all_usbl = pd.concat(usbl_dfs)
-        all_usbl = all_usbl[~all_usbl.index.duplicated(keep='first')]
+        # Keep ALL data points - no removal
         all_usbl = all_usbl.sort_index()
         
         # Get USBL time range for later use
