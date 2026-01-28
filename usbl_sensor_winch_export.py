@@ -425,10 +425,17 @@ if st.button("Download CSV"):
 st.subheader("Custom USBL Aggregated Export")
 
 # Only keep rows with a USBL position (e.g., 'latitude_deg' and 'longitude_deg' not null)
-usbl_rows = deployment_df[deployment_df['latitude_deg'].notnull() & deployment_df['longitude_deg'].notnull()].copy()
+usbl_rows = deployment_df[
+    deployment_df['latitude_deg'].notnull() & 
+    deployment_df['longitude_deg'].notnull() & 
+    deployment_df['beacon_name'].notnull()
+].copy()
 
-# Let user select columns to aggregate (exclude datetime, lat/lon)
-agg_candidates = [col for col in deployment_df.columns if col not in ['datetime', 'latitude_deg', 'longitude_deg']]
+# Let user select columns to aggregate (exclude datetime, lat/lon, beacon_name)
+agg_candidates = [
+    col for col in deployment_df.columns 
+    if col not in ['datetime', 'latitude_deg', 'longitude_deg', 'beacon_name']
+]
 selected_cols = st.multiselect("Select columns to aggregate", agg_candidates, default=agg_candidates[:3])
 
 # Let user choose aggregation method for each selected column
@@ -445,8 +452,8 @@ for col in selected_cols:
     else:
         agg_methods[col] = (method, None)
 
-# Group by USBL position (timestamp, lat, lon)
-group_cols = ['datetime', 'latitude_deg', 'longitude_deg']
+# Group by USBL position (timestamp, lat, lon, beacon_name)
+group_cols = ['datetime', 'latitude_deg', 'longitude_deg', 'beacon_name']
 agg_dict = {}
 
 for col, (method, thresh) in agg_methods.items():
