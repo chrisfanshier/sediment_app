@@ -131,8 +131,17 @@ if selected_core_export and selected_core_export != "-- choose --":
         # Sort by datetime
         all_usbl = all_usbl.sort_values('datetime').reset_index(drop=True)
         
-        # Export CSV
-        csv = all_usbl.to_csv(index=False)
+        # Verify datetime column exists
+        if 'datetime' not in all_usbl.columns:
+            st.error("Error: datetime column missing from USBL data")
+        else:
+            st.write(f"USBL data loaded: {len(all_usbl)} records")
+            st.write(f"Time range: {all_usbl['datetime'].min()} to {all_usbl['datetime'].max()}")
+            st.write(f"Columns: {list(all_usbl.columns)}")
+            st.dataframe(all_usbl.head(10), use_container_width=True)
+        
+        # Export CSV with datetime preserved
+        csv = all_usbl.to_csv(index=False, date_format='%Y-%m-%d %H:%M:%S.%f')
         st.download_button(
             label=f"💾 Download all USBL data for {selected_core_export}",
             data=csv,
@@ -153,13 +162,14 @@ if selected_core_export and selected_core_export != "-- choose --":
                 utm_zone=utm_zone,
                 northern=northern
             )
-            export_cols = ["X_Center", "Y_Center", "hor_err_major", "hor_err_minor", "hor_err_dir"]
+            # Include datetime in export
+            export_cols = ["datetime", "X_Center", "Y_Center", "hor_err_major", "hor_err_minor", "hor_err_dir"]
             arcgis_df = ellipse_df[export_cols].rename(columns={
                 "hor_err_major": "Semi_Major",
                 "hor_err_minor": "Semi_Minor",
                 "hor_err_dir": "Azimuth"
             })
-            ellipse_csv = arcgis_df.to_csv(index=False)
+            ellipse_csv = arcgis_df.to_csv(index=False, date_format='%Y-%m-%d %H:%M:%S.%f')
             st.download_button(
                 label="💾 Download Ellipse Table (ArcGIS, UTM)",
                 data=ellipse_csv,
