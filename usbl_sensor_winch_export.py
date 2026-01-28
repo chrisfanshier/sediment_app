@@ -582,24 +582,28 @@ def aggregate_by_usbl_windows(usbl_df, sensor_df, winch_df, selected_cols, agg_m
         result_rows.append(agg_row)
     return pd.DataFrame(result_rows)
 
-if combined_usbl is not None and combined_sensors is not None and combined_winch is not None and len(selected_cols) > 0:
-    st.write("Aggregating by USBL windows...")
-    agg_df = aggregate_by_usbl_windows(combined_usbl, combined_sensors, combined_winch, selected_cols, agg_methods)
-    st.write("**Preview of aggregated export:**")
-    st.dataframe(agg_df.head(20), use_container_width=True)
+if combined_usbl is not None and combined_sensors is not None and combined_winch is not None:
+    # Only run if user has selected columns and methods
+    if len(selected_cols) > 0 and len(agg_methods) > 0:
+        st.write("Aggregating by USBL windows...")
+        agg_df = aggregate_by_usbl_windows(combined_usbl, combined_sensors, combined_winch, selected_cols, agg_methods)
+        st.write("**Preview of aggregated export:**")
+        st.dataframe(agg_df.head(20), use_container_width=True)
 
-    output_filename = f"{selected_core}_usbl_aggregated_windows.csv"
+        output_filename = f"{selected_core}_usbl_aggregated_windows.csv"
 
-    if st.button("Download Aggregated CSV (Windows)", key="download_agg_2"):
-        csv = agg_df.to_csv(index=False)
-        st.download_button(
-            label="💾 Download Aggregated USBL Data CSV",
-            data=csv,
-            file_name=output_filename,
-            mime="text/csv",
-            key="download_agg_windows"
-        )
-        st.success(f"Ready to download {output_filename}")
-        st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
+        if st.button("Download Aggregated CSV (Windows)", key="download_agg_2"):
+            csv = agg_df.to_csv(index=False)
+            st.download_button(
+                label="💾 Download Aggregated USBL Data CSV",
+                data=csv,
+                file_name=output_filename,
+                mime="text/csv",
+                key="download_agg_windows"
+            )
+            st.success(f"Ready to download {output_filename}")
+            st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
+    else:
+        st.info("Select columns to aggregate in the section above to enable USBL window aggregation")
 else:
     st.info("No data available for USBL window aggregation")
