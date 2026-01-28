@@ -153,10 +153,15 @@ if selected_core_export and selected_core_export != "-- choose --":
                 if 'datetime' not in all_usbl.columns:
                     st.error("Error: datetime column missing from USBL data")
                 else:
-                    st.write(f"USBL data loaded: {len(all_usbl)} records")
-                    st.write(f"Time range: {all_usbl['datetime'].min()} to {all_usbl['datetime'].max()}")
-                    st.write(f"Columns: {list(all_usbl.columns)}")
-                    st.dataframe(all_usbl.head(10), use_container_width=True)
+                    st.success(f"✅ USBL data loaded: {len(all_usbl)} records")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Time range (start)", all_usbl['datetime'].min())
+                    with col2:
+                        st.metric("Time range (end)", all_usbl['datetime'].max())
+                    
+                    with st.expander("Preview USBL data"):
+                        st.dataframe(all_usbl.head(20), use_container_width=True)
                 
                 # Export CSV with datetime preserved
                 csv = all_usbl.to_csv(index=False, date_format='%Y-%m-%d %H:%M:%S.%f')
@@ -301,8 +306,13 @@ if selected_core_export and selected_core_export != "-- choose --":
                                     continue
                             
                             # Display metrics
-                            st.write(f"**Records:** {len(df):,}")
-                            st.write(f"**Time range:** {df['datetime'].min()} to {df['datetime'].max()}")
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Records", f"{len(df):,}")
+                            with col2:
+                                st.metric("Start Time", df['datetime'].min())
+                            with col3:
+                                st.metric("End Time", df['datetime'].max())
                             
                             # Display available parameters
                             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
