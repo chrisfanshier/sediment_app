@@ -486,3 +486,59 @@ if st.button("Download Aggregated CSV"):
     )
     st.success(f"Ready to download {output_filename}")
     st.write(f"File will contain {len(agg_df)} rows and {len(agg_df.columns)} columns")
+
+# Aggregate by USBL windows
+st.subheader("USBL Windows Aggregation")
+
+def aggregate_by_usbl_windows(usbl_df, data_df, selected_cols, agg_methods):
+    # usbl_df: DataFrame with USBL positions, must have 'datetime' and 'beacon_name'
+    # data_df: DataFrame with sensor/winch data, must have 'datetime'
+    # selected_cols: list of columns to aggregate from data_df
+    # agg_methods: dict of {col: (method, threshold)}
+    results = []
+    usbl_df = usbl_df.sort_values(['beacon_name', 'datetime']).reset_index(drop=True)
+    data_df = data_df.sort_values('datetime').reset_index(drop=True)
+    for beacon, group in usbl_df.groupby('beacon_name'):
+        group = group.reset_index(drop=True)
+        for i, row in group.iterrows():
+            t0 = row['datetime']
+            t1 = group.iloc[i+1]['datetime'] if i+1 < len(group) else t0 + pd.Timedelta(seconds=1e6)
+            window = data_df[(data_df['datetime'] >= t0) & (data_df['datetime'] < t1)]
+            agg_row = row.to_dict()
+            for col, (method, thresh) in agg_methods.items():
+                if col in window.columns:
+                    data = window[col].dropna()
+                    if len(data) == 0:
+                        agg_row[col] = np.nan
+                    elif method == "mean":
+                        agg_row[col] = data.mean()
+                    elif method == "max":
+                        agg_row[col] = data.max()
+                    elif method == "min":
+                        agg_row[col] = data.min()
+                    elif method == "count > threshold":
+                        agg_row[col] = np.sum(data > thresh)
+                    elif method == "count < threshold":
+                        agg_row[col] = np.sum(data < thresh)
+                else:
+                    agg_row[col] = np.nan
+            results.append(agg_row)
+    return pd.DataFrame(results)
+
+usbl_windows_df = aggregate_by_usbl_windows(combined_usbl, deployment_df, selected_cols, agg_methods)
+
+st.write("**Preview of USBL windows aggregation:**")
+st.dataframe(usbl_windows_df.head(20), use_container_width=True)
+
+output_filename = f"{selected_core}_usbl_windows_aggregated.csv"
+
+if st.button("Download USBL Windows Aggregated CSV"):
+    csv = usbl_windows_df.to_csv(index=False)
+    st.download_button(
+        label="💾 Download USBL Windows Aggregated Data CSV",
+        data=csv,
+        file_name=output_filename,
+        mime="text/csv"
+    )
+    st.success(f"Ready to download {output_filename}")
+    st.write(f"File will contain {len(usbl_windows_df)} rows and {len(usbl_windows_df.columns)} columns")
