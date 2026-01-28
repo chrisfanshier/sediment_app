@@ -466,9 +466,9 @@ if selected_core_export and selected_core_export != "-- choose --":
         if winch_files_df.empty:
             st.info("No winch files found for this cruise.")
         else:
-            # Parse times and remove timezone for comparison
-            winch_files_df['start_time'] = pd.to_datetime(winch_files_df['start_time'], errors='coerce').dt.tz_localize(None)
-            winch_files_df['end_time'] = pd.to_datetime(winch_files_df['end_time'], errors='coerce').dt.tz_localize(None)
+            # Parse times - handle timezone-aware timestamps from database
+            winch_files_df['start_time'] = pd.to_datetime(winch_files_df['start_time'], utc=True, errors='coerce').dt.tz_localize(None)
+            winch_files_df['end_time'] = pd.to_datetime(winch_files_df['end_time'], utc=True, errors='coerce').dt.tz_localize(None)
             
             # Debug: show all winch files
             st.write(f"**Found {len(winch_files_df)} winch file(s) for this cruise:**")
