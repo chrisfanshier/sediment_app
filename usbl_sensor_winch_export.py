@@ -25,7 +25,7 @@ def get_cruise_core_lists():
         cores = pd.read_sql(
             text("SELECT * FROM cores WHERE cruise_id = :cruise_id ORDER BY core_name"),
             conn,
-            params={"cruise_id": cruises.iloc[0]['cruise_id']} if not cruises.empty else {}
+            params={"cruise_id": int(cruises.iloc[0]['cruise_id'])} if not cruises.empty else {}
         )
     return cruises, cores
 
