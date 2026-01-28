@@ -199,11 +199,14 @@ if not sensor_files.empty:
         st.dataframe(combined_sensors.head(10), use_container_width=True)
         
         # Check sampling rate
-        time_diffs = combined_sensors.index.to_series().diff()
+        time_diffs = combined_sensors['datetime'].sort_values().diff()
         median_interval = time_diffs.median()
         st.write(f"- Median sampling interval: {median_interval}")
-        if median_interval and median_interval.total_seconds() > 0:
-            st.write(f"- Approximate frequency: {1 / median_interval.total_seconds():.2f} Hz")
+        if pd.notnull(median_interval):
+            # median_interval is a Timedelta, so .total_seconds() is safe
+            seconds = median_interval.total_seconds()
+            if seconds > 0:
+                st.write(f"- Approximate frequency: {1 / seconds:.2f} Hz")
     else:
         combined_sensors = None
 else:
