@@ -466,9 +466,9 @@ if selected_core_export and selected_core_export != "-- choose --":
         if winch_files_df.empty:
             st.info("No winch files found for this cruise.")
         else:
-            # Parse times
-            winch_files_df['start_time'] = pd.to_datetime(winch_files_df['start_time'], errors='coerce')
-            winch_files_df['end_time'] = pd.to_datetime(winch_files_df['end_time'], errors='coerce')
+            # Parse times and remove timezone for comparison
+            winch_files_df['start_time'] = pd.to_datetime(winch_files_df['start_time'], errors='coerce').dt.tz_localize(None)
+            winch_files_df['end_time'] = pd.to_datetime(winch_files_df['end_time'], errors='coerce').dt.tz_localize(None)
             
             # Find overlapping winch files
             overlap_mask = (
