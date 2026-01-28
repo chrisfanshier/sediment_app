@@ -109,3 +109,28 @@ print(f"  Bytes: {row1_start.encode('utf-8')}")
 test_parse = pd.to_datetime(row1_start, errors='coerce')
 print(f"\nDirect parse result: {test_parse}")
 print(f"Direct parse type: {type(test_parse)}")
+
+print("\n" + "=" * 80)
+print("STEP 7: Parse row by row")
+print("=" * 80)
+
+# Re-query
+with engine.connect() as conn:
+    winch_query = text("""
+        SELECT winch_file_id, file_name, file_path, start_time, end_time, settings
+        FROM winch_data
+        WHERE cruise_id = :cruise_id
+        ORDER BY start_time
+    """)
+    winch_files_df = pd.read_sql(winch_query, conn, params={"cruise_id": cruise_id})
+
+# Parse row by row
+parsed_starts = []
+for val in winch_files_df['start_time']:
+    parsed = pd.to_datetime(val, errors='coerce')
+    parsed_starts.append(parsed)
+    
+winch_files_df['start_time_parsed'] = parsed_starts
+
+print("First 5 rows:")
+print(winch_files_df[['file_name', 'start_time', 'start_time_parsed']].head(5))
