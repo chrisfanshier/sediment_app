@@ -381,13 +381,13 @@ if selected_core_export and selected_core_export != "-- choose --":
                                 sensor_df = sensor_data_dict[file_name].copy()
                                 sensor_df['datetime'] = pd.to_datetime(sensor_df['datetime']).dt.tz_localize(None)
                                 
-                                # Create column name
-                                beacon_clean = beacon.replace(' ', '_')
+                                # Create column name (without beacon name - GIS can filter by beacon_name)
                                 method_str = method.replace(' ', '_').replace('>', 'gt').replace('<', 'lt')
-                                new_col_name = f"{beacon_clean}_{column}_{method_str}"
+                                new_col_name = f"{column}_{method_str}"
                                 
-                                # Initialize column with NaN
-                                merged_usbl[new_col_name] = float('nan')
+                                # Initialize column with NaN if it doesn't exist
+                                if new_col_name not in merged_usbl.columns:
+                                    merged_usbl[new_col_name] = float('nan')
                                 
                                 # For each USBL measurement for this beacon
                                 beacon_indices = merged_usbl[beacon_mask].index
