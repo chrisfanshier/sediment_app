@@ -466,15 +466,18 @@ if selected_core_export and selected_core_export != "-- choose --":
         if winch_files_df.empty:
             st.info("No winch files found for this cruise.")
         else:
-            # Parse timestamps row by row (mixed timezone formats require this)
-            winch_files_df["start_time"] = winch_files_df["start_time"].apply(lambda x: pd.to_datetime(x, errors="coerce"))
-            winch_files_df["end_time"] = winch_files_df["end_time"].apply(lambda x: pd.to_datetime(x, errors="coerce"))
+            # Parse timestamps row by row AND remove timezone in one step
+            def parse_and_strip_tz(x):
+                dt = pd.to_datetime(x, errors="coerce")
+                if dt is pd.NaT:
+                    return dt
+                # Remove timezone if present
+                if hasattr(dt, 'tz') and dt.tz is not None:
+                    return dt.tz_localize(None)
+                return dt
             
-            # Remove timezone if present
-            if winch_files_df["start_time"].dt.tz is not None:
-                winch_files_df["start_time"] = winch_files_df["start_time"].dt.tz_localize(None)
-            if winch_files_df["end_time"].dt.tz is not None:
-                winch_files_df["end_time"] = winch_files_df["end_time"].dt.tz_localize(None)
+            winch_files_df["start_time"] = winch_files_df["start_time"].apply(parse_and_strip_tz)
+            winch_files_df["end_time"] = winch_files_df["end_time"].apply(parse_and_strip_tz)
             
             # Show all winch files
             st.write(f"**Found {len(winch_files_df)} winch file(s) for this cruise:**")
