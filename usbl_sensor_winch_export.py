@@ -525,6 +525,9 @@ def aggregate_by_usbl_windows(usbl_df, data_df, selected_cols, agg_methods):
             results.append(agg_row)
     return pd.DataFrame(results)
 
+if combined_usbl is not None and combined_usbl.index.name == "datetime" and "datetime" not in combined_usbl.columns:
+    combined_usbl = combined_usbl.reset_index()
+
 usbl_windows_df = aggregate_by_usbl_windows(combined_usbl, deployment_df, selected_cols, agg_methods)
 
 st.write("**Preview of USBL windows aggregation:**")
