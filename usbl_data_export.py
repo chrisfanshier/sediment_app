@@ -322,13 +322,13 @@ if selected_core_export and selected_core_export != "-- choose --":
                 
                 # Cache function for loading winch data
                 @st.cache_data
-                def load_and_parse_winch_files(winch_rows):
+                def load_and_parse_winch_files(winch_rows_tuple):
                     """Load and parse winch files, returning combined dataframe"""
                     from utils import parse_winch_dat
                     import json
                     
                     winch_dfs = []
-                    for _, winch_row in winch_rows.iterrows():
+                    for winch_row in winch_rows_tuple:
                         file_name = winch_row['file_name']
                         file_path = winch_row['file_path']
                         settings = winch_row['settings']
