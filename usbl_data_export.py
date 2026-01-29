@@ -111,6 +111,10 @@ if selected_core_export and selected_core_export != "-- choose --":
     usbl_file_list = [f.strip() for f in usbl_file_list.split(",") if f.strip()]
     usbl_dfs = []
     
+    # Ensure flags exist even if sensor/winch loading is skipped
+    has_sensor = False
+    has_winch = False
+    
     for fname in usbl_file_list:
         row = usbl_df[usbl_df["file_name"] == fname]
         if not row.empty:
@@ -121,6 +125,7 @@ if selected_core_export and selected_core_export != "-- choose --":
                 df = load_usbl_file(full_path)
                 if df is not None:
                     usbl_dfs.append(df)
+                    has_sensor = True
             except Exception as e:
                 st.error(f"Error loading USBL file: {e}")
     
