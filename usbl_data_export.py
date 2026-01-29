@@ -302,6 +302,9 @@ if selected_core_export and selected_core_export != "-- choose --":
         else:
             st.info("No sensor files found for this core.")
         
+        # Ensure has_sensor is always defined
+        has_sensor = bool(sensor_data_dict)
+        
         # ========== SECTION 4: Load Winch Data ==========
         st.markdown("---")
         st.subheader("⚙️ Winch Data")
@@ -457,6 +460,9 @@ if selected_core_export and selected_core_export != "-- choose --":
                 st.info("No winch files overlap with USBL time range.")
         else:
             st.info("No winch files found for this cruise.")
+        
+        # Ensure has_winch is always defined
+        has_winch = winch_data_available and trimmed_winch is not None
         
         # ========== SECTION 5: DREDGE APP EXPORT ==========
         st.markdown("---")
