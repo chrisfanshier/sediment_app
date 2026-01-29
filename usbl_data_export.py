@@ -192,7 +192,7 @@ if selected_core_export and selected_core_export != "-- choose --":
                     )
                 else:
                     ellipse_df = all_usbl
-                
+
                 # Build polygons
                 gdf = gpd.GeoDataFrame(
                     ellipse_df,
@@ -202,7 +202,11 @@ if selected_core_export and selected_core_export != "-- choose --":
                     ],
                     crs=f"EPSG:326{utm_zone:02d}" if northern else f"EPSG:327{utm_zone:02d}"
                 )
-                
+
+                # Add ISO datetime string column for export (preserves full datetime info)
+                if 'datetime' in gdf.columns:
+                    gdf['datetime_str'] = pd.to_datetime(gdf['datetime']).astype(str)
+
                 # Save to shapefile zip
                 import zipfile
                 with tempfile.TemporaryDirectory() as tmpdir:
