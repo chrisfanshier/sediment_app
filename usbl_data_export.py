@@ -150,10 +150,15 @@ if selected_core_export and selected_core_export != "-- choose --":
         # ========== SECTION 2: UTM Ellipse Exports ==========
         st.markdown("---")
         st.subheader("🗺️ Export USBL Error Ellipses (for GIS)")
-        
-        utm_zone = st.number_input("UTM Zone", min_value=1, max_value=60, value=33)
-        northern = st.radio("Hemisphere", ["Northern", "Southern"]) == "Northern"
-        
+
+        # Automatically determine UTM zone and hemisphere from data
+        mean_lon = all_usbl['longitude_deg'].mean()
+        mean_lat = all_usbl['latitude_deg'].mean()
+        utm_zone = int((mean_lon + 180) / 6) + 1
+        northern = mean_lat >= 0
+
+        st.write(f"Auto-detected UTM zone: {utm_zone} ({'Northern' if northern else 'Southern'} Hemisphere)")
+
         col1, col2 = st.columns(2)
         
         with col1:
@@ -207,10 +212,11 @@ if selected_core_export and selected_core_export != "-- choose --":
                 if 'datetime' in gdf.columns:
                     gdf['datetime_str'] = pd.to_datetime(gdf['datetime']).astype(str)
 
-                # Save to GeoPackage
+                # Save to GeoPackage with core name as layer name
+                layer_name = f"{selected_core_export}_ellipses".replace("-", "_").replace(" ", "_")
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    gpkg_path = os.path.join(tmpdir, "usbl_ellipses.gpkg")
-                    gdf.to_file(gpkg_path, layer="usbl_ellipses", driver="GPKG")
+                    gpkg_path = os.path.join(tmpdir, f"{selected_core_export}_usbl_ellipses.gpkg")
+                    gdf.to_file(gpkg_path, layer=layer_name, driver="GPKG")
                     with open(gpkg_path, "rb") as f:
                         st.download_button(
                             label="💾 Download Ellipse Polygons (GeoPackage)",
@@ -456,11 +462,11 @@ if selected_core_export and selected_core_export != "-- choose --":
         st.markdown("---")
         st.subheader("🚀 Export for Dredge App (Time Series Analysis)")
         st.write("Create standardized files for interactive time series visualization and region selection")
-        
+
         has_usbl = all_usbl is not None and not all_usbl.empty
-        has_sensor = bool(sensor_data_dict)
-        has_winch = winch_data_available and trimmed_winch is not None
-        
+        # Ensure these are always defined before use
+        # has_sensor and has_winch are now defined above
+
         if has_usbl:
             col1, col2 = st.columns(2)
             
@@ -659,7 +665,10 @@ if selected_core_export and selected_core_export != "-- choose --":
         st.markdown("---")
         st.subheader("🔗 Advanced Merge: Aggregate Sensor Data to USBL Points")
         st.write("Merge sensor/winch data with USBL using aggregation methods (for GIS attribute tables)")
-        
+
+        # Ensure these are always defined before use
+        # has_sensor and has_winch are now defined above
+
         if has_sensor or has_winch:
             # Collect available columns
             all_merge_columns = {}
