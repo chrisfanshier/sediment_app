@@ -180,7 +180,7 @@ if selected_core_export and selected_core_export != "-- choose --":
                 )
         
         with col2:
-            if st.button("Download Ellipse Polygons (Shapefile, ZIP)"):
+            if st.button("Download Ellipse Polygons (GeoPackage)"):
                 # Ensure UTM coordinates exist
                 if "X_Center" not in all_usbl.columns or "Y_Center" not in all_usbl.columns:
                     ellipse_df = add_utm_coords(
@@ -207,23 +207,16 @@ if selected_core_export and selected_core_export != "-- choose --":
                 if 'datetime' in gdf.columns:
                     gdf['datetime_str'] = pd.to_datetime(gdf['datetime']).astype(str)
 
-                # Save to shapefile zip
-                import zipfile
+                # Save to GeoPackage
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    shp_path = os.path.join(tmpdir, "usbl_ellipses.shp")
-                    gdf.to_file(shp_path, driver="ESRI Shapefile")
-                    zip_path = os.path.join(tmpdir, f"{selected_core_export}_usbl_ellipses.zip")
-                    with zipfile.ZipFile(zip_path, "w") as zipf:
-                        for ext in [".shp", ".shx", ".dbf", ".prj", ".cpg"]:
-                            file = os.path.join(tmpdir, f"usbl_ellipses{ext}")
-                            if os.path.exists(file):
-                                zipf.write(file, arcname=f"usbl_ellipses{ext}")
-                    with open(zip_path, "rb") as f:
+                    gpkg_path = os.path.join(tmpdir, "usbl_ellipses.gpkg")
+                    gdf.to_file(gpkg_path, layer="usbl_ellipses", driver="GPKG")
+                    with open(gpkg_path, "rb") as f:
                         st.download_button(
-                            label="💾 Download Ellipse Polygons (Shapefile)",
+                            label="💾 Download Ellipse Polygons (GeoPackage)",
                             data=f.read(),
-                            file_name=f"{selected_core_export}_usbl_ellipses.zip",
-                            mime="application/zip"
+                            file_name=f"{selected_core_export}_usbl_ellipses.gpkg",
+                            mime="application/octet-stream"
                         )
         
         # ========== SECTION 3: Load Sensor Files ==========
