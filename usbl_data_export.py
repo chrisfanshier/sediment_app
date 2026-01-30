@@ -294,15 +294,14 @@ if selected_core_export and selected_core_export != "-- choose --":
                 sensor_rows_tuple = tuple(sensor_files_df.to_dict('records'))
                 sensor_data_dict = load_and_parse_sensor_files(sensor_rows_tuple)
             
-            # Display preview of each sensor file
+            # Display preview of each sensor file (collapsed by default)
             for file_name, df in sensor_data_dict.items():
                 sensor_row = sensor_files_df[sensor_files_df['file_name'] == file_name].iloc[0]
                 sensor_type = sensor_row['sensor_type'] if sensor_row['sensor_type'] else "Unknown"
                 sensor_location = sensor_row['sensor_location'] if sensor_row['sensor_location'] else "N/A"
                 
-                with st.expander(f"📊 {file_name} ({sensor_type} - {sensor_location})"):
+                with st.expander(f"📊 {file_name} ({sensor_type} - {sensor_location})", expanded=False):
                     st.write(f"**Records:** {len(df):,}")
-                    st.write(f"**Time range:** {df['datetime'].min()} to {df['datetime'].max()}")
                     st.dataframe(df.head(10), use_container_width=True)
         else:
             st.info("No sensor files found for this core.")
@@ -445,24 +444,19 @@ if selected_core_export and selected_core_export != "-- choose --":
                 
                 if trimmed_winch is not None:
                     winch_data_available = True
-                    
-                    # Get numeric columns
-                    exclude_cols = ['index', 'datetime', 'date', 'time', 'year', 'month', 'day', 
-                                   'hour', 'minute', 'second', 'source_file']
-                    winch_numeric_cols = [col for col in trimmed_winch.select_dtypes(include=['number']).columns 
-                                         if col.lower() not in exclude_cols]
-                    
-                    st.write(f"**Winch data loaded:** {len(trimmed_winch):,} records")
-                    st.write(f"**Time range:** {trimmed_winch['datetime'].min()} to {trimmed_winch['datetime'].max()}")
-                    st.write(f"**Available parameters:** {', '.join(winch_numeric_cols)}")
-                    
-                    # Preview
-                    with st.expander("Preview Winch Data"):
-                        st.dataframe(trimmed_winch.head(20), use_container_width=True)
-                else:
-                    st.info("No winch data could be loaded.")
-            else:
-                st.info("No winch files overlap with USBL time range.")
+            
+            # Get numeric columns
+            exclude_cols = ['index', 'datetime', 'date', 'time', 'year', 'month', 'day', 
+                           'hour', 'minute', 'second', 'source_file']
+            winch_numeric_cols = [col for col in trimmed_winch.select_dtypes(include=['number']).columns 
+                                 if col.lower() not in exclude_cols]
+            
+            st.write(f"**Winch data loaded:** {len(trimmed_winch):,} records")
+            st.write(f"**Time range:** {trimmed_winch['datetime'].min()} to {trimmed_winch['datetime'].max()}")
+            
+            # Preview
+            with st.expander("Preview Winch Data", expanded=False):
+                st.dataframe(trimmed_winch.head(20), use_container_width=True)
         else:
             st.info("No winch files found for this cruise.")
         
