@@ -471,7 +471,7 @@ def load_usbl_file(file_path):
         )
         st.write(f"Loaded USBL file: {file_path}")
         st.write("Columns:", list(df.columns))
-        st.dataframe(df.head(10), use_container_width=True)
+        #st.dataframe(df.head(10), use_container_width=True)
         
         # Extract date from filename
         file_name = Path(file_path).name
@@ -502,10 +502,10 @@ def load_usbl_file(file_path):
                       "fix_status", "hor_err_major", "hor_err_minor", 
                       "hor_err_dir", "depth_error"]].copy()
         
-        st.write(f"Preview of parsed USBL data from {file_name}:")
-        st.dataframe(usbl_df.head(10), use_container_width=True)
-        st.write("Datetime dtype:", usbl_df['datetime'].dtype)
-        st.write("Non-null latitude_deg:", usbl_df['latitude_deg'].notna().sum())
+        #st.write(f"Preview of parsed USBL data from {file_name}:")
+        #st.dataframe(usbl_df.head(10), use_container_width=True)
+        #st.write("Datetime dtype:", usbl_df['datetime'].dtype)
+        #st.write("Non-null latitude_deg:", usbl_df['latitude_deg'].notna().sum())
         
         return usbl_df
         
