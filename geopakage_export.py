@@ -29,7 +29,7 @@ def get_cruise_info(cruise_name):
         print(f"❌ Error: Cruise '{cruise_name}' not found in database")
         sys.exit(1)
     
-    return result.iloc[0]['cruise_id'], result.iloc[0]['cruise_name']
+    return int(result.iloc[0]['cruise_id']), result.iloc[0]['cruise_name']
 
 
 def get_cores_and_usbl(cruise_id):
