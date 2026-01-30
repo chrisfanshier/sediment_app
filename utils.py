@@ -470,7 +470,7 @@ def load_usbl_file(file_path):
             dtype={"utc_time": str},
         )
         st.write(f"Loaded USBL file: {file_path}")
-        st.write("Columns:", list(df.columns))
+        #st.write("Columns:", list(df.columns))
         #st.dataframe(df.head(10), use_container_width=True)
         
         # Extract date from filename
