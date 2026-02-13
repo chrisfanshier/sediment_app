@@ -116,70 +116,64 @@ def view_cruises():
         
         # Show related cores with file information
         with get_connection() as conn:
-            # Enhanced query to show file availability
             related_cores_query = """
-            SELECT 
-                c.core_name, 
-                c.date, 
-                c.station,
-                COUNT(DISTINCT sf.file_id) as sensor_files,
-                COUNT(DISTINCT mf.file_id) as mscl_files,
-                CASE WHEN COUNT(DISTINCT sf.file_id) > 0 THEN '✅' ELSE '❌' END as has_sensor,
-                CASE WHEN COUNT(DISTINCT mf.file_id) > 0 THEN '✅' ELSE '❌' END as has_mscl
-            FROM cores c
-            LEFT JOIN sensor_files sf ON c.core_id = sf.core_id
-            LEFT JOIN mscl_files mf ON c.core_id = mf.core_id
-            WHERE c.cruise_id = :cruise_id 
-            GROUP BY c.core_id, c.core_name, c.date, c.station
-            ORDER BY c.core_name
+                SELECT
+                    co.core_id,
+                    co.core_name,
+                    COUNT(DISTINCT sf.file_id) AS sensor_file_count,
+                    COUNT(DISTINCT ms.file_id) AS mscl_file_count,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM sections s
+                            JOIN ct_xml x ON x.section_id = s.section_id
+                            WHERE s.core_id = co.core_id
+                        ) THEN 1 ELSE 0
+                    END AS has_ct_data
+                FROM cores co
+                LEFT JOIN sections sec ON sec.core_id = co.core_id
+                LEFT JOIN sensor_files sf ON sf.core_id = co.core_id
+                LEFT JOIN mscl_files ms ON ms.core_id = co.core_id
+                WHERE co.cruise_id = :cruise_id
+                GROUP BY co.core_id, co.core_name
+                ORDER BY co.core_name
             """
-            related_cores = conn.execute(text(related_cores_query), {"cruise_id": selected_cruise_id}).fetchall()
+            related_cores = conn.execute(
+                text(related_cores_query), {"cruise_id": cruise_data.cruise_id}
+            ).fetchall()
             
             # Get related winch data count
             winch_count_query = "SELECT COUNT(*) FROM winch_data WHERE cruise_id = :cruise_id"
             winch_count = conn.execute(text(winch_count_query), {"cruise_id": selected_cruise_id}).scalar()
         
         if related_cores:
-            st.write(f"**Cores from this cruise ({len(related_cores)}):**")
-            
-            # Create enhanced dataframe
-            cores_df = pd.DataFrame(related_cores, columns=[
-                'Core Name', 'Date', 'Station', 'Sensor Files', 'MSCL Files', 'Sensor Data', 'MSCL Data'
+            import pandas as pd
+            df = pd.DataFrame(related_cores, columns=[
+                "Core ID", "Core Name", "Sensor Files", "MSCL Files", "Has CT Data"
             ])
+            # add CT data check mark column, leave other logic intact
+            df["CT data"] = df["Has CT Data"].apply(lambda x: "✓" if x else "")
+            df = df.drop(columns=["Has CT Data"])
+            st.dataframe(df)
+
+            # --- summary metrics (added CT-count) ---
+            try:
+                total_cores = len(df)
+                cores_with_sensor = (df["Sensor Files"].astype(int) > 0).sum()
+                cores_with_mscl = (df["MSCL Files"].astype(int) > 0).sum()
+            except Exception:
+                # fallback if types are unexpected
+                cores_with_sensor = (df["Sensor Files"] > 0).sum()
+                cores_with_mscl = (df["MSCL Files"] > 0).sum()
+
+            cores_with_ct = (df["CT data"] == "✓").sum()
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Total cores", total_cores)
+            col2.metric("Cores with sensor files", int(cores_with_sensor))
+            col3.metric("Cores with MSCL files", int(cores_with_mscl))
+            col4.metric("Cores with CT data", int(cores_with_ct))
             
-            # Display the enhanced table
-            st.dataframe(
-                cores_df,
-                use_container_width=True,
-                column_config={
-                    "Core Name": st.column_config.TextColumn("Core Name", width="medium"),
-                    "Date": st.column_config.DateColumn("Date", width="small"),
-                    "Station": st.column_config.TextColumn("Station", width="small"),
-                    "Sensor Files": st.column_config.NumberColumn("# Sensor Files", width="small"),
-                    "MSCL Files": st.column_config.NumberColumn("# MSCL Files", width="small"),
-                    "Sensor Data": st.column_config.TextColumn("Sensor", width="small"),
-                    "MSCL Data": st.column_config.TextColumn("MSCL", width="small"),
-                }
-            )
-            
-            # Summary statistics
-            total_sensor_files = sum(row[3] for row in related_cores)
-            total_mscl_files = sum(row[4] for row in related_cores)
-            cores_with_sensor = sum(1 for row in related_cores if row[3] > 0)
-            cores_with_mscl = sum(1 for row in related_cores if row[4] > 0)
-            
-            st.markdown("#### 📈 Data Summary")
-            summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
-            
-            with summary_col1:
-                st.metric("Total Sensor Files", total_sensor_files)
-            with summary_col2:
-                st.metric("Total MSCL Files", total_mscl_files)
-            with summary_col3:
-                st.metric("Cores with Sensor Data", f"{cores_with_sensor}/{len(related_cores)}")
-            with summary_col4:
-                st.metric("Cores with MSCL Data", f"{cores_with_mscl}/{len(related_cores)}")
-                
         else:
             st.info("No cores found for this cruise.")
         
