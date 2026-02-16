@@ -72,7 +72,9 @@ def get_cores_for_cruise(cruise_id):
     """Get cores with core_type_id = 1 and sensor files"""
     with get_connection() as conn:
         query = text("""
-            SELECT DISTINCT c.core_id, c.core_name, ct.core_type_name
+            SELECT DISTINCT c.core_id, c.core_name, ct.core_type_name,
+                   c.core_length, c.trigger_core_length, c.trigger_line_length,
+                   c.scope, c.pig_weights, c.wire_type
             FROM cores c
             LEFT JOIN core_types ct ON c.core_type_id = ct.core_type_id
             LEFT JOIN sensor_files sf ON c.core_id = sf.core_id
@@ -263,6 +265,21 @@ def main():
             f.write(f"# Cruise: {cruise_name} - {vessel_name}\n")
             f.write(f"# Core: {core.core_name}\n")
             f.write(f"# Core Type: {core.core_type_name}\n")
+            # Include JPC-specific core fields if core type indicates JPC
+            try:
+                core_type_name = core.core_type_name.lower() if core.core_type_name else ""
+            except Exception:
+                core_type_name = ""
+            if 'jpc' in core_type_name:
+                def _val(attr):
+                    v = getattr(core, attr, None)
+                    return v if v is not None else "N/A"
+                f.write(f"# Core length: {_val('core_length')}\n")
+                f.write(f"# Trigger core length: {_val('trigger_core_length')}\n")
+                f.write(f"# Trigger line length: {_val('trigger_line_length')}\n")
+                f.write(f"# Scope: {_val('scope')}\n")
+                f.write(f"# Pig weights: {_val('pig_weights')}\n")
+                f.write(f"# Wire type: {_val('wire_type')}\n")
             f.write(f"# Sensor files included: {len(included_files)}\n")
             for fname in included_files:
                 f.write(f"#   - {fname}\n")
