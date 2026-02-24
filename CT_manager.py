@@ -4,9 +4,11 @@ from datetime import datetime
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
+import time
+import shutil
 
 # === Database Setup ===
-engine = create_engine("postgresql+psycopg2://postgres:madmaxfuryroad@localhost:5432/sediment_cores")
+engine = create_engine("postgresql+psycopg2://postgres:madmaxfuryroad@localhost:5432/shipside")
 
 # === XML Parsing ===
 def parse_ct_xml(xml_path):
@@ -43,8 +45,13 @@ def parse_ct_xml(xml_path):
             "xml_root_tag": root_tag,
             "total_scanned_length": total_scanned_length
         }
+        
+        # Explicitly help GC by deleting tree reference
+        del tree
+        
         return data
     except Exception as e:
+        print(f"Error parsing {xml_path}: {e}")
         return None
 
 # === File Manager Class ===
@@ -66,24 +73,59 @@ class CTFileManager:
             tree = ET.parse(full_path)
             root = tree.getroot()
             
+            # Define all possible tag name variants
+            possible_tags = [field_name]
+            
+            if field_name == "Core-ID":
+                possible_tags.extend(["coreID", "core-id", "CoreID", "COREID"])
+            elif field_name == "Section-ID":
+                possible_tags.extend(["sectionID", "section-id", "SectionID", "SECTIONID"])
+            elif field_name == "Section-Number":
+                possible_tags.extend(["section-number", "sectionNumber", "SectionNumber"])
+            
             found = False
+            updated_tag = None
+            old_value = None
+            
             for elem in root.iter():
-                if elem.tag.lower() == field_name.lower():
+                # Check if element tag matches any variant (case-insensitive)
+                if any(elem.tag.lower() == tag.lower() for tag in possible_tags):
                     old_value = elem.text
                     elem.text = new_value
                     found = True
-                    print(f"Updated {elem.tag}: '{old_value}' → '{new_value}' in {os.path.basename(full_path)}")
+                    updated_tag = elem.tag
                     break
-        
+            
             if found:
-                tree.write(full_path, encoding='utf-8', xml_declaration=True)
+                # Write to temp file first
+                temp_path = full_path + ".tmp"
+                tree.write(temp_path, encoding='utf-8', xml_declaration=True)
+                
+                # Explicitly delete tree to release file handle
+                del tree
+                
+                # Small delay to ensure file handle is released
+                time.sleep(0.05)
+                
+                # Replace original with temp file
+                shutil.move(temp_path, full_path)
+                
+                print(f"Updated {updated_tag}: '{old_value}' → '{new_value}' in {os.path.basename(full_path)}")
                 return True
             else:
-                print(f"Field '{field_name}' not found in {full_path}")
+                del tree
+                print(f"Field '{field_name}' (tried variants: {', '.join(possible_tags)}) not found in {os.path.basename(full_path)}")
                 return False
             
         except Exception as e:
             print(f"Error editing XML {full_path}: {e}")
+            # Clean up temp file if it exists
+            temp_path = full_path + ".tmp"
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
             return False
 
 # === PHASE 1: Scan & Validate ===
@@ -197,157 +239,142 @@ def get_validation_summary(validated_records):
     
     return df, summary_data
 
-# === PHASE 2: Save to Staging ===
-def save_to_staging(validated_records):
-    """Save validated records to staging table, skipping records already in staging OR ct_xml"""
+# === PHASE 2: Import Directly to Database ===
+def import_to_database(validated_records):
+    """
+    Import validated records directly to ct_xml
+    Uses fingerprint deduplication to prevent duplicates
+    """
     saved_count = 0
-    skipped_count = 0
+    skipped_by_path = 0
+    skipped_by_fingerprint = 0
+    failed_count = 0
     
     with engine.begin() as conn:
-        # Get existing XMLs in staging
-        existing_in_staging = set(
-            row[0] for row in conn.execute(text("SELECT xml_path FROM ct_xml_staging"))
-        )
-        
-        # Get existing XMLs in main ct_xml table
-        existing_in_ct_xml = set(
+        # Get existing paths
+        existing_paths = set(
             row[0] for row in conn.execute(text("SELECT xml_path FROM ct_xml"))
         )
         
-        # Combined set of all existing XMLs
-        all_existing = existing_in_staging | existing_in_ct_xml
+        # Get existing fingerprints
+        existing_fingerprints = set()
+        result = conn.execute(text("""
+            SELECT 
+                core_name, 
+                section_number, 
+                xml_root_tag, 
+                COALESCE(image_type, '') as image_type, 
+                COALESCE(processing_stage, '') as processing_stage
+            FROM ct_xml
+        """))
+        for row in result:
+            fingerprint = (
+                row[0],  # core_name
+                str(row[1]),  # section_number
+                row[2],  # xml_root_tag
+                row[3],  # image_type
+                row[4]   # processing_stage
+            )
+            existing_fingerprints.add(fingerprint)
         
         for val in validated_records:
             if val["status"] != "valid":
-                skipped_count += 1
+                failed_count += 1
                 continue
             
             record = val["record"]
             
-            # Skip if already in staging OR already in ct_xml
-            if record["xml_path"] in all_existing:
-                skipped_count += 1
+            # CHECK 1: Skip if path exists (exact same file location)
+            if record["xml_path"] in existing_paths:
+                skipped_by_path += 1
                 continue
             
-            # Get core_id
-            core_row = conn.execute(
-                text("SELECT core_id FROM cores WHERE TRIM(core_name) = :core_name"),
-                {"core_name": record["core_name"].strip()}
-            ).fetchone()
-            core_id = core_row[0]
+            # CHECK 2: Skip if fingerprint exists (same scan, different location)
+            fingerprint = (
+                record["core_name"],
+                str(record["section_number"]),
+                record["xml_root_tag"],
+                record.get("image_type", "") or "",
+                record.get("processing_stage", "") or ""
+            )
             
-            # Get section_id
-            section_number_int = int(record["section_number"])
-            section_row = conn.execute(
-                text("SELECT section_id FROM sections WHERE core_id = :core_id AND section_number = :section_number"),
-                {"core_id": core_id, "section_number": section_number_int}
-            ).fetchone()
-            section_id = section_row[0]
+            if fingerprint in existing_fingerprints:
+                print(f"⚠️ Skipping duplicate fingerprint (file may have moved): {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {fingerprint[3]}")
+                print(f"   Path: {record['xml_path']}")
+                skipped_by_fingerprint += 1
+                continue
             
-            # Insert to staging
-            conn.execute(
-                text("""
-                    INSERT INTO ct_xml_staging (
-                        core_id, core_name, section_id, scan_id, image_type,
-                        processing_stage, section_number,
-                        xml_path, tiff_folder, xml_root_tag, timestamp
-                    ) VALUES (
-                        :core_id, :core_name, :section_id, :scan_id, :image_type,
-                        :processing_stage, :section_number,
-                        :xml_path, :tiff_folder, :xml_root_tag, :timestamp
+            # PASSED BOTH CHECKS - Import this record
+            try:
+                # Get core_id
+                core_row = conn.execute(
+                    text("SELECT core_id FROM cores WHERE TRIM(core_name) = :core_name"),
+                    {"core_name": record["core_name"].strip()}
+                ).fetchone()
+                core_id = core_row[0]
+                
+                # Get section_id
+                section_number_int = int(record["section_number"])
+                section_row = conn.execute(
+                    text("SELECT section_id FROM sections WHERE core_id = :core_id AND section_number = :section_number"),
+                    {"core_id": core_id, "section_number": section_number_int}
+                ).fetchone()
+                section_id = section_row[0]
+                
+                # Insert to ct_xml
+                conn.execute(
+                    text("""
+                        INSERT INTO ct_xml (
+                            core_id, core_name, section_id, scan_id, image_type,
+                            processing_stage, section_number,
+                            xml_path, tiff_folder, xml_root_tag, timestamp
+                        ) VALUES (
+                            :core_id, :core_name, :section_id, :scan_id, :image_type,
+                            :processing_stage, :section_number,
+                            :xml_path, :tiff_folder, :xml_root_tag, :timestamp
+                        )
+                    """),
+                    dict(
+                        core_id=core_id,
+                        core_name=record["core_name"],
+                        section_id=section_id,
+                        scan_id=record["scan_id"],
+                        image_type=record["image_type"],
+                        processing_stage=record["processing_stage"],
+                        section_number=record["section_number"],
+                        xml_path=record["xml_path"],
+                        tiff_folder=record["tiff_folder"],
+                        xml_root_tag=record["xml_root_tag"],
+                        timestamp=record["timestamp"]
                     )
-                """),
-                dict(
-                    core_id=core_id,
-                    core_name=record["core_name"],
-                    section_id=section_id,
-                    scan_id=record["scan_id"],
-                    image_type=record["image_type"],
-                    processing_stage=record["processing_stage"],
-                    section_number=record["section_number"],
-                    xml_path=record["xml_path"],
-                    tiff_folder=record["tiff_folder"],
-                    xml_root_tag=record["xml_root_tag"],
-                    timestamp=record["timestamp"]
                 )
-            )
-            saved_count += 1
+                saved_count += 1
+                
+            except Exception as e:
+                print(f"❌ Error importing {record['xml_path']}: {e}")
+                failed_count += 1
     
-    return saved_count, skipped_count
-
-def get_staging_summary():
-    """Get summary of what's in staging"""
-    with engine.connect() as conn:
-        result = conn.execute(text("""
-            SELECT 
-                core_name,
-                section_number,
-                COUNT(*) as xml_count,
-                STRING_AGG(DISTINCT scan_id, ', ') as scan_types,
-                STRING_AGG(DISTINCT processing_stage, ', ') as stages
-            FROM ct_xml_staging
-            GROUP BY core_name, section_number
-            ORDER BY core_name, section_number
-        """))
-        rows = [dict(row._mapping) for row in result.fetchall()]
+    # Print detailed report
+    if skipped_by_path > 0:
+        print(f"ℹ️ Skipped {skipped_by_path} records (path already exists)")
+    if skipped_by_fingerprint > 0:
+        print(f"ℹ️ Skipped {skipped_by_fingerprint} records (fingerprint already exists - use Tab 3 to update paths)")
     
-    if not rows:
-        return pd.DataFrame()
-    
-    df = pd.DataFrame(rows)
-    df.columns = ["Core", "Section", "XML Count", "Scan Types", "Processing Stages"]
-    
-    return df
-
-def approve_and_import_staging():
-    """Move all records from staging to ct_xml, skipping duplicates"""
-    with engine.begin() as conn:
-        # Insert only records that don't already exist in ct_xml
-        result = conn.execute(text("""
-            INSERT INTO ct_xml 
-            SELECT s.* 
-            FROM ct_xml_staging s
-            WHERE NOT EXISTS (
-                SELECT 1 
-                FROM ct_xml c 
-                WHERE c.xml_path = s.xml_path
-            )
-        """))
-        
-        inserted_count = result.rowcount
-        
-        # Delete all from staging (including duplicates that weren't inserted)
-        conn.execute(text("DELETE FROM ct_xml_staging"))
-        
-        return inserted_count
+    return saved_count, skipped_by_path, skipped_by_fingerprint, failed_count
 
 # === PHASE 3: View ct_xml table ===
 def get_ct_xml_summary():
-    """Get summary of what's in ct_xml with separate columns for CT Stack and Image data"""
+    """Get summary of what's in ct_xml with separate columns for CT directories and images"""
     with engine.connect() as conn:
+        # Get all records
         result = conn.execute(text("""
             SELECT 
                 core_name,
                 section_number,
-                COUNT(*) as xml_count,
-                -- CT Stack data (has processing stages)
-                STRING_AGG(
-                    DISTINCT CASE 
-                        WHEN xml_root_tag = 'geotek-ct-stack' 
-                        THEN image_type || ' (' || processing_stage || ')' 
-                    END, 
-                    ', '
-                ) as ct_stack_data,
-                -- Image data (no processing stages)
-                STRING_AGG(
-                    DISTINCT CASE 
-                        WHEN xml_root_tag = 'geotek-image' 
-                        THEN image_type 
-                    END, 
-                    ', '
-                ) as image_data
+                xml_root_tag,
+                image_type,
+                processing_stage
             FROM ct_xml
-            GROUP BY core_name, section_number
             ORDER BY core_name, section_number
         """))
         rows = [dict(row._mapping) for row in result.fetchall()]
@@ -355,17 +382,76 @@ def get_ct_xml_summary():
     if not rows:
         return pd.DataFrame()
     
+    # Convert to DataFrame for easier manipulation
     df = pd.DataFrame(rows)
-    df.columns = ["Core", "Section", "Total XMLs", "CT Stack Types", "Image Types"]
     
-    # Replace None with empty string for cleaner display
-    df["CT Stack Types"] = df["CT Stack Types"].fillna("")
-    df["Image Types"] = df["Image Types"].fillna("")
+    # Directory types (CT scans with processing stages)
+    # These come from both geotek-ct-stack and geotek-ct-recon
+    directory_types = ["CT-Volume", "Helical", "Laminography"]
     
-    return df
+    # Image types (photos/views without processing stages)
+    # These come from geotek-image
+    image_types = ["giXRayImage", "giCTOrthogonalView"]
+    
+    summary_rows = []
+    
+    # Get unique core/section pairs
+    all_pairs = df[["core_name", "section_number"]].drop_duplicates()
+    
+    for _, row in all_pairs.iterrows():
+        core = row["core_name"]
+        section = row["section_number"]
+        
+        subdf = df[(df["core_name"] == core) & (df["section_number"] == section)]
+        
+        # Count total XMLs
+        xml_count = len(subdf)
+        
+        # Build directories column (CT scans with stages)
+        # Filter to only geotek-ct-stack and geotek-ct-recon records
+        ct_scan_records = subdf[subdf["xml_root_tag"].isin(["geotek-ct-stack", "geotek-ct-recon"])]
+        
+        directories = []
+        for dtype in directory_types:
+            # Get all stages for this image type from CT scan records
+            stages = ct_scan_records.loc[
+                ct_scan_records["image_type"] == dtype, 
+                "processing_stage"
+            ].dropna().unique()
+            
+            if len(stages) > 0:
+                stage_list = ", ".join(sorted(stages))
+                directories.append(f"{dtype} ({stage_list})")
+        
+        directories_str = "; ".join(directories) if directories else ""
+        
+        # Build images column (image types without stages)
+        # Filter to only geotek-image records
+        image_records = subdf[subdf["xml_root_tag"] == "geotek-image"]
+        
+        images = []
+        for itype in image_types:
+            if (image_records["image_type"] == itype).any():
+                images.append(itype)
+        
+        images_str = ", ".join(images) if images else ""
+        
+        summary_rows.append({
+            "Core": core,
+            "Section": section,
+            "Total XMLs": xml_count,
+            "CT/Scan Types": directories_str,
+            "Image Types": images_str
+        })
+    
+    summary = pd.DataFrame(summary_rows)
+    
+    if not summary.empty:
+        summary = summary.sort_values(["Core", "Section"])
+    
+    return summary
 
-# Add this new function after get_ct_xml_summary()
-
+# === PHASE 4: Path Updates ===
 def verify_xml_paths(ct_root):
     """Check which XMLs in database still exist at their recorded paths"""
     with engine.connect() as conn:
@@ -408,7 +494,6 @@ def create_xml_fingerprint(record):
     
     # For geotek-ct-stack: use parent folder name + filename
     if record["xml_root_tag"] == "geotek-ct-stack":
-        # Parent folder like "A_Radiography_raw_A00000"
         parent_folder = os.path.basename(record["tiff_folder"])
         
         return {
@@ -484,7 +569,7 @@ def find_moved_files(ct_root, missing_records):
             if missing_fp_string == disk_fp_string:
                 # Found a match!
                 matches.append({
-                    "id": db_record["id"],  # Changed from xml_id to id
+                    "id": db_record["id"],
                     "core_name": db_record["core_name"],
                     "section_number": db_record["section_number"],
                     "xml_root_tag": db_record["xml_root_tag"],
@@ -506,36 +591,44 @@ def find_moved_files(ct_root, missing_records):
     }
 
 def update_xml_paths(updates):
-    """Update xml_path and tiff_folder for moved files"""
+    """Update xml_path and tiff_folder for moved files, handling conflicts"""
+    updated_count = 0
+    skipped_count = 0
+    
     with engine.begin() as conn:
         for update in updates:
-            conn.execute(text("""
-                UPDATE ct_xml
-                SET xml_path = :new_xml_path,
-                    tiff_folder = :new_tiff_folder
-                WHERE id = :id
+            # Check if target path already exists in database
+            existing = conn.execute(text("""
+                SELECT id FROM ct_xml 
+                WHERE xml_path = :new_path AND id != :current_id
             """), {
-                "id": update["id"],  # Changed from xml_id to id
-                "new_xml_path": update["new_xml_path"],
-                "new_tiff_folder": update["new_tiff_folder"]
-            })
-    return len(updates)
-
-def bulk_replace_path_prefix(old_prefix, new_prefix):
-    """Replace path prefix for all records (useful when moving entire drive)"""
-    with engine.begin() as conn:
-        # Update xml_path
-        result = conn.execute(text("""
-            UPDATE ct_xml
-            SET xml_path = REPLACE(xml_path, :old_prefix, :new_prefix),
-                tiff_folder = REPLACE(tiff_folder, :old_prefix, :new_prefix)
-            WHERE xml_path LIKE :pattern
-        """), {
-            "old_prefix": old_prefix,
-            "new_prefix": new_prefix,
-            "pattern": f"{old_prefix}%"
-        })
-        return result.rowcount
+                "new_path": update["new_xml_path"],
+                "current_id": update["id"]
+            }).fetchone()
+            
+            if existing:
+                print(f"⚠️ Skipping update for ID {update['id']}: target path already exists (ID {existing[0]})")
+                print(f"   Path: {update['new_xml_path']}")
+                skipped_count += 1
+                continue
+            
+            try:
+                conn.execute(text("""
+                    UPDATE ct_xml
+                    SET xml_path = :new_xml_path,
+                        tiff_folder = :new_tiff_folder
+                    WHERE id = :id
+                """), {
+                    "id": update["id"],
+                    "new_xml_path": update["new_xml_path"],
+                    "new_tiff_folder": update["new_tiff_folder"]
+                })
+                updated_count += 1
+            except Exception as e:
+                print(f"❌ Error updating ID {update['id']}: {e}")
+                skipped_count += 1
+    
+    return updated_count, skipped_count
 
 # === Streamlit App ===
 def main():
@@ -550,21 +643,22 @@ def main():
             help="Path to CT data directory"
         )
     
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["1️⃣ Validate Metadata", "2️⃣ Staging & Import", "3️⃣ Database View", "4️⃣ Path Updates"]
+    tab1, tab2, tab3 = st.tabs(
+        ["1️⃣ Import Scans", "2️⃣ Database View", "3️⃣ Path Maintenance"]
     )
     
-    # === TAB 1: Validate Metadata ===
+    # === TAB 1: Import Scans (combines old Tab 1 + Tab 2) ===
     with tab1:
-        st.header("Phase 1: Validate Metadata Against Database")
+        st.header("Import CT Scans")
         st.write("""
-        **This is the critical first step:**
-        1. Scan folder for XML files
-        2. Check if Core-ID and Section-ID exist in database
-        3. Fix any mismatches before proceeding
+        **Workflow for active scanning:**
+        1. Scan directory for new XML files
+        2. Validate Core-ID and Section-ID against database
+        3. Fix any mismatches (if needed)
+        4. Import directly to database
         """)
         
-        if st.button("🔍 Scan & Validate", use_container_width=True, type="primary"):
+        if st.button("🔍 Scan Directory", use_container_width=True, type="primary"):
             with st.spinner("Scanning and validating..."):
                 records = scan_ct_folders(ct_root)
                 validated = validate_against_database(records)
@@ -583,11 +677,11 @@ def main():
                 
                 col1, col2, col3 = st.columns(3)
                 with col1:
-                    st.metric("Total Core/Section Combos", total)
+                    st.metric("Found", total)
                 with col2:
-                    st.metric("✅ Valid", valid, delta=None, delta_color="normal")
+                    st.metric("Valid", valid)
                 with col3:
-                    st.metric("❌ Invalid", invalid, delta=None, delta_color="inverse")
+                    st.metric("Needs Fixing", invalid)
                 
                 st.dataframe(summary_df, use_container_width=True)
                 
@@ -595,7 +689,7 @@ def main():
                 if invalid > 0:
                     st.markdown("---")
                     st.subheader("🔧 Fix Invalid Records")
-                    st.warning(f"You must fix {invalid} core/section combinations before importing")
+                    st.warning(f"⚠️ Fix {invalid} core/section combinations before importing")
                     
                     invalid_df = summary_df[summary_df["Status"] == "❌ Invalid"]
                     
@@ -631,112 +725,271 @@ def main():
                     
                     if edit_data:
                         st.markdown("---")
-                        if st.button("💾 Apply Fixes to XML Files", use_container_width=True, type="primary"):
-                            with st.spinner("Updating XML files..."):
+                        if st.button("💾 Apply Fixes to Invalid XMLs", use_container_width=True, type="primary", key="fix_invalid_btn"):
+                            fm = CTFileManager(ct_root)
+                            total_files = sum(len(summary_data[(core, section)]["records"]) 
+                                             for (core, section) in edit_data.keys())
+                            
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            total_updated = 0
+                            total_failed = 0
+                            current_file = 0
+                            
+                            for (core, section), changes in edit_data.items():
+                                key = (core, section)
+                                if key in summary_data:
+                                    for val in summary_data[key]["records"]:
+                                        current_file += 1
+                                        record = val["record"]
+                                        xml_path = record["xml_path"]
+                                        filename = os.path.basename(xml_path)
+                                        
+                                        status_text.text(f"Processing {current_file}/{total_files}: {filename}")
+                                        
+                                        success = True
+                                        
+                                        if changes["new_core"]:
+                                            if not fm.edit_xml_field(xml_path, "Core-ID", changes["new_core"]):
+                                                success = False
+                                        
+                                        if changes["new_section"] and success:
+                                            if not fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"]):
+                                                success = False
+                                            if success:
+                                                fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
+                                        
+                                        if success:
+                                            total_updated += 1
+                                        else:
+                                            total_failed += 1
+                                        
+                                        progress_bar.progress(current_file / total_files)
+                            
+                            progress_bar.empty()
+                            status_text.empty()
+                            
+                            # Show results
+                            if total_failed > 0:
+                                st.warning(f"⚠️ Updated {total_updated} XML files, {total_failed} failed (check console for details)")
+                            else:
+                                st.success(f"✅ Successfully updated {total_updated} XML files")
+                            
+                            # Wait a moment so user can see the message
+                            time.sleep(1.5)
+                            
+                            # Clear validated records and rescan automatically
+                            if "validated_records" in st.session_state:
+                                del st.session_state.validated_records
+                            
+                            st.info("🔄 Re-scanning to verify fixes...")
+                            time.sleep(0.5)
+                            
+                            # Trigger rescan
+                            records = scan_ct_folders(ct_root)
+                            validated = validate_against_database(records)
+                            st.session_state.validated_records = validated
+                            
+                            st.rerun()
+                
+                # Edit interface for VALID records (optional corrections)
+                if valid > 0:
+                    st.markdown("---")
+                    st.subheader("✏️ Edit Valid Records (Optional)")
+                    st.info("These records passed validation but you can still edit them if needed (e.g., wrong core name but both exist in database)")
+                    
+                    valid_df = summary_df[summary_df["Status"] == "✅ Valid"]
+                    
+                    valid_edit_data = {}
+                    for idx, row in valid_df.iterrows():
+                        core = row["Core"]
+                        section = row["Section"]
+                        xml_count = row["XML Count"]
+                        
+                        with st.expander(f"✏️ {core} - Section {section} ({xml_count} XMLs)"):
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                new_core = st.text_input(
+                                    "New Core-ID",
+                                    key=f"edit_core_{core}_{section}",
+                                    placeholder=core
+                                )
+                            
+                            with col2:
+                                new_section = st.text_input(
+                                    "New Section-ID",
+                                    key=f"edit_section_{core}_{section}",
+                                    placeholder=str(section)
+                                )
+                            
+                            if new_core or new_section:
+                                valid_edit_data[(core, section)] = {
+                                    "new_core": new_core,
+                                    "new_section": new_section
+                                }
+                    
+                    if valid_edit_data:
+                        st.markdown("---")
+                        if st.button("💾 Apply Edits to Valid XMLs", use_container_width=True, type="secondary", key="edit_valid_btn"):
+                            # First, validate all the new names before making any changes
+                            validation_failed = False
+                            validation_errors = []
+                            
+                            with engine.connect() as conn:
+                                for (core, section), changes in valid_edit_data.items():
+                                    # Validate new core name if provided
+                                    if changes["new_core"]:
+                                        core_exists = conn.execute(
+                                            text("SELECT core_id FROM cores WHERE TRIM(core_name) = :core_name"),
+                                            {"core_name": changes["new_core"].strip()}
+                                        ).fetchone()
+                                        
+                                        if not core_exists:
+                                            validation_failed = True
+                                            validation_errors.append(f"Core '{changes['new_core']}' does not exist in database")
+                                    
+                                    # Validate new section number if provided
+                                    if changes["new_section"]:
+                                        # Determine which core to check against
+                                        check_core = changes["new_core"] if changes["new_core"] else core
+                                        
+                                        # Get core_id for the core we're checking
+                                        core_row = conn.execute(
+                                            text("SELECT core_id FROM cores WHERE TRIM(core_name) = :core_name"),
+                                            {"core_name": check_core.strip()}
+                                        ).fetchone()
+                                        
+                                        if core_row:
+                                            try:
+                                                new_section_int = int(changes["new_section"])
+                                                section_exists = conn.execute(
+                                                    text("SELECT section_id FROM sections WHERE core_id = :core_id AND section_number = :section_number"),
+                                                    {"core_id": core_row[0], "section_number": new_section_int}
+                                                ).fetchone()
+                                                
+                                                if not section_exists:
+                                                    validation_failed = True
+                                                    validation_errors.append(f"Section {changes['new_section']} does not exist for core '{check_core}'")
+                                            except (TypeError, ValueError):
+                                                validation_failed = True
+                                                validation_errors.append(f"Invalid section number format: '{changes['new_section']}'")
+                            
+                            # If validation failed, show errors and stop
+                            if validation_failed:
+                                st.error("❌ Cannot apply edits - new names are invalid:")
+                                for error in validation_errors:
+                                    st.error(f"  • {error}")
+                                st.warning("Please correct these issues before applying edits.")
+                            else:
+                                # Validation passed - proceed with edits
                                 fm = CTFileManager(ct_root)
-                                total_updated = 0
+                                total_files = sum(len(summary_data[(core, section)]["records"]) 
+                                                 for (core, section) in valid_edit_data.keys())
                                 
-                                for (core, section), changes in edit_data.items():
+                                progress_bar = st.progress(0)
+                                status_text = st.empty()
+                                
+                                total_updated = 0
+                                total_failed = 0
+                                current_file = 0
+                                
+                                for (core, section), changes in valid_edit_data.items():
                                     key = (core, section)
                                     if key in summary_data:
                                         for val in summary_data[key]["records"]:
+                                            current_file += 1
                                             record = val["record"]
                                             xml_path = record["xml_path"]
+                                            filename = os.path.basename(xml_path)
+                                            
+                                            status_text.text(f"Processing {current_file}/{total_files}: {filename}")
+                                            
+                                            success = True
                                             
                                             if changes["new_core"]:
-                                                fm.edit_xml_field(xml_path, "Core-ID", changes["new_core"])
+                                                if not fm.edit_xml_field(xml_path, "Core-ID", changes["new_core"]):
+                                                    success = False
                                             
-                                            if changes["new_section"]:
-                                                fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"])
-                                                fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
+                                            if changes["new_section"] and success:
+                                                if not fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"]):
+                                                    success = False
+                                                if success:
+                                                    fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
                                             
-                                            total_updated += 1
+                                            if success:
+                                                total_updated += 1
+                                            else:
+                                                total_failed += 1
+                                            
+                                            progress_bar.progress(current_file / total_files)
                                 
-                                st.success(f"✅ Updated {total_updated} XML files")
-                                st.info("🔄 Click 'Scan & Validate' again to verify fixes")
-                                st.session_state.validated_records = None
+                                progress_bar.empty()
+                                status_text.empty()
+                                
+                                # Show results
+                                if total_failed > 0:
+                                    st.warning(f"⚠️ Updated {total_updated} XML files, {total_failed} failed (check console for details)")
+                                else:
+                                    st.success(f"✅ Successfully updated {total_updated} XML files")
+                                
+                                # Wait a moment so user can see the message
+                                time.sleep(1.5)
+                                
+                                # Clear validated records and rescan automatically
+                                if "validated_records" in st.session_state:
+                                    del st.session_state.validated_records
+                                
+                                st.info("🔄 Re-scanning to verify edits...")
+                                time.sleep(0.5)
+                                
+                                # Trigger rescan
+                                records = scan_ct_folders(ct_root)
+                                validated = validate_against_database(records)
+                                st.session_state.validated_records = validated
+                                
                                 st.rerun()
                 
-                # Allow proceeding to staging
+                # Import button (only show if all valid)
                 if invalid == 0:
                     st.markdown("---")
-                    st.success("✅ All metadata is valid! Ready to save to staging.")
+                    st.success("✅ All records validated! Ready to import.")
                     
-                    if st.button("➡️ Save to Staging", use_container_width=True, type="primary"):
-                        with st.spinner("Saving to staging..."):
-                            saved, skipped = save_to_staging(validated)
-                            st.success(f"✅ Saved {saved} new records to staging")
-                            if skipped > 0:
-                                st.info(f"Skipped {skipped} (already in staging or invalid)")
-                            st.session_state.validated_records = None
-                            st.rerun()
+                    if st.button("📥 Import to Database", use_container_width=True, type="primary"):
+                        with st.spinner("Importing to database..."):
+                            saved, skipped_path, skipped_fp, failed = import_to_database(validated)
+                        
+                        # Show results
+                        if saved > 0:
+                            st.success(f"✅ Imported {saved} new XML files to database")
+                        
+                        if skipped_path > 0:
+                            st.info(f"ℹ️ Skipped {skipped_path} files (already in database at same path)")
+                        
+                        if skipped_fp > 0:
+                            st.warning(f"⚠️ Skipped {skipped_fp} files (same scan exists at different path)")
+                            st.write("These files may have been moved. Use **Tab 3: Path Maintenance** to update their locations.")
+                        
+                        if failed > 0:
+                            st.error(f"❌ {failed} files failed to import (check console for details)")
+                        
+                        # Clear session state
+                        if "validated_records" in st.session_state:
+                            del st.session_state.validated_records
+                        
+                        time.sleep(2)
+                        st.rerun()
             else:
                 st.warning("⚠️ No valid records found after validation")
         else:
-            st.info("👆 Click 'Scan & Validate' to begin")
+            st.info("👆 Click 'Scan Directory' to begin")
     
-    # === TAB 2: Staging ===
+    # === TAB 2: Database View (old Tab 3) ===
     with tab2:
-        st.header("Phase 2: Review Staging & Import to Database")
+        st.header("Database View")
         st.write("""
-        **Review what will be imported:**
-        - View all core/section combinations in staging
-        - See scan types and processing stages
-        - Import to main ct_xml table when ready
-        """)
-        
-        staging_df = get_staging_summary()
-        
-        if not staging_df.empty:
-            st.subheader("📋 Staging Summary")
-            st.dataframe(staging_df, use_container_width=True)
-            st.info(f"Total: {len(staging_df)} core/section combinations")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("✅ Import All to ct_xml", use_container_width=True, type="primary"):
-                    with st.spinner("Importing to ct_xml..."):
-                        imported_count = approve_and_import_staging()
-                        if imported_count > 0:
-                            st.success(f"✅ Successfully imported {imported_count} new records!")
-                        else:
-                            st.info("ℹ️ All staging records already exist in ct_xml. Nothing imported.")
-                        st.rerun()
-            
-            with col2:
-                if st.button("🗑️ Clear Staging", use_container_width=True):
-                    with engine.begin() as conn:
-                        conn.execute(text("DELETE FROM ct_xml_staging"))
-                    st.success("Staging cleared")
-                    st.rerun()
-            
-            with col3:
-                csv_data = staging_df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download CSV",
-                    data=csv_data,
-                    file_name="ct_staging.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-            
-            # Detailed view
-            with st.expander("📋 View Detailed Records"):
-                with engine.connect() as conn:
-                    result = conn.execute(text("SELECT * FROM ct_xml_staging ORDER BY core_name, section_number"))
-                    detailed = [dict(row._mapping) for row in result.fetchall()]
-                
-                if detailed:
-                    st.dataframe(pd.DataFrame(detailed), use_container_width=True)
-        else:
-            st.info("No records in staging. Validate and save from Tab 1 first.")
-    
-    # === TAB 3: Database View ===
-    with tab3:
-        st.header("Phase 3: Database View")
-        st.write("""
-        **View what's currently in the ct_xml table:**
+        **View what scans are currently in the database:**
         - **CT Stack Types**: Shows image types with their processing stages
         - **Image Types**: Shows image types from geotek-image XMLs
         """)
@@ -747,23 +1000,12 @@ def main():
         ct_xml_df = get_ct_xml_summary()
         
         if not ct_xml_df.empty:
-            st.subheader("📊 ct_xml Table Summary")
-            
-            # Add dropdown filter for core name
-            all_cores = ["All Cores"] + sorted(ct_xml_df["Core"].unique().tolist())
-            selected_core = st.selectbox("Filter by Core:", all_cores, key="summary_core_filter")
-            
-            # Filter dataframe based on selection
-            if selected_core != "All Cores":
-                filtered_df = ct_xml_df[ct_xml_df["Core"] == selected_core]
-            else:
-                filtered_df = ct_xml_df
-            
-            st.dataframe(filtered_df, use_container_width=True)
-            st.info(f"Showing: {len(filtered_df)} core/section combinations")
+            st.subheader("📊 CT Scans in Database")
+            st.dataframe(ct_xml_df, use_container_width=True)
+            st.info(f"Total: {len(ct_xml_df)} core/section combinations in database")
             
             # Download button
-            csv_data = filtered_df.to_csv(index=False)
+            csv_data = ct_xml_df.to_csv(index=False)
             st.download_button(
                 label="📥 Download CSV",
                 data=csv_data,
@@ -772,7 +1014,7 @@ def main():
                 use_container_width=True
             )
             
-            # Detailed view with filters
+            # Detailed view
             with st.expander("📋 View Detailed Records"):
                 with engine.connect() as conn:
                     result = conn.execute(text("""
@@ -792,126 +1034,21 @@ def main():
                 if detailed:
                     detail_df = pd.DataFrame(detailed)
                     detail_df.columns = ["Core", "Section", "Root Tag", "Scan ID", "Image Type", "Processing Stage", "XML Path"]
-                    
-                    # Add filters for detailed view
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        detail_cores = ["All Cores"] + sorted(detail_df["Core"].unique().tolist())
-                        detail_selected_core = st.selectbox("Filter by Core:", detail_cores, key="detail_core_filter")
-                    
-                    # Filter by core first
-                    if detail_selected_core != "All Cores":
-                        detail_filtered = detail_df[detail_df["Core"] == detail_selected_core]
-                    else:
-                        detail_filtered = detail_df
-                    
-                    with col2:
-                        # Get sections available for selected core (keep as original type)
-                        available_sections = sorted(detail_filtered["Section"].unique().tolist())
-                        detail_sections = ["All Sections"] + available_sections  # Don't convert to string
-                        detail_selected_section = st.selectbox("Filter by Section:", detail_sections, key="detail_section_filter")
-                    
-                    # Filter by section - no conversion needed!
-                    if detail_selected_section != "All Sections":
-                        detail_filtered = detail_filtered[detail_filtered["Section"] == detail_selected_section]
-                    
-                    st.dataframe(detail_filtered, use_container_width=True)
-                    st.info(f"Showing: {len(detail_filtered)} records")
-                    
-                    # Download filtered detailed data
-                    detail_csv = detail_filtered.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download Detailed CSV",
-                        data=detail_csv,
-                        file_name="ct_xml_detailed.csv",
-                        mime="text/csv",
-                        use_container_width=True,
-                        key="download_detailed"
-                    )
+                    st.dataframe(detail_df, use_container_width=True)
         else:
-            st.info("No records in ct_xml table yet. Import from staging first.")
+            st.info("No records in ct_xml table yet. Import scans from Tab 1 first.")
 
-    # === TAB 4: Path Updates ===
-    with tab4:
-        st.header("Phase 4: Update Paths After Reorganization")
+    # === TAB 3: Path Maintenance (old Tab 4) ===
+    with tab3:
+        st.header("Path Maintenance")
+        st.write("""
+        **Use this after reorganizing files or moving between hard drives:**
+        1. Check which database records point to missing files
+        2. Search filesystem to find where files moved to
+        3. Update database with new paths
         
-        # Add a new section at the top for bulk path replacement
-        st.subheader("🔄 Bulk Path Replacement")
-        st.write("**Use this when you move the entire root directory to a new location**")
-        
-        with st.expander("🚚 Replace Root Path (e.g., C:\\ → E:\\)"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                old_root = st.text_input(
-                    "Old Root Path",
-                    value="C:\\Users\\chris\\Documents\\steen_tessin2025\\CT_Drive",
-                    help="The old root path prefix to replace"
-                )
-            
-            with col2:
-                new_root = st.text_input(
-                    "New Root Path",
-                    value="E:\\CT_Drive",
-                    help="The new root path prefix"
-                )
-            
-            st.warning("⚠️ This will update ALL records in the database. Make sure the paths are correct!")
-            
-            # Preview what will change
-            if st.button("🔍 Preview Changes", key="preview_bulk_replace"):
-                with engine.connect() as conn:
-                    preview = conn.execute(text("""
-                        SELECT xml_path 
-                        FROM ct_xml 
-                        WHERE xml_path LIKE :pattern
-                        LIMIT 5
-                    """), {"pattern": f"{old_root}%"}).fetchall()
-                    
-                    if preview:
-                        st.write("**Example changes (first 5):**")
-                        for row in preview:
-                            old_path = row[0]
-                            new_path = old_path.replace(old_root, new_root)
-                            st.text(f"Old: {old_path}")
-                            st.text(f"New: {new_path}")
-                            st.text("")
-                        
-                        # Count total affected
-                        count_result = conn.execute(text("""
-                            SELECT COUNT(*) 
-                            FROM ct_xml 
-                            WHERE xml_path LIKE :pattern
-                        """), {"pattern": f"{old_root}%"}).fetchone()
-                        
-                        st.info(f"📊 Total records to update: {count_result[0]}")
-                    else:
-                        st.warning("No records found with that path prefix")
-            
-            if st.button("💾 Apply Bulk Path Replacement", type="primary", key="apply_bulk_replace"):
-                if old_root and new_root and old_root != new_root:
-                    with st.spinner("Updating paths..."):
-                        count = bulk_replace_path_prefix(old_root, new_root)
-                    st.success(f"✅ Updated {count} records")
-                    
-                    # Verify by checking a few
-                    with engine.connect() as conn:
-                        sample = conn.execute(text("""
-                            SELECT xml_path 
-                            FROM ct_xml 
-                            WHERE xml_path LIKE :pattern
-                            LIMIT 3
-                        """), {"pattern": f"{new_root}%"}).fetchall()
-                        
-                        if sample:
-                            st.write("**Verification (first 3 updated paths):**")
-                            for row in sample:
-                                st.text(row[0])
-                else:
-                    st.error("Please enter valid old and new root paths")
-        
-        st.markdown("---")
+        ⚠️ You shouldn't need this during normal scanning - only when reorganizing existing data.
+        """)
         
         if st.button("🔍 Check for Missing Files", use_container_width=True, type="primary"):
             with st.spinner("Verifying paths..."):
@@ -925,9 +1062,9 @@ def main():
             with col1:
                 st.metric("Total Records", verify["total"])
             with col2:
-                st.metric("✅ Found", len(verify["exists"]), delta_color="normal")
+                st.metric("✅ Found", len(verify["exists"]))
             with col3:
-                st.metric("❌ Missing", len(verify["missing"]), delta_color="inverse")
+                st.metric("❌ Missing", len(verify["missing"]))
             
             if verify["missing"]:
                 st.markdown("---")
@@ -975,11 +1112,18 @@ def main():
                         st.markdown("---")
                         if st.button("💾 Update Database Paths", use_container_width=True, type="primary"):
                             with st.spinner("Updating paths..."):
-                                count = update_xml_paths(results["matches"])
-                            st.success(f"✅ Updated {count} records in database")
+                                updated, skipped = update_xml_paths(results["matches"])
+                            
+                            if skipped > 0:
+                                st.warning(f"⚠️ Updated {updated} records, skipped {skipped} (see console for conflicts)")
+                            else:
+                                st.success(f"✅ Updated {updated} records in database")
+                            
                             # Clear session state before rerun
-                            del st.session_state.path_verification
-                            del st.session_state.path_search_results
+                            if "path_verification" in st.session_state:
+                                del st.session_state.path_verification
+                            if "path_search_results" in st.session_state:
+                                del st.session_state.path_search_results
                             st.rerun()
                     
                     if results["not_found"]:
@@ -996,7 +1140,6 @@ def main():
                 st.success("✅ All XML files found at their recorded paths!")
         else:
             st.info("👆 Click 'Check for Missing Files' to begin")
-
 
 
 if __name__ == "__main__":
