@@ -701,6 +701,7 @@ def get_tiff_folders_for_export(core_names, section_numbers, image_type):
         return [dict(row._mapping) for row in result.fetchall()]
 
 
+# CHANGED: added id to SELECT so we can trace rows in the export log
 def get_all_tiff_folders_for_sections(core_names, section_numbers):
     if not core_names or not section_numbers:
         return []
@@ -711,8 +712,8 @@ def get_all_tiff_folders_for_sections(core_names, section_numbers):
         params.update({f"sec_{i}": str(s) for i, s in enumerate(section_numbers)})
         result = conn.execute(
             text(f"""
-                SELECT DISTINCT core_name, section_number, tiff_folder,
-                       xml_root_tag, processing_stage, xml_path
+                SELECT DISTINCT id, core_name, section_number, tiff_folder,
+                       xml_root_tag, processing_stage, image_type, xml_path
                 FROM ct_xml
                 WHERE core_name IN ({core_placeholders})
                   AND CAST(section_number AS TEXT) IN ({section_placeholders})
@@ -762,7 +763,10 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
     manifest = {
         "xray_files": [],
         "ct_ortho_files": [],
+        # CHANGED: slices_dirs now stores (tiff_folder, dst_name, db_id, core_name)
+        # instead of (tiff_folder, core_name)
         "slices_dirs": [],
+        "slices_manifest_log": [],   # ADDED: tracing lines for the export log
         "slices_file_count": 0,
         "slices_size_bytes": 0,
         "missing_folders": [],
@@ -771,12 +775,17 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
         "total_size_bytes": 0,
     }
 
+    # CHANGED: include grandparent folder name to disambiguate files from
+    # different recon runs that share the same filename (e.g. two CircularCT
+    # recon versions of the same core/section producing identically-named TIFs)
     def make_dst_filename(src_path, core, section):
         basename = os.path.basename(src_path)
         if basename.upper().startswith(core.upper()):
             return basename
         manifest["renamed_count"] += 1
-        return f"{core}_{section}_{basename}"
+        # parent  = Orthogonal/  grandparent = 1_CircularCT_Recon_algo
+        grandparent = os.path.basename(os.path.dirname(os.path.dirname(src_path)))
+        return f"{core}_{section}_{grandparent}_{basename}"
 
     def resolve_tif_for_export(row, image_list, fallback_finder, corrected_only=False):
         folder = row["tiff_folder"]
@@ -824,25 +833,55 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             resolve_tif_for_export(row, manifest["ct_ortho_files"], find_all_tifs, corrected_only=ct_ortho_corrected_only)
 
     if export_slices:
-        seen_slices = set()
+        # CHANGED: build unique dst_name per recon stack from database fields only.
+        # Base name = {core}_{section}_{image_type}_{processing_stage}
+        # If two rows share the same base name, append _2, _3 etc.
+        # A counter tracks how many times each base name has been seen.
+        dst_name_counter = {}
+
         for row in get_all_tiff_folders_for_sections(selected_cores, selected_section_numbers):
-            folder = row["tiff_folder"]
             if not is_recon_stack(row):
                 continue
+
+            folder = row["tiff_folder"]
+            core = row["core_name"]
+            db_id = row["id"]
+            image_type = (row.get("image_type") or "Unknown").replace(" ", "-")
+            processing_stage = (row.get("processing_stage") or "Recon").replace(" ", "-")
+
+            # Build base name from database metadata only
+            base_name = f"{core}_{row['section_number']}_{image_type}_{processing_stage}"
+
+            # Deduplicate: first occurrence keeps base name, subsequent get _2, _3 etc.
+            if base_name not in dst_name_counter:
+                dst_name_counter[base_name] = 1
+                dst_name = base_name
+            else:
+                dst_name_counter[base_name] += 1
+                dst_name = f"{base_name}_{dst_name_counter[base_name]}"
+
             if not os.path.isdir(folder):
                 if folder not in manifest["missing_folders"]:
                     manifest["missing_folders"].append(folder)
                 continue
-            if folder not in seen_slices:
-                seen_slices.add(folder)
-                manifest["slices_dirs"].append((folder, row["core_name"]))
-                for dirpath, _, files in os.walk(folder):
-                    manifest["slices_file_count"] += len(files)
-                    for f in files:
-                        try:
-                            manifest["total_size_bytes"] += os.path.getsize(os.path.join(dirpath, f))
-                        except OSError:
-                            pass
+
+            manifest["slices_dirs"].append((folder, dst_name, db_id, core))
+
+            # Add tracing line for the export log
+            manifest["slices_manifest_log"].append(
+                f"  {dst_name:<60} db_id={db_id}  src={folder}"
+            )
+
+            # Count files directly in this folder only (not recursive,
+            # since subdirs with their own index.xml are separate rows)
+            for f in os.listdir(folder):
+                full_f = os.path.join(folder, f)
+                if os.path.isfile(full_f):
+                    manifest["slices_file_count"] += 1
+                    try:
+                        manifest["total_size_bytes"] += os.path.getsize(full_f)
+                    except OSError:
+                        pass
 
     return manifest
 
@@ -894,9 +933,15 @@ def render_export_preview(manifest):
                          use_container_width=True)
 
     if manifest["slices_dirs"]:
+        # CHANGED: updated columns to reflect new tuple structure
         with st.expander(f"📂 Slices Directories ({len(manifest['slices_dirs'])} dirs, {manifest['slices_file_count']:,} files)"):
-            st.dataframe(pd.DataFrame(manifest["slices_dirs"], columns=["Source Directory", "Core"]),
-                         use_container_width=True)
+            st.dataframe(
+                pd.DataFrame(
+                    [(folder, dst_name, db_id, core) for folder, dst_name, db_id, core in manifest["slices_dirs"]],
+                    columns=["Source Directory", "Destination Name", "DB ID", "Core"]
+                ),
+                use_container_width=True
+            )
 
     if manifest.get("missing_tifs"):
         with st.expander(f"⚠️ {len(manifest['missing_tifs'])} TIF file(s) expected but not found on disk"):
@@ -946,14 +991,13 @@ def generate_rsync_script(manifest, export_dir):
         for src, dst_fn, core, section in same_name:
             by_folder.setdefault(os.path.dirname(src), []).append(os.path.basename(src))
         for folder, filenames in by_folder.items():
-            # Write an --include filter per file, exclude everything else
             includes = " ".join(f'--include="{f}"' for f in filenames)
             lines.append(
                 f'rsync -av --ignore-existing {includes} --exclude="*" '
                 f'"{folder}/" "{dst_dir}/" >> "$LOG" 2>&1'
             )
 
-        # Renamed files: copy individually then rename
+        # Renamed files: copy individually with new destination name
         if renamed:
             lines.append("# -- renamed files --")
             for src, dst_fn, core, section in renamed:
@@ -967,13 +1011,34 @@ def generate_rsync_script(manifest, export_dir):
     emit_file_copies(manifest["xray_files"],     xray_dst,     "XRay Images")
     emit_file_copies(manifest["ct_ortho_files"], ct_ortho_dst, "CT Orthogonal Views")
 
+    # CHANGED: slices section completely rewritten.
+    # Each recon stack gets its own destination folder named from database metadata.
+    # --no-recursive ensures we only copy files directly in tiff_folder,
+    # not descending into subdirectories that have their own index.xml rows.
     if manifest["slices_dirs"]:
         lines.append("# --- Slices Directories ---")
-        for src_dir, core_name in manifest["slices_dirs"]:
-            dst_slices = os.path.join(export_dir, f"{core_name}-slices", "slices")
-            lines.append(f'mkdir -p "{dst_slices}"')
+        lines.append("# Destination folder naming: {core}_{section}_{image_type}_{processing_stage}")
+        lines.append("# Suffixes _2, _3 etc. indicate multiple recon runs of the same type.")
+        lines.append("# See SLICES MANIFEST below for tracing to database IDs and source paths.")
+        lines.append("")
+
+        # ADDED: emit manifest log into the script's runtime log
+        lines.append("# -- Slices manifest --")
+        lines.append('echo "=== SLICES EXPORT MANIFEST ===" >> "$LOG"')
+        lines.append(f'echo "  {"Destination":<60} DB ID   Source" >> "$LOG"')
+        for log_line in manifest["slices_manifest_log"]:
+            # escape any double quotes in paths
+            escaped = log_line.replace('"', '\\"')
+            lines.append(f'echo "{escaped}" >> "$LOG"')
+        lines.append('echo "==============================" >> "$LOG"')
+        lines.append("")
+
+        for folder, dst_name, db_id, core in manifest["slices_dirs"]:
+            core_parent = os.path.join(export_dir, f"{core}-slices")
+            dst_path = os.path.join(core_parent, dst_name)
+            lines.append(f'mkdir -p "{dst_path}"')
             lines.append(
-                f'rsync -av --ignore-existing "{src_dir}/" "{dst_slices}/" >> "$LOG" 2>&1'
+                f'rsync -av --no-recursive --ignore-existing "{folder}/" "{dst_path}/" >> "$LOG" 2>&1'
             )
         lines.append("")
 
@@ -995,7 +1060,7 @@ def main():
         st.header("⚙️ Settings")
         ct_root = st.text_input(
             "CT Root Folder",
-            value=get_full_path("CT_Data"),   # resolves to network Linux path
+            value=get_full_path("CT_Data"),
             help="Path to CT data directory"
         )
 
@@ -1361,7 +1426,6 @@ def main():
         st.header("Export Data")
         st.write("Select cores and sections, choose what to export, then generate an rsync script.")
 
-        # ── Cruise filter ─────────────────────────────────────────────────
         all_cruises = get_cruises_from_db()
         if not all_cruises:
             st.warning("No CT data found in database.")
@@ -1374,7 +1438,6 @@ def main():
             )
             selected_cruise_ids = [cruise_options[n] for n in selected_cruise_names]
 
-            # ── Core selector ──────────────────────────────────────────────
             if selected_cruise_ids:
                 available_cores = get_cores_for_cruises(selected_cruise_ids)
             else:
@@ -1511,11 +1574,12 @@ def main():
                                 st.write("**Output structure:**")
                                 st.code(
                                     f"{st.session_state.export_dir}/\n"
-                                    f"├── xray_images/      ← corrected XRay TIFs\n"
-                                    f"├── ct_orthogonal/    ← all CT Orthogonal TIFs\n"
+                                    f"├── xray_images/                         ← XRay TIFs\n"
+                                    f"├── ct_orthogonal/                        ← CT Orthogonal TIFs\n"
                                     f"├── CoreName-slices/\n"
-                                    f"│   └── slices/       ← slices dirs merged flat per core\n"
-                                    f"└── export_log.txt    ← rsync log",
+                                    f"│   ├── CoreName_1_Helical_Reconstructed/ ← one dir per recon stack\n"
+                                    f"│   └── CoreName_1_CT-Volume_Recon/\n"
+                                    f"└── export_log.txt                        ← rsync log + manifest",
                                     language="text"
                                 )
                                 with st.expander("👀 Preview script contents"):
