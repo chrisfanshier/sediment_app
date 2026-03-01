@@ -623,6 +623,39 @@ def update_xml_paths(updates):
 
 # === PHASE 5: Export helpers ===
 
+def get_cruises_from_db():
+    """Return list of (cruise_id, cruise_name) tuples that have CT data."""
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT DISTINCT cr.cruise_id, cr.cruise_name
+            FROM cruises cr
+            JOIN cores c ON c.cruise_id = cr.cruise_id
+            JOIN ct_xml x ON x.core_name = c.core_name
+            ORDER BY cr.cruise_name
+        """))
+        return [(row[0], row[1]) for row in result.fetchall()]
+
+
+def get_cores_for_cruises(cruise_ids):
+    """Return core names belonging to the given cruise_ids that have CT data."""
+    if not cruise_ids:
+        return []
+    with get_connection() as conn:
+        placeholders = ", ".join(f":cid_{i}" for i in range(len(cruise_ids)))
+        params = {f"cid_{i}": cid for i, cid in enumerate(cruise_ids)}
+        result = conn.execute(
+            text(f"""
+                SELECT DISTINCT c.core_name
+                FROM cores c
+                JOIN ct_xml x ON x.core_name = c.core_name
+                WHERE c.cruise_id IN ({placeholders})
+                ORDER BY c.core_name
+            """),
+            params
+        )
+        return [row[0] for row in result.fetchall()]
+
+
 def get_cores_from_db():
     with get_connection() as conn:
         result = conn.execute(text("SELECT core_name FROM cores ORDER BY core_name"))
@@ -1328,18 +1361,45 @@ def main():
         st.header("Export Data")
         st.write("Select cores and sections, choose what to export, then generate an rsync script.")
 
-        all_cores = get_cores_from_db()
-        if not all_cores:
-            st.warning("No cores found in database.")
+        # ── Cruise filter ─────────────────────────────────────────────────
+        all_cruises = get_cruises_from_db()
+        if not all_cruises:
+            st.warning("No CT data found in database.")
         else:
-            select_all_cores = st.checkbox("Select All Cores", value=False, key="export_select_all_cores")
-            if select_all_cores:
-                selected_cores = all_cores
-                st.info(f"✅ All {len(all_cores)} cores selected")
-            else:
-                selected_cores = st.multiselect("Select Core(s)", options=all_cores)
+            cruise_options = {name: cid for cid, name in all_cruises}
+            selected_cruise_names = st.multiselect(
+                "Filter by Cruise(s)",
+                options=list(cruise_options.keys()),
+                help="Select one or more cruises to filter the core list."
+            )
+            selected_cruise_ids = [cruise_options[n] for n in selected_cruise_names]
 
-            if not selected_cores:
+            # ── Core selector ──────────────────────────────────────────────
+            if selected_cruise_ids:
+                available_cores = get_cores_for_cruises(selected_cruise_ids)
+            else:
+                available_cores = get_cores_from_db()
+
+            if not available_cores:
+                st.warning("No cores with CT data found for the selected cruise(s).")
+            else:
+                select_all_cores = st.checkbox(
+                    f"Select All Cores ({len(available_cores)})",
+                    value=False,
+                    key="export_select_all_cores"
+                )
+                if select_all_cores:
+                    selected_cores = available_cores
+                    st.info(f"✅ All {len(available_cores)} cores selected"
+                            + (f" from {', '.join(selected_cruise_names)}" if selected_cruise_names else ""))
+                else:
+                    selected_cores = st.multiselect("Select Core(s)", options=available_cores)
+
+            if not selected_cruise_ids and not select_all_cores and not selected_cores:
+                st.info("👆 Select at least one cruise or core to see available sections.")
+            elif not available_cores:
+                pass
+            elif not selected_cores:
                 st.info("👆 Select at least one core to see available sections.")
             else:
                 st.markdown("---")
