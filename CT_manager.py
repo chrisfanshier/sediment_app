@@ -1050,7 +1050,7 @@ def generate_rsync_script(manifest, export_dir):
                 dst_path = os.path.join(export_dir, dst_subpath)
                 lines.append(f'mkdir -p "{dst_path}"')
                 lines.append(
-                    f'rsync -av --no-recursive --ignore-existing "{folder}/" "{dst_path}/" >> "$LOG" 2>&1'
+                    f'rsync -av --exclude="*/" --ignore-existing "{folder}/" "{dst_path}/" >> "$LOG" 2>&1'
                 )
             lines.append("")
 
