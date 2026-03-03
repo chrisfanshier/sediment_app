@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import json
-from db_util import get_connection, fetch_cores, fetch_cruise_options, insert_usbl_file
+from db_util import get_connection, fetch_cores, fetch_cruise_options, insert_usbl_file, insert_core_media, update_core_media_association, fetch_core_media_registered, fetch_capture_devices
 from sqlalchemy import text
 from config import ROOT_DIRECTORY, SUBDIRECTORIES, get_full_path, WINCH_FORMATS
 from utils import parse_usbl_first_last
@@ -31,6 +31,22 @@ def upload_file(file, file_type):
 
     # Return only the relative directory (not the full path)
     return subdirectory
+
+# ── Media file extension sets ─────────────────────────────────────────────────
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp",
+                    ".heic", ".heif", ".raw", ".arw", ".cr2", ".nef", ".dng"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts",
+                    ".mpg", ".mpeg", ".wmv", ".lrv", ".360"}
+MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+
+def get_media_type(filename):
+    """Detect image or video from file extension."""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in IMAGE_EXTENSIONS:
+        return "image"
+    elif ext in VIDEO_EXTENSIONS:
+        return "video"
+    return None
 
 # convert pandas Timestamp / datetime-like to timezone-aware Python datetime (UTC)
 def _to_utc_py(dt):
@@ -97,7 +113,7 @@ def insert_winch_data(file_name, file_path, cruise_id, start_time, end_time, set
         conn.commit()
 
 # Step 1: Select file category first
-file_category = st.selectbox("Select File Category", ["MSCL Data", "Sensor Data", "Winch Data", "USBL Data"])
+file_category = st.selectbox("Select File Category", ["MSCL Data", "Sensor Data", "Winch Data", "USBL Data", "Photos & Video"])
 
 if file_category in ["MSCL Data", "Sensor Data"]:
     # For core-related files, fetch and select core
@@ -517,3 +533,208 @@ elif file_category == "USBL Data":
                          st.write(f"- {p}")
              except Exception as e:
                  st.error(f"Error saving USBL file(s): {e}")
+
+elif file_category == "Photos & Video":
+    st.subheader("📷 Photos & Video")
+
+    default_scan_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES.get("Photos & Video", "core_media"))
+    scan_dir_input = st.text_input(
+        "Directory to scan",
+        value=default_scan_dir,
+        help="Defaults to the core_media directory. Change to scan a different folder."
+    )
+
+    if st.button("🔍 Scan for Files"):
+        if not os.path.isdir(scan_dir_input):
+            st.error(f"Directory not found: {scan_dir_input}")
+        else:
+            found_files = []
+            for fname in sorted(os.listdir(scan_dir_input)):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in MEDIA_EXTENSIONS:
+                    fpath = os.path.join(scan_dir_input, fname)
+                    found_files.append({
+                        "file_name": fname,
+                        "full_path": fpath,
+                        "file_size_bytes": os.path.getsize(fpath),
+                        "media_type": get_media_type(fname)
+                    })
+
+            try:
+                scan_dir_relative = os.path.relpath(scan_dir_input, ROOT_DIRECTORY)
+            except ValueError:
+                scan_dir_relative = scan_dir_input
+
+            registered = fetch_core_media_registered(scan_dir_relative)
+
+            st.session_state["media_scan_results"] = found_files
+            st.session_state["media_registered"] = registered
+            st.session_state["media_scan_dir_relative"] = scan_dir_relative
+
+            if "media_core_assignments" not in st.session_state:
+                st.session_state["media_core_assignments"] = {}
+            if "media_device_assignments" not in st.session_state:
+                st.session_state["media_device_assignments"] = {}
+            if "media_remarks_assignments" not in st.session_state:
+                st.session_state["media_remarks_assignments"] = {}
+
+            for f in found_files:
+                fname = f["file_name"]
+                if fname in registered:
+                    if fname not in st.session_state["media_core_assignments"]:
+                        st.session_state["media_core_assignments"][fname] = registered[fname]["core_id"]
+                    if fname not in st.session_state["media_device_assignments"]:
+                        st.session_state["media_device_assignments"][fname] = registered[fname]["capture_device_id"]
+                    if fname not in st.session_state["media_remarks_assignments"]:
+                        st.session_state["media_remarks_assignments"][fname] = registered[fname]["remarks"] or ""
+
+            if not found_files:
+                st.warning("No image or video files found in that directory.")
+            else:
+                st.success(f"Found {len(found_files)} file(s) — {len(registered)} already registered.")
+
+    if st.session_state.get("media_scan_results"):
+        found_files = st.session_state["media_scan_results"]
+        registered  = st.session_state["media_registered"]
+
+        cores = fetch_cores()
+        core_options_map    = {f"{name} (ID: {id})": id for id, name in zip(cores['core_id'], cores['core_name'])}
+        core_id_to_label    = {v: k for k, v in core_options_map.items()}
+        core_select_options = ["— Select Core —"] + list(core_options_map.keys())
+
+        capture_devices       = fetch_capture_devices()
+        device_options_map    = {row.device_name: row.capture_device_id for row in capture_devices}
+        device_id_to_name     = {v: k for k, v in device_options_map.items()}
+        device_select_options = ["— Select Device —"] + list(device_options_map.keys())
+
+        unregistered_files = [f for f in found_files if f["file_name"] not in registered]
+        registered_files   = [f for f in found_files if f["file_name"] in registered]
+        sorted_files       = unregistered_files + registered_files
+
+        st.markdown("---")
+        st.markdown(
+            f"**{len(unregistered_files)} unregistered** &nbsp;|&nbsp; "
+            f"**{len(registered_files)} already registered**"
+        )
+        st.markdown("---")
+
+        h1, h2, h3, h4 = st.columns([3, 2, 2, 2])
+        h1.markdown("**File**")
+        h2.markdown("**Core**")
+        h3.markdown("**Capture Device**")
+        h4.markdown("**Remarks**")
+        st.markdown("---")
+
+        for f in sorted_files:
+            fname         = f["file_name"]
+            is_registered = fname in registered
+            db_record     = registered.get(fname, {})
+
+            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+
+            with col1:
+                icon    = "🖼️" if f["media_type"] == "image" else "🎥"
+                size_mb = f["file_size_bytes"] / (1024 * 1024)
+                status  = f"✅ *Registered — {db_record.get('core_name', '')}*" if is_registered else "⬜ *Unregistered*"
+                st.markdown(f"{icon} **{fname}**  \n{status}  \n{size_mb:.1f} MB")
+
+            with col2:
+                current_core_id = st.session_state["media_core_assignments"].get(fname)
+                current_label   = core_id_to_label.get(current_core_id, "— Select Core —")
+                current_idx     = core_select_options.index(current_label) if current_label in core_select_options else 0
+                chosen_core_label = st.selectbox(
+                    f"core_{fname}", options=core_select_options, index=current_idx,
+                    key=f"core_select_{fname}", label_visibility="collapsed"
+                )
+                st.session_state["media_core_assignments"][fname] = (
+                    core_options_map[chosen_core_label] if chosen_core_label != "— Select Core —" else None
+                )
+
+            with col3:
+                current_device_id   = st.session_state["media_device_assignments"].get(fname)
+                current_device_name = device_id_to_name.get(current_device_id, "— Select Device —")
+                current_device_idx  = device_select_options.index(current_device_name) if current_device_name in device_select_options else 0
+                chosen_device_label = st.selectbox(
+                    f"device_{fname}", options=device_select_options, index=current_device_idx,
+                    key=f"device_select_{fname}", label_visibility="collapsed"
+                )
+                st.session_state["media_device_assignments"][fname] = (
+                    device_options_map[chosen_device_label] if chosen_device_label != "— Select Device —" else None
+                )
+
+            with col4:
+                current_remarks = st.session_state["media_remarks_assignments"].get(fname, "")
+                remarks_val = st.text_input(
+                    f"remarks_{fname}", value=current_remarks, placeholder="Remarks (optional)",
+                    key=f"remarks_{fname}", label_visibility="collapsed"
+                )
+                st.session_state["media_remarks_assignments"][fname] = remarks_val
+
+            st.markdown("---")
+
+        if st.button("💾 Save Associations"):
+            scan_dir_relative = st.session_state.get("media_scan_dir_relative", "")
+            inserted = updated = skipped = 0
+            missing_fields = []
+
+            for f in found_files:
+                fname            = f["file_name"]
+                chosen_core_id   = st.session_state["media_core_assignments"].get(fname)
+                chosen_device_id = st.session_state["media_device_assignments"].get(fname)
+                chosen_remarks   = st.session_state["media_remarks_assignments"].get(fname) or None
+                db_record        = registered.get(fname)
+
+                if chosen_core_id is None and chosen_device_id is None:
+                    skipped += 1
+                    continue
+
+                if chosen_core_id is None:
+                    missing_fields.append(f"{fname}: Core not selected")
+                    continue
+                if chosen_device_id is None:
+                    missing_fields.append(f"{fname}: Capture device not selected")
+                    continue
+
+                if db_record is None:
+                    insert_core_media(
+                        core_id=chosen_core_id,
+                        file_name=fname,
+                        file_path=scan_dir_relative,
+                        media_type=f["media_type"],
+                        file_size_bytes=f["file_size_bytes"],
+                        capture_device_id=chosen_device_id,
+                        remarks=chosen_remarks
+                    )
+                    inserted += 1
+
+                elif (db_record["core_id"] == chosen_core_id and
+                      db_record["capture_device_id"] == chosen_device_id and
+                      (db_record["remarks"] or "") == (chosen_remarks or "")):
+                    skipped += 1
+
+                else:
+                    update_core_media_association(
+                        media_id=db_record["media_id"],
+                        core_id=chosen_core_id,
+                        capture_device_id=chosen_device_id,
+                        remarks=chosen_remarks
+                    )
+                    updated += 1
+
+            if missing_fields:
+                st.warning("⚠️ Some files are partially filled in and were skipped:\n" +
+                           "\n".join(f"- {m}" for m in missing_fields))
+
+            parts = []
+            if inserted:
+                parts.append(f"{inserted} new record(s) saved")
+            if updated:
+                parts.append(f"{updated} record(s) updated")
+            if skipped:
+                parts.append(f"{skipped} skipped")
+
+            if parts:
+                if inserted or updated:
+                    st.success("✅ " + " | ".join(parts))
+                else:
+                    st.info("ℹ️ " + " | ".join(parts))

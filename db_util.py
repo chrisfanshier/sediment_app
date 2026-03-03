@@ -278,4 +278,78 @@ def insert_usbl_file(cruise_id, file_name, file_path, sampling_device, transpond
         })
         conn.commit()
 
+# ── Core Media ────────────────────────────────────────────────────────────────
+def fetch_capture_devices():
+    """Fetch all capture devices for dropdown."""
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT capture_device_id, device_name
+            FROM capture_devices
+            ORDER BY device_name
+        """))
+        return result.fetchall()
 
+def insert_core_media(core_id, file_name, file_path, media_type, file_size_bytes, capture_device_id, remarks):
+    """Insert a new core_media record."""
+    with get_connection() as conn:
+        query = text("""
+            INSERT INTO core_media (core_id, file_name, file_path, media_type, file_size_bytes, capture_device_id, remarks)
+            VALUES (:core_id, :file_name, :file_path, :media_type, :file_size_bytes, :capture_device_id, :remarks)
+        """)
+        conn.execute(query, {
+            "core_id": core_id,
+            "file_name": file_name,
+            "file_path": file_path,
+            "media_type": media_type,
+            "file_size_bytes": file_size_bytes,
+            "capture_device_id": capture_device_id,
+            "remarks": remarks or None
+        })
+        conn.commit()
+
+
+def update_core_media_association(media_id, core_id, capture_device_id, remarks):
+    """Update the core association, capture device, and remarks for an existing core_media record."""
+    with get_connection() as conn:
+        query = text("""
+            UPDATE core_media
+            SET core_id = :core_id,
+                capture_device_id = :capture_device_id,
+                remarks = :remarks
+            WHERE media_id = :media_id
+        """)
+        conn.execute(query, {
+            "media_id": media_id,
+            "core_id": core_id,
+            "capture_device_id": capture_device_id,
+            "remarks": remarks or None
+        })
+        conn.commit()
+
+
+def fetch_core_media_registered(scan_dir_relative):
+    """
+    Return a dict of {file_name: {media_id, core_id, core_name, capture_device_id, device_name, remarks}}
+    for all files already registered in core_media whose file_path matches
+    the relative scan directory.
+    """
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT cm.media_id, cm.file_name, cm.core_id, c.core_name,
+                   cm.capture_device_id, cd.device_name, cm.remarks
+            FROM core_media cm
+            LEFT JOIN cores c ON cm.core_id = c.core_id
+            LEFT JOIN capture_devices cd ON cm.capture_device_id = cd.capture_device_id
+            WHERE cm.file_path = :file_path
+        """), {"file_path": scan_dir_relative})
+        return {
+            row.file_name: {
+                "media_id": row.media_id,
+                "core_id": row.core_id,
+                "core_name": row.core_name,
+                "capture_device_id": row.capture_device_id,
+                "device_name": row.device_name,
+                "remarks": row.remarks
+            }
+            for row in result
+        }
