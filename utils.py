@@ -130,6 +130,18 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
         core_type_id: The core type ID to get fields for
         existing_values: Optional dict of existing field values to pre-populate
     """
+    # Define units for dynamic fields
+    field_units = {
+        'core_length': 'feet',
+        'trigger_line_length': 'feet',
+        'trigger_core_length': 'feet',
+        'scope': 'feet',
+        'barrel_diameter': 'inches',
+        'liner_diameter': 'inches',
+        'pig_weights': 'quantity',
+        'vibracorer_model': None  # No units for model names
+    }
+    
     # Fetch dynamic fields metadata
     dynamic_fields = get_dynamic_fields_metadata(core_type_id) or []  # Ensure it's a list, even if None is returned
 
@@ -140,7 +152,11 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
 
     # Render input fields based on the metadata
     for field in dynamic_fields:
-        field_name = field.replace("_", " ").capitalize()  # Clean up field names for display
+        # Clean up field names for display and add units if applicable
+        field_name = field.replace("_", " ").capitalize()
+        unit = field_units.get(field)
+        if unit:
+            field_name = f"{field_name} ({unit})"
         
         # Get existing value for this field
         existing_value = existing.get(field, None)
@@ -152,7 +168,7 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
         if input_metadata["input_type"] == "integer":
             default_value = int(existing_value) if existing_value is not None else 0
             dynamic_field_values[field] = st.number_input(
-                f"{field_name} (integer)", 
+                field_name, 
                 value=default_value,
                 min_value=0, 
                 step=input_metadata["step"], 
@@ -166,7 +182,7 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
         elif input_metadata["input_type"] == "float":
             default_value = float(existing_value) if existing_value is not None else 0.0
             dynamic_field_values[field] = st.number_input(
-                f"{field_name} (numeric)", 
+                field_name, 
                 value=default_value,
                 min_value=0.0, 
                 step=input_metadata["step"], 
@@ -180,7 +196,7 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
         elif input_metadata["input_type"] == "text":
             default_value = str(existing_value) if existing_value is not None else ""
             dynamic_field_values[field] = st.text_input(
-                f"{field_name} (default)", 
+                field_name, 
                 value=default_value,
                 placeholder="Enter value or leave blank for NULL"
             )
@@ -204,7 +220,7 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
                 dynamic_field_values[field] = st.time_input(f"{field_name}")
         else:
             default_value = str(existing_value) if existing_value is not None else ""
-            dynamic_field_values[field] = st.text_input(f"{field_name} (default)", value=default_value)
+            dynamic_field_values[field] = st.text_input(field_name, value=default_value)
 
     return dynamic_field_values
 
