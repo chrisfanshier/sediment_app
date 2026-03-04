@@ -9,7 +9,9 @@ SUBDIRECTORIES = {
     "RBR Sensor": "Sensor_Data",
     "Star-Oddi Sensor": "Sensor_Data",
     "Winch Data": "winch_data",
-    "CT Data": "CT_Data"
+    "CT Data": "CT_Data",
+    "USBL Data": "usbl_data",
+    "Photos & Video": "core_media"
 }
 
 # Predefined winch data formats

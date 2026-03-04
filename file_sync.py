@@ -21,6 +21,8 @@ FILE_TABLES = [
     ('sensor_files', 'file_id', 'file_path'),
     ('winch_data', 'winch_file_id', 'file_path'),
     ('mscl_files', 'file_id', 'file_path'),
+    ('usbl_files', 'usbl_file_id', 'file_path'),
+    ('core_media', 'media_id', 'file_path'),
 ]
 
 st.set_page_config(page_title="Sync Files to Central", layout="wide")
@@ -123,6 +125,24 @@ def get_files_to_sync():
                     WHERE mf.sync_status = 'synced'
                     AND mf.created_on_ship = TRUE
                 """)
+            elif table_name == 'usbl_files':
+                query = text(f"""
+                    SELECT uf.{id_column}, uf.{path_column}, uf.central_id,
+                           uf.file_name, cr.cruise_name
+                    FROM {table_name} uf
+                    LEFT JOIN cruises cr ON uf.cruise_id = cr.cruise_id
+                    WHERE uf.sync_status = 'synced'
+                    AND uf.created_on_ship = TRUE
+                """)
+            elif table_name == 'core_media':
+                query = text(f"""
+                    SELECT cm.{id_column}, cm.{path_column}, cm.central_id,
+                           cm.file_name, c.core_name
+                    FROM {table_name} cm
+                    LEFT JOIN cores c ON cm.core_id = c.core_id
+                    WHERE cm.sync_status = 'synced'
+                    AND cm.created_on_ship = TRUE
+                """)
             
             records = conn.execute(query).fetchall()
             
@@ -208,6 +228,23 @@ else:
     col3.metric("⏳ Pending", pending_files)
     col4.metric("❌ Missing", missing_files)
     col5.metric("To Upload (MB)", f"{pending_size:.1f}")
+
+    # Warn about large video files in pending set
+    VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".mts", ".m2ts",
+                        ".mpg", ".mpeg", ".wmv", ".lrv", ".360"}
+    large_videos = [
+        f for f in files
+        if f['exists'] and not f['uploaded']
+        and os.path.splitext(f['file_name'])[1].lower() in VIDEO_EXTENSIONS
+        and f['size_mb'] > 100
+    ]
+    if large_videos:
+        total_video_mb = sum(v['size_mb'] for v in large_videos)
+        st.warning(
+            f"⚠️ **{len(large_videos)} large video file(s)** totaling "
+            f"**{total_video_mb:,.0f} MB** are pending upload. "
+            f"These may take a long time over a ship-to-shore connection."
+        )
     
     # Filter options
     st.subheader("Select Files to Upload")

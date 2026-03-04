@@ -288,3 +288,129 @@ def add_sync_tracking(values_dict, created_on_ship=True, is_update=False):
     
     return values_dict
 
+
+def _to_naive_utc(dt):
+    """Convert a datetime to a naive UTC datetime (strip tzinfo)."""
+    if dt is None:
+        return None
+    ts = pd.to_datetime(dt, utc=True)
+    py = ts.to_pydatetime()
+    return py.replace(tzinfo=None)
+
+
+def insert_usbl_file(cruise_id, file_name, file_path, sampling_device, transponder_type, remarks, start_time=None, end_time=None):
+    """Insert USBL file metadata with sync tracking. start_time/end_time are Python datetimes or None."""
+    with get_connection() as conn:
+        values = {
+            "cruise_id": cruise_id,
+            "file_name": file_name,
+            "file_path": file_path,
+            "sampling_device": sampling_device or None,
+            "transponder_type": transponder_type or None,
+            "remarks": remarks or None,
+            "start_time": _to_naive_utc(start_time),
+            "end_time": _to_naive_utc(end_time)
+        }
+        # Add sync tracking
+        values = add_sync_tracking(values)
+
+        query = text("""
+            INSERT INTO usbl_files (
+                cruise_id, file_name, file_path, sampling_device, transponder_type, remarks, start_time, end_time,
+                created_on_ship, sync_status
+            ) VALUES (
+                :cruise_id, :file_name, :file_path, :sampling_device, :transponder_type, :remarks, :start_time, :end_time,
+                :created_on_ship, :sync_status
+            )
+        """)
+        conn.execute(query, values)
+        conn.commit()
+
+
+# ── Core Media ────────────────────────────────────────────────────────────────
+def fetch_capture_devices():
+    """Fetch all capture devices for dropdown."""
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT capture_device_id, device_name
+            FROM capture_devices
+            ORDER BY device_name
+        """))
+        return result.fetchall()
+
+
+def insert_core_media(core_id, file_name, file_path, media_type, file_size_bytes, capture_device_id, remarks):
+    """Insert a new core_media record with sync tracking."""
+    with get_connection() as conn:
+        values = {
+            "core_id": core_id,
+            "file_name": file_name,
+            "file_path": file_path,
+            "media_type": media_type,
+            "file_size_bytes": file_size_bytes,
+            "capture_device_id": capture_device_id,
+            "remarks": remarks or None
+        }
+        # Add sync tracking
+        values = add_sync_tracking(values)
+
+        query = text("""
+            INSERT INTO core_media (core_id, file_name, file_path, media_type, file_size_bytes, capture_device_id, remarks,
+                                    created_on_ship, sync_status)
+            VALUES (:core_id, :file_name, :file_path, :media_type, :file_size_bytes, :capture_device_id, :remarks,
+                    :created_on_ship, :sync_status)
+        """)
+        conn.execute(query, values)
+        conn.commit()
+
+
+def update_core_media_association(media_id, core_id, capture_device_id, remarks):
+    """Update the core association, capture device, and remarks for an existing core_media record."""
+    with get_connection() as conn:
+        values = {
+            "media_id": media_id,
+            "core_id": core_id,
+            "capture_device_id": capture_device_id,
+            "remarks": remarks or None
+        }
+        # Add sync tracking for update
+        values = add_sync_tracking(values, is_update=True)
+
+        query = text("""
+            UPDATE core_media
+            SET core_id = :core_id,
+                capture_device_id = :capture_device_id,
+                remarks = :remarks,
+                sync_status = :sync_status
+            WHERE media_id = :media_id
+        """)
+        conn.execute(query, values)
+        conn.commit()
+
+
+def fetch_core_media_registered(scan_dir_relative):
+    """
+    Return a dict of {file_name: {media_id, core_id, core_name, capture_device_id, device_name, remarks}}
+    for all files already registered in core_media whose file_path matches
+    the relative scan directory.
+    """
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT cm.media_id, cm.file_name, cm.core_id, c.core_name,
+                   cm.capture_device_id, cd.device_name, cm.remarks
+            FROM core_media cm
+            LEFT JOIN cores c ON cm.core_id = c.core_id
+            LEFT JOIN capture_devices cd ON cm.capture_device_id = cd.capture_device_id
+            WHERE cm.file_path = :file_path
+        """), {"file_path": scan_dir_relative})
+        return {
+            row.file_name: {
+                "media_id": row.media_id,
+                "core_id": row.core_id,
+                "core_name": row.core_name,
+                "capture_device_id": row.capture_device_id,
+                "device_name": row.device_name,
+                "remarks": row.remarks
+            }
+            for row in result
+        }

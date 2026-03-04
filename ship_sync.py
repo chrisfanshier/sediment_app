@@ -23,11 +23,14 @@ CENTRAL_HEALTH_URL = "http://10.129.222.192:5910/health"
 SYNC_TABLES = [
     ('vessels', 'vessel_id'),
     ('cruises', 'cruise_id'),
+    ('capture_devices', 'capture_device_id'),
     ('cores', 'core_id'),
     ('sections', 'section_id'),
     ('mscl_files', 'file_id'),
     ('sensor_files', 'file_id'),
     ('winch_data', 'winch_file_id'),
+    ('usbl_files', 'usbl_file_id'),
+    ('core_media', 'media_id'),
 ]
 
 st.set_page_config(page_title="Sync to Central", layout="wide")
@@ -215,8 +218,72 @@ def get_pending_records_with_fk_lookup(table_name, id_column, conn):
             processed.append(record_dict)
         
         return processed
+
+    # USBL_FILES: Replace cruise_id with cruise's central_id
+    elif table_name == 'usbl_files':
+        query = text("""
+            SELECT
+                uf.*,
+                c.central_id as cruise_central_id
+            FROM usbl_files uf
+            LEFT JOIN cruises c ON uf.cruise_id = c.cruise_id
+            WHERE uf.sync_status = 'pending'
+            AND uf.created_on_ship = TRUE
+            ORDER BY uf.created_at
+        """)
+        records = conn.execute(query).fetchall()
+
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            cruise_central_id = record_dict.pop('cruise_central_id', None)
+
+            if cruise_central_id:
+                record_dict['cruise_id'] = cruise_central_id
+            elif record_dict.get('cruise_id'):
+                st.warning(f"⚠️ USBL file references cruise that hasn't been synced yet!")
+
+            processed.append(record_dict)
+
+        return processed
+
+    # CORE_MEDIA: Replace core_id with core's central_id, capture_device_id with device's central_id
+    elif table_name == 'core_media':
+        query = text("""
+            SELECT
+                cm.*,
+                co.central_id as core_central_id,
+                cd.central_id as device_central_id
+            FROM core_media cm
+            LEFT JOIN cores co ON cm.core_id = co.core_id
+            LEFT JOIN capture_devices cd ON cm.capture_device_id = cd.capture_device_id
+            WHERE cm.sync_status = 'pending'
+            AND cm.created_on_ship = TRUE
+            ORDER BY cm.created_at
+        """)
+        records = conn.execute(query).fetchall()
+
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            core_central_id = record_dict.pop('core_central_id', None)
+            device_central_id = record_dict.pop('device_central_id', None)
+
+            if core_central_id:
+                record_dict['core_id'] = core_central_id
+            elif record_dict.get('core_id'):
+                st.warning(f"⚠️ Core media references core that hasn't been synced yet!")
+
+            if device_central_id:
+                record_dict['capture_device_id'] = device_central_id
+            elif record_dict.get('capture_device_id'):
+                st.warning(f"⚠️ Core media references capture device that hasn't been synced yet!")
+
+            processed.append(record_dict)
+
+        return processed
     
-    # DEFAULT: Tables without FK dependencies (vessels, cruises)
+    # DEFAULT: Tables without FK dependencies (vessels, cruises, capture_devices)
     else:
         query = text(f"""
             SELECT * FROM {table_name}

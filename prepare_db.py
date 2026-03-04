@@ -87,6 +87,35 @@ def add_sync_tracking():
                 ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP,
                 ADD COLUMN IF NOT EXISTS file_synced BOOLEAN DEFAULT FALSE,
                 ADD COLUMN IF NOT EXISTS central_id INTEGER;
+
+            -- Add to usbl_files
+            ALTER TABLE usbl_files
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS created_on_ship BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS sync_status VARCHAR(20) DEFAULT 'synced',
+                ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS file_synced BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS central_id INTEGER;
+
+            -- Add to core_media
+            ALTER TABLE core_media
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS created_on_ship BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS sync_status VARCHAR(20) DEFAULT 'synced',
+                ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS file_synced BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS central_id INTEGER;
+
+            -- Add to capture_devices
+            ALTER TABLE capture_devices
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS modified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS created_on_ship BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS sync_status VARCHAR(20) DEFAULT 'synced',
+                ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS central_id INTEGER;
         """))
         conn.commit()
         print("  ✓ Sync columns added")
@@ -100,6 +129,9 @@ def add_sync_tracking():
             UPDATE mscl_files SET central_id = file_id WHERE central_id IS NULL;
             UPDATE sensor_files SET central_id = file_id WHERE central_id IS NULL;
             UPDATE winch_data SET central_id = winch_file_id WHERE central_id IS NULL;
+            UPDATE usbl_files SET central_id = usbl_file_id WHERE central_id IS NULL;
+            UPDATE core_media SET central_id = media_id WHERE central_id IS NULL;
+            UPDATE capture_devices SET central_id = capture_device_id WHERE central_id IS NULL;
         """))
         conn.commit()
         print("  ✓ Central IDs populated")
@@ -169,6 +201,9 @@ def add_sync_tracking():
             DROP TRIGGER IF EXISTS mscl_files_modified ON mscl_files;
             DROP TRIGGER IF EXISTS sensor_files_modified ON sensor_files;
             DROP TRIGGER IF EXISTS winch_data_modified ON winch_data;
+            DROP TRIGGER IF EXISTS usbl_files_modified ON usbl_files;
+            DROP TRIGGER IF EXISTS core_media_modified ON core_media;
+            DROP TRIGGER IF EXISTS capture_devices_modified ON capture_devices;
             
             CREATE TRIGGER vessels_modified BEFORE UPDATE ON vessels 
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
@@ -183,6 +218,12 @@ def add_sync_tracking():
             CREATE TRIGGER sensor_files_modified BEFORE UPDATE ON sensor_files 
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
             CREATE TRIGGER winch_data_modified BEFORE UPDATE ON winch_data
+                FOR EACH ROW EXECUTE FUNCTION update_modified_at();
+            CREATE TRIGGER usbl_files_modified BEFORE UPDATE ON usbl_files
+                FOR EACH ROW EXECUTE FUNCTION update_modified_at();
+            CREATE TRIGGER core_media_modified BEFORE UPDATE ON core_media
+                FOR EACH ROW EXECUTE FUNCTION update_modified_at();
+            CREATE TRIGGER capture_devices_modified BEFORE UPDATE ON capture_devices
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();          
         """))
         conn.commit()
@@ -240,12 +281,14 @@ def select_cruises_to_keep():
             conn.execute(text(f"DELETE FROM sensor_files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM sensor_data WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM mscl_files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
+            conn.execute(text(f"DELETE FROM core_media WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM associated_files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM physical_properties WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM sections WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM cores WHERE cruise_id IN ({delete_str})"))
             conn.execute(text(f"DELETE FROM winch_data WHERE cruise_id IN ({delete_str})"))
+            conn.execute(text(f"DELETE FROM usbl_files WHERE cruise_id IN ({delete_str})"))
             conn.execute(text(f"DELETE FROM cruises WHERE cruise_id IN ({delete_str})"))
             
             conn.commit()
