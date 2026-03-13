@@ -30,11 +30,14 @@ CENTRAL_FILE_ROOT = "/home/server/project/marssam/marssam_data_files"
 SYNC_TABLES = {
     'vessels': 'vessel_id',
     'cruises': 'cruise_id',
+    'capture_devices': 'capture_device_id',
     'cores': 'core_id',
     'sections': 'section_id',
     'mscl_files': 'file_id',
     'sensor_files': 'file_id',
     'winch_data': 'winch_file_id',
+    'usbl_files': 'usbl_file_id',
+    'core_media': 'media_id',
 }
 
 # ADD THIS: Foreign key dependencies for remapping
@@ -45,6 +48,8 @@ FK_DEPENDENCIES = {
     'mscl_files': {'core_id': 'cores'},
     'sensor_files': {'core_id': 'cores'},
     'winch_data': {'cruise_id': 'cruises'},
+    'usbl_files': {'cruise_id': 'cruises'},
+    'core_media': {'core_id': 'cores', 'capture_device_id': 'capture_devices'},
 }
 
 def get_pg_conn():
