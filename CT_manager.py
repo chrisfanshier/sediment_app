@@ -6,6 +6,10 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 import time
 import shutil
+import sqlite3
+import io
+import json
+import tempfile
 
 # === Shared utilities ===
 # Uses the network branch db_util.py and config.py (sediment_cores database)
@@ -759,43 +763,43 @@ def find_all_tifs(tiff_folder):
 
 def collect_export_manifest(selected_cores, selected_section_numbers,
                              export_xray, export_ct_ortho, export_slices,
-                             xray_corrected_only=True, ct_ortho_corrected_only=False):
+                             xray_corrected_only=True,
+                             ct_ortho_corrected_only=False,
+                             export_xmls=False):
     manifest = {
-        "xray_files": [],
-        "ct_ortho_files": [],
-        # CHANGED: slices_dirs now stores (tiff_folder, dst_name, db_id, core_name)
-        # instead of (tiff_folder, core_name)
-        "slices_dirs": [],
-        "slices_manifest_log": [],   # ADDED: tracing lines for the export log
-        "slices_file_count": 0,
-        "slices_size_bytes": 0,
-        "missing_folders": [],
-        "missing_tifs": [],
-        "renamed_count": 0,
-        "total_size_bytes": 0,
+        "xray_files":             [],
+        "ct_ortho_files":         [],
+        "slices_dirs":            [],
+        "slices_manifest_log":    [],
+        "slices_file_count":      0,
+        "slices_size_bytes":      0,
+        "missing_folders":        [],
+        "missing_tifs":           [],
+        "renamed_count":          0,
+        "total_size_bytes":       0,
+        "xml_files":              [],
     }
 
-    # CHANGED: include grandparent folder name to disambiguate files from
-    # different recon runs that share the same filename (e.g. two CircularCT
-    # recon versions of the same core/section producing identically-named TIFs)
     def make_dst_filename(src_path, core, section):
         basename = os.path.basename(src_path)
         if basename.upper().startswith(core.upper()):
             return basename
         manifest["renamed_count"] += 1
-        # parent  = Orthogonal/  grandparent = 1_CircularCT_Recon_algo
-        grandparent = os.path.basename(os.path.dirname(os.path.dirname(src_path)))
+        grandparent = os.path.basename(
+            os.path.dirname(os.path.dirname(src_path)))
         return f"{core}_{section}_{grandparent}_{basename}"
 
-    def resolve_tif_for_export(row, image_list, fallback_finder, corrected_only=False):
-        folder = get_full_path(row["tiff_folder"])
-        core = row["core_name"]
-        section = str(row["section_number"])
-        xml_path = row.get("xml_path", "")
+    def resolve_tif_for_export(row, image_list, fallback_finder,
+                                corrected_only=False):
+        folder       = get_full_path(row["tiff_folder"])
+        core         = row["core_name"]
+        section      = str(row["section_number"])
+        xml_path     = row.get("xml_path", "")
         tif_filename = row.get("tif_filename")
 
         if not tif_filename and xml_path:
-            tif_filename = os.path.splitext(os.path.basename(xml_path))[0] + ".tif"
+            tif_filename = os.path.splitext(
+                os.path.basename(xml_path))[0] + ".tif"
 
         if tif_filename:
             if corrected_only and "corrected" not in tif_filename.lower():
@@ -809,11 +813,13 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
                 except OSError:
                     pass
             else:
-                manifest["missing_tifs"].append(f"{core} Section {section}: {tif_path}")
+                manifest["missing_tifs"].append(
+                    f"{core} Section {section}: {tif_path}")
         else:
             if os.path.isdir(folder):
                 for f in fallback_finder(folder):
-                    if corrected_only and "corrected" not in os.path.basename(f).lower():
+                    if (corrected_only
+                            and "corrected" not in os.path.basename(f).lower()):
                         continue
                     dst_filename = make_dst_filename(f, core, section)
                     image_list.append((f, dst_filename, core, section))
@@ -822,67 +828,85 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
                     except OSError:
                         pass
             else:
-                manifest["missing_tifs"].append(f"{core} Section {section}: folder not found: {folder}")
+                manifest["missing_tifs"].append(
+                    f"{core} Section {section}: folder not found: {folder}")
 
+    # ── XRay / CT Ortho ──────────────────────────────────────────────────
     if export_xray:
-        for row in get_tiff_folders_for_export(selected_cores, selected_section_numbers, "giXRayImage"):
-            resolve_tif_for_export(row, manifest["xray_files"], find_all_tifs, corrected_only=xray_corrected_only)
+        for row in get_tiff_folders_for_export(
+                selected_cores, selected_section_numbers, "giXRayImage"):
+            resolve_tif_for_export(row, manifest["xray_files"],
+                                   find_all_tifs,
+                                   corrected_only=xray_corrected_only)
 
     if export_ct_ortho:
-        for row in get_tiff_folders_for_export(selected_cores, selected_section_numbers, "giCTOrthogonalView"):
-            resolve_tif_for_export(row, manifest["ct_ortho_files"], find_all_tifs, corrected_only=ct_ortho_corrected_only)
+        for row in get_tiff_folders_for_export(
+                selected_cores, selected_section_numbers, "giCTOrthogonalView"):
+            resolve_tif_for_export(row, manifest["ct_ortho_files"],
+                                   find_all_tifs,
+                                   corrected_only=ct_ortho_corrected_only)
 
-    if export_slices:
-        # Destination structure: tiff_stacks/{core}/Section_{section}/{folder_basename}
-        # folder_basename = os.path.basename(tiff_folder), e.g. "Slices", "SliceViews", "Slice#07"
-        # Collision key = (core, section, basename). First occurrence keeps basename,
-        # subsequent collisions get _2, _3 etc.
+    # ── Slices + XMLs share one scan of all rows ─────────────────────────
+    if export_slices or export_xmls:
         dst_basename_counter = {}
+        seen_xml_paths = set()
 
-        for row in get_all_tiff_folders_for_sections(selected_cores, selected_section_numbers):
-            if not is_recon_stack(row):
-                continue
+        all_rows = get_all_tiff_folders_for_sections(
+            selected_cores, selected_section_numbers)
 
-            folder = get_full_path(row["tiff_folder"])
-            core = row["core_name"]
-            section = str(row["section_number"])
-            db_id = row["id"]
+        for row in all_rows:
 
-            folder_basename = os.path.basename(folder.rstrip("/"))
-            collision_key = (core, section, folder_basename)
+            # ── XMLs ─────────────────────────────────────────────────
+            if export_xmls and row.get("xml_path"):
+                rel = row["xml_path"]
+                if rel not in seen_xml_paths:
+                    src_xml = get_full_path(rel)
+                    if os.path.exists(src_xml):
+                        manifest["xml_files"].append((src_xml, rel))
+                        seen_xml_paths.add(rel)
 
-            if collision_key not in dst_basename_counter:
-                dst_basename_counter[collision_key] = 1
-                dst_folder_name = folder_basename
-            else:
-                dst_basename_counter[collision_key] += 1
-                dst_folder_name = f"{folder_basename}_{dst_basename_counter[collision_key]}"
+            # ── Slices ───────────────────────────────────────────────
+            if export_slices and is_recon_stack(row):
+                folder  = get_full_path(row["tiff_folder"])
+                core    = row["core_name"]
+                section = str(row["section_number"])
+                db_id   = row["id"]
 
-            # Full relative destination: tiff_stacks/{core}/Section_{section}/{dst_folder_name}
-            dst_subpath = os.path.join("tiff_stacks", core, f"Section_{section}", dst_folder_name)
+                folder_basename = os.path.basename(folder.rstrip("/"))
+                collision_key   = (core, section, folder_basename)
 
-            if not os.path.isdir(folder):
-                if folder not in manifest["missing_folders"]:
-                    manifest["missing_folders"].append(folder)
-                continue
+                if collision_key not in dst_basename_counter:
+                    dst_basename_counter[collision_key] = 1
+                    dst_folder_name = folder_basename
+                else:
+                    dst_basename_counter[collision_key] += 1
+                    dst_folder_name = (
+                        f"{folder_basename}_"
+                        f"{dst_basename_counter[collision_key]}")
 
-            manifest["slices_dirs"].append((folder, dst_subpath, db_id, core))
+                dst_subpath = os.path.join(
+                    "tiff_stacks", core,
+                    f"Section_{section}", dst_folder_name)
 
-            # Tracing line for the export log
-            manifest["slices_manifest_log"].append(
-                f"  {dst_subpath:<70} db_id={db_id}  src={folder}"
-            )
+                if not os.path.isdir(folder):
+                    if folder not in manifest["missing_folders"]:
+                        manifest["missing_folders"].append(folder)
+                    continue
 
-            # Count files directly in this folder only (not recursive —
-            # subdirs with their own index.xml are separate rows)
-            for f in os.listdir(folder):
-                full_f = os.path.join(folder, f)
-                if os.path.isfile(full_f):
-                    manifest["slices_file_count"] += 1
-                    try:
-                        manifest["total_size_bytes"] += os.path.getsize(full_f)
-                    except OSError:
-                        pass
+                manifest["slices_dirs"].append(
+                    (folder, dst_subpath, db_id, core))
+                manifest["slices_manifest_log"].append(
+                    f"  {dst_subpath:<70} db_id={db_id}  src={folder}")
+
+                for f in os.listdir(folder):
+                    full_f = os.path.join(folder, f)
+                    if os.path.isfile(full_f):
+                        manifest["slices_file_count"] += 1
+                        try:
+                            manifest["total_size_bytes"] += os.path.getsize(
+                                full_f)
+                        except OSError:
+                            pass
 
     return manifest
 
@@ -896,74 +920,106 @@ def format_size(n_bytes):
 
 
 def render_export_preview(manifest):
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     with col1:
-        st.metric("XRay TIFs", len(manifest["xray_files"]))
+        st.metric("XRay TIFs",          len(manifest["xray_files"]))
     with col2:
         st.metric("CT Orthogonal TIFs", len(manifest["ct_ortho_files"]))
     with col3:
         st.metric("Slices Directories", len(manifest["slices_dirs"]))
     with col4:
-        st.metric("Total Files", len(manifest["xray_files"]) + len(manifest["ct_ortho_files"]) + manifest["slices_file_count"])
+        st.metric("XML Files",          len(manifest.get("xml_files", [])))
     with col5:
-        st.metric("Total Size", format_size(manifest.get("total_size_bytes", 0)))
+        st.metric("Total Files",
+                  len(manifest["xray_files"])
+                  + len(manifest["ct_ortho_files"])
+                  + manifest["slices_file_count"]
+                  + len(manifest.get("xml_files", [])))
+    with col6:
+        st.metric("Total Size",
+                  format_size(manifest.get("total_size_bytes", 0)))
 
     if manifest.get("renamed_count", 0) > 0:
-        st.info(f"✏️ {manifest['renamed_count']} CT Orthogonal file(s) will be renamed on export.")
+        st.info(
+            f"✏️ {manifest['renamed_count']} CT Orthogonal file(s) "
+            f"will be renamed on export.")
 
     if manifest["missing_folders"]:
-        with st.expander(f"⚠️ {len(manifest['missing_folders'])} tiff_folder(s) not found on disk"):
+        with st.expander(
+                f"⚠️ {len(manifest['missing_folders'])} "
+                f"tiff_folder(s) not found on disk"):
             for p in manifest["missing_folders"]:
                 st.text(p)
 
     if manifest["xray_files"]:
-        with st.expander(f"🖼️ XRay TIFs ({len(manifest['xray_files'])} files)"):
-            st.dataframe(pd.DataFrame(manifest["xray_files"],
-                         columns=["Source Path", "Destination Filename", "Core", "Section"]),
-                         use_container_width=True)
+        with st.expander(
+                f"🖼️ XRay TIFs ({len(manifest['xray_files'])} files)"):
+            st.dataframe(
+                pd.DataFrame(manifest["xray_files"],
+                             columns=["Source Path", "Destination Filename",
+                                      "Core", "Section"]),
+                use_container_width=True)
 
     if manifest["ct_ortho_files"]:
-        renamed = [(s, d, c, sec) for s, d, c, sec in manifest["ct_ortho_files"] if os.path.basename(s) != d]
-        label = f"🔬 CT Orthogonal TIFs ({len(manifest['ct_ortho_files'])} files"
-        if renamed:
-            label += f", {len(renamed)} renamed"
-        label += ")"
+        renamed = [(s, d, c, sec) for s, d, c, sec in manifest["ct_ortho_files"]
+                   if os.path.basename(s) != d]
+        label = (
+            f"🔬 CT Orthogonal TIFs ({len(manifest['ct_ortho_files'])} files"
+            + (f", {len(renamed)} renamed" if renamed else "") + ")")
         with st.expander(label):
-            st.dataframe(pd.DataFrame(manifest["ct_ortho_files"],
-                         columns=["Source Path", "Destination Filename", "Core", "Section"]),
-                         use_container_width=True)
+            st.dataframe(
+                pd.DataFrame(manifest["ct_ortho_files"],
+                             columns=["Source Path", "Destination Filename",
+                                      "Core", "Section"]),
+                use_container_width=True)
 
     if manifest["slices_dirs"]:
-        with st.expander(f"📂 Slices Directories ({len(manifest['slices_dirs'])} dirs, {manifest['slices_file_count']:,} files)", expanded=True):
-            st.caption("Uncheck any directories you want to exclude from the export.")
-            select_all = st.checkbox("Select all", value=True, key="slices_select_all")
+        with st.expander(
+                f"📂 Slices Directories ({len(manifest['slices_dirs'])} dirs, "
+                f"{manifest['slices_file_count']:,} files)",
+                expanded=True):
+            st.caption(
+                "Uncheck any directories you want to exclude from the export.")
+            select_all = st.checkbox("Select all", value=True,
+                                     key="slices_select_all")
             selected_indices = []
-            for i, (folder, dst_subpath, db_id, core) in enumerate(manifest["slices_dirs"]):
+            for i, (folder, dst_subpath, db_id, core) in enumerate(
+                    manifest["slices_dirs"]):
                 checked = st.checkbox(
                     f"`{dst_subpath}`",
                     value=select_all,
                     key=f"slice_dir_{db_id}",
-                    help=f"Source: {folder}"
-                )
+                    help=f"Source: {folder}")
                 if checked:
                     selected_indices.append(i)
-            # Store the filtered selection so generate_rsync_script only sees checked dirs
-            manifest["slices_dirs_selected"] = [manifest["slices_dirs"][i] for i in selected_indices]
-            manifest["slices_manifest_log_selected"] = [manifest["slices_manifest_log"][i] for i in selected_indices]
+            manifest["slices_dirs_selected"] = [
+                manifest["slices_dirs"][i] for i in selected_indices]
+            manifest["slices_manifest_log_selected"] = [
+                manifest["slices_manifest_log"][i]
+                for i in selected_indices]
+
+    # XML files expander
+    if manifest.get("xml_files"):
+        with st.expander(
+                f"📄 XML Files ({len(manifest['xml_files'])} files)"):
+            st.dataframe(
+                pd.DataFrame(manifest["xml_files"],
+                             columns=["Source Path",
+                                      "Export-Relative Path"]),
+                use_container_width=True)
 
     if manifest.get("missing_tifs"):
-        with st.expander(f"⚠️ {len(manifest['missing_tifs'])} TIF file(s) expected but not found on disk"):
-            st.warning("These files are in the database but the TIF was not found at the expected path.")
+        with st.expander(
+                f"⚠️ {len(manifest['missing_tifs'])} "
+                f"TIF file(s) expected but not found on disk"):
+            st.warning(
+                "These files are in the database but the TIF was not "
+                "found at the expected path.")
             for p in manifest["missing_tifs"]:
                 st.text(p)
 
 
 def generate_rsync_script(manifest, export_dir):
-    """
-    Generate a bash rsync script for Linux network machine.
-    rsync is used instead of robocopy because the network machine is Linux.
-    --ignore-existing skips files already at the destination (safe to re-run).
-    """
     xray_dst     = os.path.join(export_dir, "xray_images")
     ct_ortho_dst = os.path.join(export_dir, "ct_orthogonal")
     log_file     = os.path.join(export_dir, "export_log.txt")
@@ -991,68 +1047,93 @@ def generate_rsync_script(manifest, export_dir):
         lines.append(f"# --- {section_label} ---")
         lines.append(f'mkdir -p "{dst_dir}"')
 
-        same_name = [(s, d, c, sec) for s, d, c, sec in file_list if os.path.basename(s) == d]
-        renamed   = [(s, d, c, sec) for s, d, c, sec in file_list if os.path.basename(s) != d]
+        same_name = [(s, d, c, sec) for s, d, c, sec in file_list
+                     if os.path.basename(s) == d]
+        renamed   = [(s, d, c, sec) for s, d, c, sec in file_list
+                     if os.path.basename(s) != d]
 
-        # Batch same-name files per source folder
         by_folder = {}
         for src, dst_fn, core, section in same_name:
-            by_folder.setdefault(os.path.dirname(src), []).append(os.path.basename(src))
+            by_folder.setdefault(
+                os.path.dirname(src), []).append(os.path.basename(src))
         for folder, filenames in by_folder.items():
             includes = " ".join(f'--include="{f}"' for f in filenames)
             lines.append(
                 f'rsync -av --ignore-existing {includes} --exclude="*" '
-                f'"{folder}/" "{dst_dir}/" >> "$LOG" 2>&1'
-            )
+                f'"{folder}/" "{dst_dir}/" >> "$LOG" 2>&1')
 
-        # Renamed files: copy individually with new destination name
         if renamed:
             lines.append("# -- renamed files --")
             for src, dst_fn, core, section in renamed:
                 dst_path = os.path.join(dst_dir, dst_fn)
                 lines.append(
                     f'[ ! -f "{dst_path}" ] && cp "{src}" "{dst_path}" '
-                    f'&& echo "Copied: {dst_fn}" >> "$LOG"'
-                )
+                    f'&& echo "Copied: {dst_fn}" >> "$LOG"')
         lines.append("")
 
     emit_file_copies(manifest["xray_files"],     xray_dst,     "XRay Images")
     emit_file_copies(manifest["ct_ortho_files"], ct_ortho_dst, "CT Orthogonal Views")
 
-    # CHANGED: slices section completely rewritten.
-    # Each recon stack gets its own destination folder named from database metadata.
-    # --no-recursive ensures we only copy files directly in tiff_folder,
-    # not descending into subdirectories that have their own index.xml rows.
+    # ── Slices ────────────────────────────────────────────────────────────
     if manifest["slices_dirs"]:
-        # Use user-selected subset if checkboxes were rendered, otherwise all dirs
-        active_dirs = manifest.get("slices_dirs_selected", manifest["slices_dirs"])
-        active_log  = manifest.get("slices_manifest_log_selected", manifest["slices_manifest_log"])
-
-        if not active_dirs:
-            pass  # all unchecked — skip slices block entirely
-        else:
+        active_dirs = manifest.get("slices_dirs_selected",
+                                   manifest["slices_dirs"])
+        active_log  = manifest.get("slices_manifest_log_selected",
+                                   manifest["slices_manifest_log"])
+        if active_dirs:
             lines.append("# --- Slices Directories ---")
-            lines.append("# Destination structure: tiff_stacks/{core}/Section_{section}/{folder_basename}")
-            lines.append("# Suffixes _2, _3 etc. on folder name = collision (same basename, same core+section).")
-            lines.append("# See SLICES MANIFEST below for tracing to database IDs and source paths.")
+            lines.append(
+                "# Destination: tiff_stacks/{core}/Section_{section}/"
+                "{folder_basename}")
             lines.append("")
-
             lines.append("# -- Slices manifest --")
             lines.append('echo "=== SLICES EXPORT MANIFEST ===" >> "$LOG"')
-            lines.append(f'echo "  {"Destination":<70} DB ID   Source" >> "$LOG"')
+            lines.append(
+                f'echo "  {"Destination":<70} DB ID   Source" >> "$LOG"')
             for log_line in active_log:
                 escaped = log_line.replace('"', '\\"')
                 lines.append(f'echo "{escaped}" >> "$LOG"')
             lines.append('echo "==============================" >> "$LOG"')
             lines.append("")
-
             for folder, dst_subpath, db_id, core in active_dirs:
                 dst_path = os.path.join(export_dir, dst_subpath)
                 lines.append(f'mkdir -p "{dst_path}"')
                 lines.append(
-                    f'rsync -av --exclude="*/" --ignore-existing "{folder}/" "{dst_path}/" >> "$LOG" 2>&1'
-                )
+                    f'rsync -av --exclude="*/" --ignore-existing '
+                    f'"{folder}/" "{dst_path}/" >> "$LOG" 2>&1')
             lines.append("")
+
+    # ── XMLs (mirrored paths) ─────────────────────────────────────────────
+    if manifest.get("xml_files"):
+        lines.append("# --- XML Files (mirrored structure) ---")
+        by_dir: dict = {}
+        for src_abs, export_rel in manifest["xml_files"]:
+            src_dir  = os.path.dirname(src_abs)
+            dst_dir  = os.path.join(export_dir, os.path.dirname(export_rel))
+            filename = os.path.basename(src_abs)
+            by_dir.setdefault((src_dir, dst_dir), []).append(filename)
+
+        for (src_dir, dst_dir), filenames in by_dir.items():
+            lines.append(f'mkdir -p "{dst_dir}"')
+            includes = " ".join(f'--include="{f}"' for f in filenames)
+            lines.append(
+                f'rsync -av --ignore-existing {includes} --exclude="*" '
+                f'"{src_dir}/" "{dst_dir}/" >> "$LOG" 2>&1')
+        lines.append("")
+
+    # ── SQLite generation on the server ───────────────────────────────────
+    lines += [
+        "# --- Generate export.sqlite ---",
+        "# Uses Python 3 + psycopg2 (already present on the server).",
+        "# Reads exported XML files to discover core names, then pulls",
+        "# matching rows from PostgreSQL into a portable SQLite file.",
+        'echo "Generating export.sqlite..." >> "$LOG"',
+        "python3 - << 'PYEOF'",
+        _sqlite_server_script(export_dir),
+        "PYEOF",
+        'echo "export.sqlite written." >> "$LOG"',
+        "",
+    ]
 
     lines += [
         'echo "Export complete: $(date)" >> "$LOG"',
@@ -1061,6 +1142,255 @@ def generate_rsync_script(manifest, export_dir):
     ]
 
     return "\n".join(lines)
+
+
+def _sqlite_server_script(export_dir: str) -> str:
+    """Return the Python heredoc embedded in the bash export script."""
+    return f'''\
+import sqlite3, psycopg2, os, json, glob, datetime
+import xml.etree.ElementTree as ET
+
+EXPORT_DIR  = "{export_dir}"
+SQLITE_PATH = os.path.join(EXPORT_DIR, "export.sqlite")
+
+# ── Discover core names from exported XMLs ────────────────────────────────
+xml_files = glob.glob(os.path.join(EXPORT_DIR, "**", "*.xml"), recursive=True)
+core_names_on_disk = set()
+for xf in xml_files:
+    try:
+        root = ET.parse(xf).getroot()
+        for tag in ("Core-ID", "coreID", "core-id"):
+            el = root.find(f".//{{{{tag}}}}")
+            if el is not None and el.text:
+                core_names_on_disk.add(
+                    el.text.strip().replace("_", "-").upper())
+                break
+    except Exception:
+        pass
+
+if not core_names_on_disk:
+    print("No core names found in exported XMLs — export.sqlite not written.")
+    raise SystemExit(0)
+
+core_list = list(core_names_on_disk)
+print(f"Found {{len(core_list)}} core(s) in exported XMLs: {{', '.join(sorted(core_list))}}")
+
+# ── PostgreSQL connection ─────────────────────────────────────────────────
+pg  = psycopg2.connect(dbname="sediment_cores", user="postgres",
+                        password="madmaxfuryroad", host="localhost", port=5432)
+cur = pg.cursor()
+
+def fetch_all(sql, params=()):
+    cur.execute(sql, params)
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    return cols, rows
+
+def copy_pg_to_sqlite(con, table, cols, rows):
+    con.execute(f"DROP TABLE IF EXISTS {{table}}")
+    col_defs = ", ".join(f"\\\\"{{c}}\\\\" TEXT" for c in cols)
+    con.execute(f"CREATE TABLE {{table}} ({{col_defs}})")
+    if rows:
+        ph = ",".join(["?"] * len(cols))
+        con.executemany(
+            f"INSERT INTO {{table}} VALUES ({{ph}})",
+            [tuple(str(v) if v is not None else None for v in r) for r in rows])
+
+ph = ",".join(["%s"] * len(core_list))
+
+# cores — exported cores + siblings from same cruise(s)
+cols, cruise_rows = fetch_all(
+    f"SELECT DISTINCT cruise_id FROM cores WHERE core_name IN ({{ph}})",
+    core_list)
+cruise_ids = [r[0] for r in cruise_rows]
+
+if cruise_ids:
+    cph = ",".join(["%s"] * len(cruise_ids))
+    cols_c, rows_c = fetch_all(
+        f"SELECT * FROM cores WHERE cruise_id IN ({{cph}}) ORDER BY core_name",
+        cruise_ids)
+else:
+    cols_c, rows_c = fetch_all(
+        f"SELECT * FROM cores WHERE core_name IN ({{ph}}) ORDER BY core_name",
+        core_list)
+
+# sections — for all cores in scope
+all_core_names_in_db = [r[cols_c.index("core_name")] for r in rows_c]
+if all_core_names_in_db:
+    aph = ",".join(["%s"] * len(all_core_names_in_db))
+    id_cur = pg.cursor()
+    id_cur.execute(
+        f"SELECT core_id FROM cores WHERE core_name IN ({{aph}})",
+        all_core_names_in_db)
+    all_core_ids = [r[0] for r in id_cur.fetchall()]
+    id_cur.close()
+    idph = ",".join(["%s"] * len(all_core_ids))
+    cols_s, rows_s = fetch_all(
+        f"SELECT * FROM sections WHERE core_id IN ({{idph}}) "
+        f"ORDER BY core_id, section_number",
+        all_core_ids)
+else:
+    cols_s, rows_s = [], []
+
+# ct_xml — only exported cores
+cols_x, rows_x = fetch_all(
+    f"SELECT * FROM ct_xml WHERE core_name IN ({{ph}}) "
+    f"ORDER BY core_name, section_number",
+    core_list)
+
+cur.close()
+pg.close()
+
+# ── Write SQLite ──────────────────────────────────────────────────────────
+con = sqlite3.connect(SQLITE_PATH)
+con.execute("PRAGMA journal_mode=WAL")
+copy_pg_to_sqlite(con, "cores",    cols_c, rows_c)
+copy_pg_to_sqlite(con, "sections", cols_s, rows_s)
+copy_pg_to_sqlite(con, "ct_xml",   cols_x, rows_x)
+
+con.execute("DROP TABLE IF EXISTS export_meta")
+con.execute("CREATE TABLE export_meta (key TEXT PRIMARY KEY, value TEXT)")
+con.executemany("INSERT INTO export_meta VALUES (?, ?)", [
+    ("generated_at", datetime.datetime.now().isoformat()),
+    ("export_dir",   EXPORT_DIR),
+    ("core_names",   json.dumps(sorted(core_list))),
+    ("cruise_ids",   json.dumps(cruise_ids)),
+    ("n_cores",      str(len(rows_c))),
+    ("n_sections",   str(len(rows_s))),
+    ("n_ct_xml",     str(len(rows_x))),
+])
+con.commit()
+con.close()
+print(f"export.sqlite: {{len(rows_c)}} cores, {{len(rows_s)}} sections, "
+      f"{{len(rows_x)}} ct_xml rows -> {{SQLITE_PATH}}")
+'''
+
+
+def generate_export_sqlite_bytes(selected_cores, selected_section_numbers):
+    """
+    Build a portable SQLite database from the live PostgreSQL connection.
+    Returns bytes suitable for st.download_button.
+    """
+
+    con = sqlite3.connect(":memory:")
+    con.execute("PRAGMA journal_mode=WAL")
+
+    def copy_table(table, col_names, rows):
+        con.execute(f"DROP TABLE IF EXISTS {table}")
+        col_defs = ", ".join(f'"{c}" TEXT' for c in col_names)
+        con.execute(f"CREATE TABLE {table} ({col_defs})")
+        if rows:
+            ph = ",".join(["?"] * len(col_names))
+            con.executemany(
+                f"INSERT INTO {table} VALUES ({ph})",
+                [tuple(str(v) if v is not None else None for v in r)
+                 for r in rows])
+        return len(rows)
+
+    with get_connection() as conn:
+
+        # ── Find cruise_ids for exported cores ────────────────────────
+        cruise_ids = []
+        if selected_cores:
+            ph = ", ".join(f":ec_{i}" for i in range(len(selected_cores)))
+            p  = {f"ec_{i}": c for i, c in enumerate(selected_cores)}
+            res = conn.execute(
+                text(f"SELECT DISTINCT cruise_id FROM cores "
+                     f"WHERE core_name IN ({ph})"), p)
+            cruise_ids = [r[0] for r in res.fetchall()]
+
+        # ── cores ─────────────────────────────────────────────────────
+        if cruise_ids:
+            cph = ", ".join(f":cr_{i}" for i in range(len(cruise_ids)))
+            cp  = {f"cr_{i}": cid for i, cid in enumerate(cruise_ids)}
+            res = conn.execute(
+                text(f"SELECT * FROM cores WHERE cruise_id IN ({cph}) "
+                     f"ORDER BY core_name"), cp)
+        else:
+            ph2 = ", ".join(f":ec_{i}" for i in range(len(selected_cores)))
+            p2  = {f"ec_{i}": c for i, c in enumerate(selected_cores)}
+            res = conn.execute(
+                text(f"SELECT * FROM cores WHERE core_name IN ({ph2}) "
+                     f"ORDER BY core_name"), p2)
+        cores_cols = [d[0] for d in res.cursor.description]
+        cores_rows = res.fetchall()
+        copy_table("cores", cores_cols, cores_rows)
+
+        # ── sections — for all cores in scope (exported + siblings) ───
+        all_core_names = [r[cores_cols.index("core_name")]
+                          for r in cores_rows]
+        sec_rows = []
+        sec_cols = []
+        if all_core_names:
+            an_ph   = ", ".join(
+                f":an_{i}" for i in range(len(all_core_names)))
+            an_pars = {f"an_{i}": n for i, n in enumerate(all_core_names)}
+            id_res  = conn.execute(
+                text(f"SELECT core_id FROM cores "
+                     f"WHERE core_name IN ({an_ph})"), an_pars)
+            all_core_ids = [r[0] for r in id_res.fetchall()]
+
+            if all_core_ids:
+                cid_ph   = ", ".join(
+                    f":cid_{i}" for i in range(len(all_core_ids)))
+                cid_pars = {f"cid_{i}": cid
+                            for i, cid in enumerate(all_core_ids)}
+                res = conn.execute(
+                    text(f"SELECT * FROM sections "
+                         f"WHERE core_id IN ({cid_ph}) "
+                         f"ORDER BY core_id, section_number"), cid_pars)
+                sec_cols = [d[0] for d in res.cursor.description]
+                sec_rows = res.fetchall()
+        copy_table("sections", sec_cols or ["section_id", "core_id",
+                                             "section_number"], sec_rows)
+
+        # ── ct_xml — only the exported cores/sections ─────────────────
+        ct_rows = []
+        ct_cols = []
+        if selected_cores and selected_section_numbers:
+            xc_ph   = ", ".join(
+                f":xc_{i}" for i in range(len(selected_cores)))
+            xs_ph   = ", ".join(
+                f":xs_{i}" for i in range(len(selected_section_numbers)))
+            xc_pars = {f"xc_{i}": c for i, c in enumerate(selected_cores)}
+            xs_pars = {f"xs_{i}": str(s)
+                       for i, s in enumerate(selected_section_numbers)}
+            res = conn.execute(
+                text(f"""
+                    SELECT * FROM ct_xml
+                    WHERE core_name IN ({xc_ph})
+                      AND CAST(section_number AS TEXT) IN ({xs_ph})
+                    ORDER BY core_name, section_number
+                """), {**xc_pars, **xs_pars})
+            ct_cols = [d[0] for d in res.cursor.description]
+            ct_rows = res.fetchall()
+        copy_table("ct_xml", ct_cols or ["id", "core_name",
+                                          "section_number"], ct_rows)
+
+    # ── export_meta ───────────────────────────────────────────────────────
+    con.execute("DROP TABLE IF EXISTS export_meta")
+    con.execute(
+        "CREATE TABLE export_meta (key TEXT PRIMARY KEY, value TEXT)")
+    con.executemany("INSERT INTO export_meta VALUES (?, ?)", [
+        ("generated_at", datetime.now().isoformat()),
+        ("core_names",   json.dumps(sorted(selected_cores))),
+        ("cruise_ids",   json.dumps(cruise_ids)),
+        ("n_cores",      str(len(cores_rows))),
+        ("n_sections",   str(len(sec_rows))),
+        ("n_ct_xml",     str(len(ct_rows))),
+    ])
+    con.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        tmp_path = tmp.name
+    dest = sqlite3.connect(tmp_path)
+    con.backup(dest)
+    dest.close()
+    con.close()
+    with open(tmp_path, "rb") as f:
+        data = f.read()
+    os.unlink(tmp_path)
+    return data
 
 
 # === Streamlit App ===
@@ -1443,7 +1773,9 @@ def main():
     # === TAB 4: Export Data ===
     with tab4:
         st.header("Export Data")
-        st.write("Select cores and sections, choose what to export, then generate an rsync script.")
+        st.write(
+            "Select cores and sections, choose what to export, then "
+            "download the rsync script and a portable SQLite database.")
 
         all_cruises = get_cruises_from_db()
         if not all_cruises:
@@ -1455,7 +1787,8 @@ def main():
                 options=list(cruise_options.keys()),
                 help="Select one or more cruises to filter the core list."
             )
-            selected_cruise_ids = [cruise_options[n] for n in selected_cruise_names]
+            selected_cruise_ids = [cruise_options[n]
+                                   for n in selected_cruise_names]
 
             if selected_cruise_ids:
                 available_cores = get_cores_for_cruises(selected_cruise_ids)
@@ -1463,33 +1796,42 @@ def main():
                 available_cores = get_cores_from_db()
 
             if not available_cores:
-                st.warning("No cores with CT data found for the selected cruise(s).")
+                st.warning(
+                    "No cores with CT data found for the selected cruise(s).")
             else:
                 select_all_cores = st.checkbox(
                     f"Select All Cores ({len(available_cores)})",
                     value=False,
-                    key="export_select_all_cores"
-                )
+                    key="export_select_all_cores")
                 if select_all_cores:
                     selected_cores = available_cores
-                    st.info(f"✅ All {len(available_cores)} cores selected"
-                            + (f" from {', '.join(selected_cruise_names)}" if selected_cruise_names else ""))
+                    st.info(
+                        f"✅ All {len(available_cores)} cores selected"
+                        + (f" from {', '.join(selected_cruise_names)}"
+                           if selected_cruise_names else ""))
                 else:
-                    selected_cores = st.multiselect("Select Core(s)", options=available_cores)
+                    selected_cores = st.multiselect(
+                        "Select Core(s)", options=available_cores)
 
-            if not selected_cruise_ids and not select_all_cores and not selected_cores:
-                st.info("👆 Select at least one cruise or core to see available sections.")
+            if (not selected_cruise_ids and not select_all_cores
+                    and not selected_cores):
+                st.info(
+                    "👆 Select at least one cruise or core to see "
+                    "available sections.")
             elif not available_cores:
                 pass
             elif not selected_cores:
-                st.info("👆 Select at least one core to see available sections.")
+                st.info(
+                    "👆 Select at least one core to see available sections.")
             else:
                 st.markdown("---")
                 st.subheader("Select Sections")
                 core_section_pairs = get_sections_for_cores(selected_cores)
 
                 if not core_section_pairs:
-                    st.warning("No CT data found in the database for the selected cores.")
+                    st.warning(
+                        "No CT data found in the database for the "
+                        "selected cores.")
                 else:
                     sections_by_core = {}
                     for core, sec in core_section_pairs:
@@ -1500,66 +1842,122 @@ def main():
                         sections = sections_by_core.get(core, [])
                         if not sections:
                             continue
-                        with st.expander(f"📦 {core} — {len(sections)} section(s)", expanded=False):
-                            select_all_secs = st.checkbox("Select all sections", value=True, key=f"all_secs_{core}")
+                        with st.expander(
+                                f"📦 {core} — {len(sections)} section(s)",
+                                expanded=False):
+                            select_all_secs = st.checkbox(
+                                "Select all sections", value=True,
+                                key=f"all_secs_{core}")
                             if select_all_secs:
                                 chosen_secs = sections
-                                st.caption(f"All {len(sections)} sections selected: {', '.join(str(s) for s in sections)}")
+                                st.caption(
+                                    f"All {len(sections)} sections selected: "
+                                    f"{', '.join(str(s) for s in sections)}")
                             else:
                                 chosen_secs = []
                                 cols_per_row = 6
-                                sec_chunks = [sections[i:i+cols_per_row] for i in range(0, len(sections), cols_per_row)]
+                                sec_chunks = [
+                                    sections[i:i + cols_per_row]
+                                    for i in range(0, len(sections),
+                                                   cols_per_row)]
                                 for chunk in sec_chunks:
                                     cols = st.columns(len(chunk))
                                     for col, sec in zip(cols, chunk):
                                         with col:
-                                            if st.checkbox(str(sec), value=True, key=f"sec_{core}_{sec}"):
+                                            if st.checkbox(
+                                                    str(sec), value=True,
+                                                    key=f"sec_{core}_{sec}"):
                                                 chosen_secs.append(sec)
                             for sec in chosen_secs:
                                 selected_section_keys.append((core, sec))
 
-                    selected_cores_final = list({core for core, _ in selected_section_keys})
-                    selected_section_numbers = list({sec for _, sec in selected_section_keys})
+                    selected_cores_final = list(
+                        {core for core, _ in selected_section_keys})
+                    selected_section_numbers = list(
+                        {sec for _, sec in selected_section_keys})
 
                     if not selected_section_keys:
                         st.info("Select at least one section to continue.")
                     else:
-                        st.caption(f"**{len(selected_section_keys)} core/section combinations selected**")
+                        st.caption(
+                            f"**{len(selected_section_keys)} core/section "
+                            f"combinations selected**")
                         st.markdown("---")
                         st.subheader("What to Export")
-                        col1, col2, col3 = st.columns(3)
+
+                        col1, col2, col3, col4 = st.columns(4)
                         with col1:
-                            export_xray = st.checkbox("🖼️ XRay Images", value=True)
+                            export_xray = st.checkbox(
+                                "🖼️ XRay Images", value=True)
                             if export_xray:
-                                xray_corrected_only = st.radio("Include", ["Corrected only", "All images"], index=0, key="xray_filter", horizontal=True) == "Corrected only"
+                                xray_corrected_only = (
+                                    st.radio(
+                                        "Include",
+                                        ["Corrected only", "All images"],
+                                        index=0,
+                                        key="xray_filter",
+                                        horizontal=True)
+                                    == "Corrected only")
                             else:
                                 xray_corrected_only = True
                         with col2:
-                            export_ct_ortho = st.checkbox("🔬 CT Orthogonal Views", value=True)
+                            export_ct_ortho = st.checkbox(
+                                "🔬 CT Orthogonal Views", value=True)
                             if export_ct_ortho:
-                                ct_ortho_corrected_only = st.radio("Include", ["All images", "Corrected only"], index=0, key="ct_ortho_filter", horizontal=True) == "Corrected only"
+                                ct_ortho_corrected_only = (
+                                    st.radio(
+                                        "Include",
+                                        ["All images", "Corrected only"],
+                                        index=0,
+                                        key="ct_ortho_filter",
+                                        horizontal=True)
+                                    == "Corrected only")
                             else:
                                 ct_ortho_corrected_only = False
                         with col3:
-                            export_slices = st.checkbox("📂 Slices Directories", value=True)
+                            export_slices = st.checkbox(
+                                "📂 Slices Directories", value=True)
+                        with col4:
+                            export_xmls = st.checkbox(
+                                "📄 Export XMLs", value=True,
+                                help=(
+                                    "Copy XML metadata files alongside their "
+                                    "TIFs (mirrored folder structure). "
+                                    "Required for pixel-per-cm resolution in "
+                                    "the Core Correlator."))
 
                         st.markdown("---")
-                        export_dir = st.text_input("Export Directory", value=get_full_path("CT_Export"))
+                        export_dir = st.text_input(
+                            "Export Directory",
+                            value=get_full_path("CT_Export"))
 
                         st.markdown("---")
-                        if st.button("🔍 Preview Export", use_container_width=True):
-                            if not any([export_xray, export_ct_ortho, export_slices]):
-                                st.warning("Select at least one export type.")
+                        if st.button("🔍 Preview Export",
+                                     use_container_width=True):
+                            if not any([export_xray, export_ct_ortho,
+                                        export_slices, export_xmls]):
+                                st.warning(
+                                    "Select at least one export type.")
                             else:
-                                with st.spinner("Scanning for files to export..."):
+                                with st.spinner(
+                                        "Scanning for files to export..."):
                                     preview = collect_export_manifest(
-                                        selected_cores_final, selected_section_numbers,
-                                        export_xray, export_ct_ortho, export_slices,
+                                        selected_cores_final,
+                                        selected_section_numbers,
+                                        export_xray,
+                                        export_ct_ortho,
+                                        export_slices,
                                         xray_corrected_only=xray_corrected_only,
-                                        ct_ortho_corrected_only=ct_ortho_corrected_only
+                                        ct_ortho_corrected_only=ct_ortho_corrected_only,
+                                        export_xmls=export_xmls,
                                     )
                                 st.session_state.export_preview = preview
                                 st.session_state.export_dir = export_dir
+                                st.session_state.export_cores_final = (
+                                    selected_cores_final)
+                                st.session_state.export_section_numbers = (
+                                    selected_section_numbers)
+                                st.session_state.pop("sqlite_bytes", None)
 
                         if "export_preview" in st.session_state:
                             preview = st.session_state.export_preview
@@ -1569,42 +1967,88 @@ def main():
                                 len(preview.get("xray_files", []))
                                 + len(preview.get("ct_ortho_files", []))
                                 + preview.get("slices_file_count", 0)
+                                + len(preview.get("xml_files", []))
                             )
 
                             if total_files == 0:
-                                st.warning("⚠️ No files matched the selection. Nothing to export.")
+                                st.warning(
+                                    "⚠️ No files matched the selection. "
+                                    "Nothing to export.")
                             else:
                                 st.markdown("---")
                                 st.info(
-                                    "📋 The app generates an **rsync bash script** for you to run directly "
-                                    "on the server. This is faster, resumable, and logs progress to "
-                                    "`export_log.txt` in the export folder."
-                                )
-                                script_content = generate_rsync_script(preview, st.session_state.export_dir)
-                                st.download_button(
-                                    label=f"📥 Download Export Script ({total_files:,} files)",
-                                    data=script_content,
-                                    file_name="ct_export.sh",
-                                    mime="text/plain",
-                                    use_container_width=True,
-                                    type="primary"
-                                )
-                                st.write("**To run:** `bash ct_export.sh`")
+                                    "📋 Download the **rsync script** to copy "
+                                    "files on the server.  Download the "
+                                    "**SQLite database** to use with the Core "
+                                    "Correlator and other offline tools.  "
+                                    "The bash script also regenerates the "
+                                    "SQLite on the server when it runs.")
+
+                                script_content = generate_rsync_script(
+                                    preview, st.session_state.export_dir)
+
+                                dl_col1, dl_col2 = st.columns(2)
+
+                                with dl_col1:
+                                    st.download_button(
+                                        label=(
+                                            f"📥 Download Export Script "
+                                            f"({total_files:,} files)"),
+                                        data=script_content,
+                                        file_name="ct_export.sh",
+                                        mime="text/plain",
+                                        use_container_width=True,
+                                        type="primary")
+
+                                with dl_col2:
+                                    if "sqlite_bytes" not in st.session_state:
+                                        if st.button(
+                                                "🗄️ Generate & Download SQLite",
+                                                use_container_width=True,
+                                                type="secondary"):
+                                            with st.spinner(
+                                                    "Building export.sqlite…"):
+                                                try:
+                                                    sb = generate_export_sqlite_bytes(
+                                                        st.session_state
+                                                        .export_cores_final,
+                                                        st.session_state
+                                                        .export_section_numbers)
+                                                    st.session_state.sqlite_bytes = sb
+                                                    st.rerun()
+                                                except Exception as e:
+                                                    st.error(
+                                                        f"❌ SQLite generation "
+                                                        f"failed: {e}")
+                                    else:
+                                        sb = st.session_state.sqlite_bytes
+                                        st.download_button(
+                                            label=(
+                                                f"💾 Download export.sqlite "
+                                                f"({len(sb):,} bytes)"),
+                                            data=sb,
+                                            file_name="export.sqlite",
+                                            mime="application/x-sqlite3",
+                                            use_container_width=True,
+                                            type="primary")
+
+                                st.write(
+                                    "**To run:** `bash ct_export.sh`")
                                 st.write("**Output structure:**")
                                 st.code(
                                     f"{st.session_state.export_dir}/\n"
                                     f"├── xray_images/\n"
                                     f"├── ct_orthogonal/\n"
                                     f"├── tiff_stacks/\n"
-                                    f"│   └── RR2504-2MC/\n"
-                                    f"│       └── Section_1/\n"
-                                    f"│           ├── Slices/\n"
-                                    f"│           ├── Slices_2/   ← if collision\n"
-                                    f"│           └── SliceViews/\n"
-                                    f"└── export_log.txt",
-                                    language="text"
-                                )
-                                with st.expander("👀 Preview script contents"):
+                                    f"│   └── {{core}}/\n"
+                                    f"│       └── Section_{{n}}/\n"
+                                    f"│           └── Slices/\n"
+                                    f"├── {{mirrored xml paths}}/\n"
+                                    f"│   └── (same relative path as xml_path)\n"
+                                    f"└── export.sqlite",
+                                    language="text")
+                                with st.expander(
+                                        "👀 Preview script contents"):
                                     st.code(script_content, language="bash")
 
 
