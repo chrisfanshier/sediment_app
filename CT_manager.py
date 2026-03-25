@@ -232,8 +232,8 @@ def scan_ct_folders(ct_root):
                 tif_filename, tif_filesize_bytes = resolve_tif_info(meta, xml_path, root)
                 record = {
                     **meta,
-                    "xml_path": xml_path,
-                    "tiff_folder": root,
+                    "xml_path": os.path.relpath(xml_path, ROOT_DIRECTORY),
+                    "tiff_folder": os.path.relpath(root, ROOT_DIRECTORY),
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "tif_filename": tif_filename,
                     "tif_filesize_bytes": tif_filesize_bytes,
@@ -503,7 +503,7 @@ def verify_xml_paths(ct_root):
 
     results = {"exists": [], "missing": [], "total": len(db_records)}
     for record in db_records:
-        if os.path.exists(record["xml_path"]):
+        if os.path.exists(get_full_path(record["xml_path"])):
             results["exists"].append(record)
         else:
             results["missing"].append(record)
@@ -788,7 +788,7 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
         return f"{core}_{section}_{grandparent}_{basename}"
 
     def resolve_tif_for_export(row, image_list, fallback_finder, corrected_only=False):
-        folder = row["tiff_folder"]
+        folder = get_full_path(row["tiff_folder"])
         core = row["core_name"]
         section = str(row["section_number"])
         xml_path = row.get("xml_path", "")
@@ -843,7 +843,7 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             if not is_recon_stack(row):
                 continue
 
-            folder = row["tiff_folder"]
+            folder = get_full_path(row["tiff_folder"])
             core = row["core_name"]
             section = str(row["section_number"])
             db_id = row["id"]
