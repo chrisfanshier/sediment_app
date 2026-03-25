@@ -831,12 +831,15 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
                 manifest["missing_tifs"].append(
                     f"{core} Section {section}: folder not found: {folder}")
 
-    # seen_xml_paths shared across all XML collection to avoid duplicates
+    # XML dedup by absolute source path (shared across all types)
     seen_xml_paths: set = set()
 
-    def _add_xml(row: dict, corrected_only: bool = False) -> None:
-        """Add row's XML to manifest only if export_xmls is on and the row
-        passes the same corrected filter applied to its paired TIF."""
+    def _add_xml(row: dict, dst_rel_dir: str,
+                 corrected_only: bool = False) -> None:
+        """Append the XML paired with this row to the manifest.
+        dst_rel_dir is the destination sub-directory relative to export_dir
+        (e.g. 'xray_images', 'ct_orthogonal', 'tiff_stacks/…') so the XML
+        lands in the same folder as its paired TIF or slice stack."""
         if not export_xmls or not row.get("xml_path"):
             return
         tif_filename = row.get("tif_filename") or ""
@@ -846,12 +849,10 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
                 + ".tif")
         if corrected_only and "corrected" not in tif_filename.lower():
             return
-        rel = row["xml_path"]
-        if rel not in seen_xml_paths:
-            src_xml = get_full_path(rel)
-            if os.path.exists(src_xml):
-                manifest["xml_files"].append((src_xml, rel))
-                seen_xml_paths.add(rel)
+        src_xml = get_full_path(row["xml_path"])
+        if src_xml not in seen_xml_paths and os.path.exists(src_xml):
+            manifest["xml_files"].append((src_xml, dst_rel_dir))
+            seen_xml_paths.add(src_xml)
 
     # ── XRay / CT Ortho ──────────────────────────────────────────────────
     if export_xray:
@@ -860,7 +861,8 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             resolve_tif_for_export(row, manifest["xray_files"],
                                    find_all_tifs,
                                    corrected_only=xray_corrected_only)
-            _add_xml(row, corrected_only=xray_corrected_only)
+            _add_xml(row, dst_rel_dir="xray_images",
+                     corrected_only=xray_corrected_only)
 
     if export_ct_ortho:
         for row in get_tiff_folders_for_export(
@@ -868,7 +870,8 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             resolve_tif_for_export(row, manifest["ct_ortho_files"],
                                    find_all_tifs,
                                    corrected_only=ct_ortho_corrected_only)
-            _add_xml(row, corrected_only=ct_ortho_corrected_only)
+            _add_xml(row, dst_rel_dir="ct_orthogonal",
+                     corrected_only=ct_ortho_corrected_only)
 
     # ── Slices ────────────────────────────────────────────────────────────
     if export_slices:
@@ -878,8 +881,6 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
                 selected_cores, selected_section_numbers):
             if not is_recon_stack(row):
                 continue
-
-            _add_xml(row)  # slice XMLs — no corrected filter
 
             folder  = get_full_path(row["tiff_folder"])
             core    = row["core_name"]
@@ -901,6 +902,9 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             dst_subpath = os.path.join(
                 "tiff_stacks", core,
                 f"Section_{section}", dst_folder_name)
+
+            # XML goes in the same folder as the slice stack
+            _add_xml(row, dst_rel_dir=dst_subpath)
 
             if not os.path.isdir(folder):
                 if folder not in manifest["missing_folders"]:
@@ -1019,7 +1023,7 @@ def render_export_preview(manifest):
             st.dataframe(
                 pd.DataFrame(manifest["xml_files"],
                              columns=["Source Path",
-                                      "Export-Relative Path"]),
+                                      "Export Directory"]),
                 use_container_width=True)
 
     if manifest.get("missing_tifs"):
@@ -1117,13 +1121,13 @@ def generate_rsync_script(manifest, export_dir):
                     f'"{folder}/" "{dst_path}/" >> "$LOG" 2>&1')
             lines.append("")
 
-    # ── XMLs (mirrored paths) ─────────────────────────────────────────────
+    # ── XMLs (alongside paired TIFs/slice folders) ──────────────────────
     if manifest.get("xml_files"):
-        lines.append("# --- XML Files (mirrored structure) ---")
+        lines.append("# --- XML Files (alongside paired TIFs) ---")
         by_dir: dict = {}
-        for src_abs, export_rel in manifest["xml_files"]:
-            src_dir  = os.path.dirname(src_abs)
-            dst_dir  = os.path.join(export_dir, os.path.dirname(export_rel))
+        for src_abs, dst_rel_dir in manifest["xml_files"]:
+            src_dir = os.path.dirname(src_abs)
+            dst_dir = os.path.join(export_dir, dst_rel_dir)
             filename = os.path.basename(src_abs)
             by_dir.setdefault((src_dir, dst_dir), []).append(filename)
 
@@ -1135,20 +1139,6 @@ def generate_rsync_script(manifest, export_dir):
                 f'"{src_dir}/" "{dst_dir}/" >> "$LOG" 2>&1')
         lines.append("")
 
-    # ── SQLite generation on the server ───────────────────────────────────
-    lines += [
-        "# --- Generate export.sqlite ---",
-        "# Uses Python 3 + psycopg2 (already present on the server).",
-        "# Reads exported XML files to discover core names, then pulls",
-        "# matching rows from PostgreSQL into a portable SQLite file.",
-        'echo "Generating export.sqlite..." >> "$LOG"',
-        "python3 - << 'PYEOF'",
-        _sqlite_server_script(export_dir),
-        "PYEOF",
-        'echo "export.sqlite written." >> "$LOG"',
-        "",
-    ]
-
     lines += [
         'echo "Export complete: $(date)" >> "$LOG"',
         'echo ""',
@@ -1158,230 +1148,91 @@ def generate_rsync_script(manifest, export_dir):
     return "\n".join(lines)
 
 
-def _sqlite_server_script(export_dir: str) -> str:
-    """Return the Python heredoc embedded in the bash export script."""
-    return f'''\
-import sqlite3, psycopg2, os, json, glob, datetime
-import xml.etree.ElementTree as ET
-
-EXPORT_DIR  = "{export_dir}"
-SQLITE_PATH = os.path.join(EXPORT_DIR, "export.sqlite")
-
-# ── Discover core names from exported XMLs ────────────────────────────────
-xml_files = glob.glob(os.path.join(EXPORT_DIR, "**", "*.xml"), recursive=True)
-core_names_on_disk = set()
-for xf in xml_files:
-    try:
-        root = ET.parse(xf).getroot()
-        for tag in ("Core-ID", "coreID", "core-id"):
-            el = root.find(f".//{{{{tag}}}}")
-            if el is not None and el.text:
-                core_names_on_disk.add(
-                    el.text.strip().replace("_", "-").upper())
-                break
-    except Exception:
-        pass
-
-if not core_names_on_disk:
-    print("No core names found in exported XMLs — export.sqlite not written.")
-    raise SystemExit(0)
-
-core_list = list(core_names_on_disk)
-print(f"Found {{len(core_list)}} core(s) in exported XMLs: {{', '.join(sorted(core_list))}}")
-
-# ── PostgreSQL connection ─────────────────────────────────────────────────
-pg  = psycopg2.connect(dbname="sediment_cores", user="postgres",
-                        password="madmaxfuryroad", host="localhost", port=5432)
-cur = pg.cursor()
-
-def fetch_all(sql, params=()):
-    cur.execute(sql, params)
-    cols = [d[0] for d in cur.description]
-    rows = cur.fetchall()
-    return cols, rows
-
-def copy_pg_to_sqlite(con, table, cols, rows):
-    con.execute(f"DROP TABLE IF EXISTS {{table}}")
-    col_defs = ", ".join(f"\\\\"{{c}}\\\\" TEXT" for c in cols)
-    con.execute(f"CREATE TABLE {{table}} ({{col_defs}})")
-    if rows:
-        ph = ",".join(["?"] * len(cols))
-        con.executemany(
-            f"INSERT INTO {{table}} VALUES ({{ph}})",
-            [tuple(str(v) if v is not None else None for v in r) for r in rows])
-
-ph = ",".join(["%s"] * len(core_list))
-
-# cores — exported cores + siblings from same cruise(s)
-cols, cruise_rows = fetch_all(
-    f"SELECT DISTINCT cruise_id FROM cores WHERE core_name IN ({{ph}})",
-    core_list)
-cruise_ids = [r[0] for r in cruise_rows]
-
-if cruise_ids:
-    cph = ",".join(["%s"] * len(cruise_ids))
-    cols_c, rows_c = fetch_all(
-        f"SELECT * FROM cores WHERE cruise_id IN ({{cph}}) ORDER BY core_name",
-        cruise_ids)
-else:
-    cols_c, rows_c = fetch_all(
-        f"SELECT * FROM cores WHERE core_name IN ({{ph}}) ORDER BY core_name",
-        core_list)
-
-# sections — for all cores in scope
-all_core_names_in_db = [r[cols_c.index("core_name")] for r in rows_c]
-if all_core_names_in_db:
-    aph = ",".join(["%s"] * len(all_core_names_in_db))
-    id_cur = pg.cursor()
-    id_cur.execute(
-        f"SELECT core_id FROM cores WHERE core_name IN ({{aph}})",
-        all_core_names_in_db)
-    all_core_ids = [r[0] for r in id_cur.fetchall()]
-    id_cur.close()
-    idph = ",".join(["%s"] * len(all_core_ids))
-    cols_s, rows_s = fetch_all(
-        f"SELECT * FROM sections WHERE core_id IN ({{idph}}) "
-        f"ORDER BY core_id, section_number",
-        all_core_ids)
-else:
-    cols_s, rows_s = [], []
-
-# ct_xml — only exported cores
-cols_x, rows_x = fetch_all(
-    f"SELECT * FROM ct_xml WHERE core_name IN ({{ph}}) "
-    f"ORDER BY core_name, section_number",
-    core_list)
-
-cur.close()
-pg.close()
-
-# ── Write SQLite ──────────────────────────────────────────────────────────
-con = sqlite3.connect(SQLITE_PATH)
-con.execute("PRAGMA journal_mode=WAL")
-copy_pg_to_sqlite(con, "cores",    cols_c, rows_c)
-copy_pg_to_sqlite(con, "sections", cols_s, rows_s)
-copy_pg_to_sqlite(con, "ct_xml",   cols_x, rows_x)
-
-con.execute("DROP TABLE IF EXISTS export_meta")
-con.execute("CREATE TABLE export_meta (key TEXT PRIMARY KEY, value TEXT)")
-con.executemany("INSERT INTO export_meta VALUES (?, ?)", [
-    ("generated_at", datetime.datetime.now().isoformat()),
-    ("export_dir",   EXPORT_DIR),
-    ("core_names",   json.dumps(sorted(core_list))),
-    ("cruise_ids",   json.dumps(cruise_ids)),
-    ("n_cores",      str(len(rows_c))),
-    ("n_sections",   str(len(rows_s))),
-    ("n_ct_xml",     str(len(rows_x))),
-])
-con.commit()
-con.close()
-print(f"export.sqlite: {{len(rows_c)}} cores, {{len(rows_s)}} sections, "
-      f"{{len(rows_x)}} ct_xml rows -> {{SQLITE_PATH}}")
-'''
-
-
 def generate_export_sqlite_bytes(selected_cores, selected_section_numbers):
     """
-    Build a portable SQLite database from the live PostgreSQL connection.
-    Returns bytes suitable for st.download_button.
+    Query the live PostgreSQL database and return a portable SQLite file
+    as bytes.  Tables included: cruises, cores (all from the same cruise),
+    sections, ct_xml (selected cores/sections), export_meta.
     """
+    if not selected_cores:
+        return b""
 
     con = sqlite3.connect(":memory:")
     con.execute("PRAGMA journal_mode=WAL")
 
-    def copy_table(table, col_names, rows):
-        con.execute(f"DROP TABLE IF EXISTS {table}")
-        col_defs = ", ".join(f'"{c}" TEXT' for c in col_names)
-        con.execute(f"CREATE TABLE {table} ({col_defs})")
-        if rows:
-            ph = ",".join(["?"] * len(col_names))
-            con.executemany(
-                f"INSERT INTO {table} VALUES ({ph})",
-                [tuple(str(v) if v is not None else None for v in r)
-                 for r in rows])
-        return len(rows)
-
     with get_connection() as conn:
 
-        # ── Find cruise_ids for exported cores ────────────────────────
-        cruise_ids = []
-        if selected_cores:
-            ph = ", ".join(f":ec_{i}" for i in range(len(selected_cores)))
-            p  = {f"ec_{i}": c for i, c in enumerate(selected_cores)}
-            res = conn.execute(
-                text(f"SELECT DISTINCT cruise_id FROM cores "
-                     f"WHERE core_name IN ({ph})"), p)
-            cruise_ids = [r[0] for r in res.fetchall()]
+        def qdf(sql, params):
+            """Execute a parameterised query and return a DataFrame."""
+            res  = conn.execute(text(sql), params)
+            cols = [d[0] for d in res.cursor.description]
+            return pd.DataFrame(res.fetchall(), columns=cols)
 
-        # ── cores ─────────────────────────────────────────────────────
+        # Cruise IDs for selected cores
+        in_c  = ", ".join(f":c{i}" for i in range(len(selected_cores)))
+        par_c = {f"c{i}": v for i, v in enumerate(selected_cores)}
+        cruise_ids = (
+            qdf(f"SELECT DISTINCT cruise_id FROM cores"
+                f" WHERE core_name IN ({in_c})", par_c)
+            ["cruise_id"].tolist())
+
         if cruise_ids:
-            cph = ", ".join(f":cr_{i}" for i in range(len(cruise_ids)))
-            cp  = {f"cr_{i}": cid for i, cid in enumerate(cruise_ids)}
-            res = conn.execute(
-                text(f"SELECT * FROM cores WHERE cruise_id IN ({cph}) "
-                     f"ORDER BY core_name"), cp)
+            in_ci  = ", ".join(f":ci{i}" for i in range(len(cruise_ids)))
+            par_ci = {f"ci{i}": v for i, v in enumerate(cruise_ids)}
+            cruises_df = qdf(
+                f"SELECT * FROM cruises"
+                f" WHERE cruise_id IN ({in_ci}) ORDER BY cruise_name",
+                par_ci)
+            cores_df = qdf(
+                f"SELECT * FROM cores"
+                f" WHERE cruise_id IN ({in_ci}) ORDER BY core_name",
+                par_ci)
         else:
-            ph2 = ", ".join(f":ec_{i}" for i in range(len(selected_cores)))
-            p2  = {f"ec_{i}": c for i, c in enumerate(selected_cores)}
-            res = conn.execute(
-                text(f"SELECT * FROM cores WHERE core_name IN ({ph2}) "
-                     f"ORDER BY core_name"), p2)
-        cores_cols = [d[0] for d in res.cursor.description]
-        cores_rows = res.fetchall()
-        copy_table("cores", cores_cols, cores_rows)
+            cruises_df = pd.DataFrame()
+            cores_df   = qdf(
+                f"SELECT * FROM cores"
+                f" WHERE core_name IN ({in_c}) ORDER BY core_name",
+                par_c)
 
-        # ── sections — for all cores in scope (exported + siblings) ───
-        all_core_names = [r[cores_cols.index("core_name")]
-                          for r in cores_rows]
-        sec_rows = []
-        sec_cols = []
-        if all_core_names:
-            an_ph   = ", ".join(
-                f":an_{i}" for i in range(len(all_core_names)))
-            an_pars = {f"an_{i}": n for i, n in enumerate(all_core_names)}
-            id_res  = conn.execute(
-                text(f"SELECT core_id FROM cores "
-                     f"WHERE core_name IN ({an_ph})"), an_pars)
-            all_core_ids = [r[0] for r in id_res.fetchall()]
+        # Sections for all cores in scope
+        all_core_ids = (cores_df["core_id"].tolist()
+                        if not cores_df.empty else [])
+        if all_core_ids:
+            in_cid  = ", ".join(f":cid{i}" for i in range(len(all_core_ids)))
+            par_cid = {f"cid{i}": v for i, v in enumerate(all_core_ids)}
+            sections_df = qdf(
+                f"SELECT * FROM sections"
+                f" WHERE core_id IN ({in_cid})"
+                f" ORDER BY core_id, section_number",
+                par_cid)
+        else:
+            sections_df = pd.DataFrame()
 
-            if all_core_ids:
-                cid_ph   = ", ".join(
-                    f":cid_{i}" for i in range(len(all_core_ids)))
-                cid_pars = {f"cid_{i}": cid
-                            for i, cid in enumerate(all_core_ids)}
-                res = conn.execute(
-                    text(f"SELECT * FROM sections "
-                         f"WHERE core_id IN ({cid_ph}) "
-                         f"ORDER BY core_id, section_number"), cid_pars)
-                sec_cols = [d[0] for d in res.cursor.description]
-                sec_rows = res.fetchall()
-        copy_table("sections", sec_cols or ["section_id", "core_id",
-                                             "section_number"], sec_rows)
-
-        # ── ct_xml — only the exported cores/sections ─────────────────
-        ct_rows = []
-        ct_cols = []
+        # ct_xml rows for the selected cores/sections only
         if selected_cores and selected_section_numbers:
-            xc_ph   = ", ".join(
-                f":xc_{i}" for i in range(len(selected_cores)))
-            xs_ph   = ", ".join(
-                f":xs_{i}" for i in range(len(selected_section_numbers)))
-            xc_pars = {f"xc_{i}": c for i, c in enumerate(selected_cores)}
-            xs_pars = {f"xs_{i}": str(s)
-                       for i, s in enumerate(selected_section_numbers)}
-            res = conn.execute(
-                text(f"""
-                    SELECT * FROM ct_xml
-                    WHERE core_name IN ({xc_ph})
-                      AND CAST(section_number AS TEXT) IN ({xs_ph})
-                    ORDER BY core_name, section_number
-                """), {**xc_pars, **xs_pars})
-            ct_cols = [d[0] for d in res.cursor.description]
-            ct_rows = res.fetchall()
-        copy_table("ct_xml", ct_cols or ["id", "core_name",
-                                          "section_number"], ct_rows)
+            in_xc  = ", ".join(f":xc{i}" for i in range(len(selected_cores)))
+            in_xs  = ", ".join(f":xs{i}" for i in range(
+                                    len(selected_section_numbers)))
+            par_xs = {
+                **{f"xc{i}": v for i, v in enumerate(selected_cores)},
+                **{f"xs{i}": str(v)
+                   for i, v in enumerate(selected_section_numbers)},
+            }
+            ct_df = qdf(
+                f"SELECT * FROM ct_xml"
+                f" WHERE core_name IN ({in_xc})"
+                f"   AND CAST(section_number AS TEXT) IN ({in_xs})"
+                f" ORDER BY core_name, section_number",
+                par_xs)
+        else:
+            ct_df = pd.DataFrame()
 
-    # ── export_meta ───────────────────────────────────────────────────────
+    # Write all tables to the in-memory SQLite
+    cruises_df.to_sql("cruises",  con, if_exists="replace", index=False)
+    cores_df.to_sql(  "cores",    con, if_exists="replace", index=False)
+    sections_df.to_sql("sections", con, if_exists="replace", index=False)
+    ct_df.to_sql(     "ct_xml",   con, if_exists="replace", index=False)
+
     con.execute("DROP TABLE IF EXISTS export_meta")
     con.execute(
         "CREATE TABLE export_meta (key TEXT PRIMARY KEY, value TEXT)")
@@ -1389,9 +1240,9 @@ def generate_export_sqlite_bytes(selected_cores, selected_section_numbers):
         ("generated_at", datetime.now().isoformat()),
         ("core_names",   json.dumps(sorted(selected_cores))),
         ("cruise_ids",   json.dumps(cruise_ids)),
-        ("n_cores",      str(len(cores_rows))),
-        ("n_sections",   str(len(sec_rows))),
-        ("n_ct_xml",     str(len(ct_rows))),
+        ("n_cores",      str(len(cores_df))),
+        ("n_sections",   str(len(sections_df))),
+        ("n_ct_xml",     str(len(ct_df))),
     ])
     con.commit()
 
@@ -1994,9 +1845,7 @@ def main():
                                     "📋 Download the **rsync script** to copy "
                                     "files on the server.  Download the "
                                     "**SQLite database** to use with the Core "
-                                    "Correlator and other offline tools.  "
-                                    "The bash script also regenerates the "
-                                    "SQLite on the server when it runs.")
+                                    "Correlator and other offline tools.")
 
                                 script_content = generate_rsync_script(
                                     preview, st.session_state.export_dir)
