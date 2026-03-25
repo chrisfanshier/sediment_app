@@ -116,7 +116,7 @@ def ct_explorer():
         def make_tiff_link(row):
             if row["image_type"] in ["giXRayImage", "giCTOrthogonalView"]:
                 tiff_path = row["xml_path"].replace(".xml", ".tif")
-                base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
+                base_dir = ROOT_DIRECTORY
                 tiff_full_path = os.path.join(base_dir, tiff_path)
                 # Try exact match first
                 if os.path.exists(tiff_full_path):
@@ -166,7 +166,7 @@ def ct_explorer():
             selected_tiff = st.selectbox("Select TIFF file", tiff_files) if tiff_files else None
 
             if selected_tiff:
-                base_dir = os.path.join(ROOT_DIRECTORY, SUBDIRECTORIES["CT Data"])
+                base_dir = ROOT_DIRECTORY
                 tiff_full_path = os.path.join(base_dir, selected_tiff)
                 try:
                     img = Image.open(tiff_full_path)
