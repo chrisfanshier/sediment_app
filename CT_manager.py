@@ -831,6 +831,28 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
                 manifest["missing_tifs"].append(
                     f"{core} Section {section}: folder not found: {folder}")
 
+    # seen_xml_paths shared across all XML collection to avoid duplicates
+    seen_xml_paths: set = set()
+
+    def _add_xml(row: dict, corrected_only: bool = False) -> None:
+        """Add row's XML to manifest only if export_xmls is on and the row
+        passes the same corrected filter applied to its paired TIF."""
+        if not export_xmls or not row.get("xml_path"):
+            return
+        tif_filename = row.get("tif_filename") or ""
+        if not tif_filename and row.get("xml_path"):
+            tif_filename = (
+                os.path.splitext(os.path.basename(row["xml_path"]))[0]
+                + ".tif")
+        if corrected_only and "corrected" not in tif_filename.lower():
+            return
+        rel = row["xml_path"]
+        if rel not in seen_xml_paths:
+            src_xml = get_full_path(rel)
+            if os.path.exists(src_xml):
+                manifest["xml_files"].append((src_xml, rel))
+                seen_xml_paths.add(rel)
+
     # ── XRay / CT Ortho ──────────────────────────────────────────────────
     if export_xray:
         for row in get_tiff_folders_for_export(
@@ -838,6 +860,7 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             resolve_tif_for_export(row, manifest["xray_files"],
                                    find_all_tifs,
                                    corrected_only=xray_corrected_only)
+            _add_xml(row, corrected_only=xray_corrected_only)
 
     if export_ct_ortho:
         for row in get_tiff_folders_for_export(
@@ -845,68 +868,59 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             resolve_tif_for_export(row, manifest["ct_ortho_files"],
                                    find_all_tifs,
                                    corrected_only=ct_ortho_corrected_only)
+            _add_xml(row, corrected_only=ct_ortho_corrected_only)
 
-    # ── Slices + XMLs share one scan of all rows ─────────────────────────
-    if export_slices or export_xmls:
+    # ── Slices ────────────────────────────────────────────────────────────
+    if export_slices:
         dst_basename_counter = {}
-        seen_xml_paths = set()
 
-        all_rows = get_all_tiff_folders_for_sections(
-            selected_cores, selected_section_numbers)
+        for row in get_all_tiff_folders_for_sections(
+                selected_cores, selected_section_numbers):
+            if not is_recon_stack(row):
+                continue
 
-        for row in all_rows:
+            _add_xml(row)  # slice XMLs — no corrected filter
 
-            # ── XMLs ─────────────────────────────────────────────────
-            if export_xmls and row.get("xml_path"):
-                rel = row["xml_path"]
-                if rel not in seen_xml_paths:
-                    src_xml = get_full_path(rel)
-                    if os.path.exists(src_xml):
-                        manifest["xml_files"].append((src_xml, rel))
-                        seen_xml_paths.add(rel)
+            folder  = get_full_path(row["tiff_folder"])
+            core    = row["core_name"]
+            section = str(row["section_number"])
+            db_id   = row["id"]
 
-            # ── Slices ───────────────────────────────────────────────
-            if export_slices and is_recon_stack(row):
-                folder  = get_full_path(row["tiff_folder"])
-                core    = row["core_name"]
-                section = str(row["section_number"])
-                db_id   = row["id"]
+            folder_basename = os.path.basename(folder.rstrip("/"))
+            collision_key   = (core, section, folder_basename)
 
-                folder_basename = os.path.basename(folder.rstrip("/"))
-                collision_key   = (core, section, folder_basename)
+            if collision_key not in dst_basename_counter:
+                dst_basename_counter[collision_key] = 1
+                dst_folder_name = folder_basename
+            else:
+                dst_basename_counter[collision_key] += 1
+                dst_folder_name = (
+                    f"{folder_basename}_"
+                    f"{dst_basename_counter[collision_key]}")
 
-                if collision_key not in dst_basename_counter:
-                    dst_basename_counter[collision_key] = 1
-                    dst_folder_name = folder_basename
-                else:
-                    dst_basename_counter[collision_key] += 1
-                    dst_folder_name = (
-                        f"{folder_basename}_"
-                        f"{dst_basename_counter[collision_key]}")
+            dst_subpath = os.path.join(
+                "tiff_stacks", core,
+                f"Section_{section}", dst_folder_name)
 
-                dst_subpath = os.path.join(
-                    "tiff_stacks", core,
-                    f"Section_{section}", dst_folder_name)
+            if not os.path.isdir(folder):
+                if folder not in manifest["missing_folders"]:
+                    manifest["missing_folders"].append(folder)
+                continue
 
-                if not os.path.isdir(folder):
-                    if folder not in manifest["missing_folders"]:
-                        manifest["missing_folders"].append(folder)
-                    continue
+            manifest["slices_dirs"].append(
+                (folder, dst_subpath, db_id, core))
+            manifest["slices_manifest_log"].append(
+                f"  {dst_subpath:<70} db_id={db_id}  src={folder}")
 
-                manifest["slices_dirs"].append(
-                    (folder, dst_subpath, db_id, core))
-                manifest["slices_manifest_log"].append(
-                    f"  {dst_subpath:<70} db_id={db_id}  src={folder}")
-
-                for f in os.listdir(folder):
-                    full_f = os.path.join(folder, f)
-                    if os.path.isfile(full_f):
-                        manifest["slices_file_count"] += 1
-                        try:
-                            manifest["total_size_bytes"] += os.path.getsize(
-                                full_f)
-                        except OSError:
-                            pass
+            for f in os.listdir(folder):
+                full_f = os.path.join(folder, f)
+                if os.path.isfile(full_f):
+                    manifest["slices_file_count"] += 1
+                    try:
+                        manifest["total_size_bytes"] += os.path.getsize(
+                            full_f)
+                    except OSError:
+                        pass
 
     return manifest
 
