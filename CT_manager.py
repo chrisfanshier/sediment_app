@@ -6,10 +6,6 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 import time
 import shutil
-import sqlite3
-import io
-import json
-import tempfile
 
 # === Shared utilities ===
 # Uses the network branch db_util.py and config.py (sediment_cores database)
@@ -1148,116 +1144,6 @@ def generate_rsync_script(manifest, export_dir):
     return "\n".join(lines)
 
 
-def generate_export_sqlite_bytes(selected_cores, selected_section_numbers):
-    """
-    Query the live PostgreSQL database and return a portable SQLite file
-    as bytes.  Tables included: cruises, cores (all from the same cruise),
-    sections, ct_xml (selected cores/sections), export_meta.
-    """
-    if not selected_cores:
-        return b""
-
-    con = sqlite3.connect(":memory:")
-    con.execute("PRAGMA journal_mode=WAL")
-
-    with get_connection() as conn:
-
-        def qdf(sql, params):
-            """Execute a parameterised query and return a DataFrame."""
-            res  = conn.execute(text(sql), params)
-            cols = [d[0] for d in res.cursor.description]
-            return pd.DataFrame(res.fetchall(), columns=cols)
-
-        # Cruise IDs for selected cores
-        in_c  = ", ".join(f":c{i}" for i in range(len(selected_cores)))
-        par_c = {f"c{i}": v for i, v in enumerate(selected_cores)}
-        cruise_ids = (
-            qdf(f"SELECT DISTINCT cruise_id FROM cores"
-                f" WHERE core_name IN ({in_c})", par_c)
-            ["cruise_id"].tolist())
-
-        if cruise_ids:
-            in_ci  = ", ".join(f":ci{i}" for i in range(len(cruise_ids)))
-            par_ci = {f"ci{i}": v for i, v in enumerate(cruise_ids)}
-            cruises_df = qdf(
-                f"SELECT * FROM cruises"
-                f" WHERE cruise_id IN ({in_ci}) ORDER BY cruise_name",
-                par_ci)
-            cores_df = qdf(
-                f"SELECT * FROM cores"
-                f" WHERE cruise_id IN ({in_ci}) ORDER BY core_name",
-                par_ci)
-        else:
-            cruises_df = pd.DataFrame()
-            cores_df   = qdf(
-                f"SELECT * FROM cores"
-                f" WHERE core_name IN ({in_c}) ORDER BY core_name",
-                par_c)
-
-        # Sections for all cores in scope
-        all_core_ids = (cores_df["core_id"].tolist()
-                        if not cores_df.empty else [])
-        if all_core_ids:
-            in_cid  = ", ".join(f":cid{i}" for i in range(len(all_core_ids)))
-            par_cid = {f"cid{i}": v for i, v in enumerate(all_core_ids)}
-            sections_df = qdf(
-                f"SELECT * FROM sections"
-                f" WHERE core_id IN ({in_cid})"
-                f" ORDER BY core_id, section_number",
-                par_cid)
-        else:
-            sections_df = pd.DataFrame()
-
-        # ct_xml rows for the selected cores/sections only
-        if selected_cores and selected_section_numbers:
-            in_xc  = ", ".join(f":xc{i}" for i in range(len(selected_cores)))
-            in_xs  = ", ".join(f":xs{i}" for i in range(
-                                    len(selected_section_numbers)))
-            par_xs = {
-                **{f"xc{i}": v for i, v in enumerate(selected_cores)},
-                **{f"xs{i}": str(v)
-                   for i, v in enumerate(selected_section_numbers)},
-            }
-            ct_df = qdf(
-                f"SELECT * FROM ct_xml"
-                f" WHERE core_name IN ({in_xc})"
-                f"   AND CAST(section_number AS TEXT) IN ({in_xs})"
-                f" ORDER BY core_name, section_number",
-                par_xs)
-        else:
-            ct_df = pd.DataFrame()
-
-    # Write all tables to the in-memory SQLite
-    cruises_df.to_sql("cruises",  con, if_exists="replace", index=False)
-    cores_df.to_sql(  "cores",    con, if_exists="replace", index=False)
-    sections_df.to_sql("sections", con, if_exists="replace", index=False)
-    ct_df.to_sql(     "ct_xml",   con, if_exists="replace", index=False)
-
-    con.execute("DROP TABLE IF EXISTS export_meta")
-    con.execute(
-        "CREATE TABLE export_meta (key TEXT PRIMARY KEY, value TEXT)")
-    con.executemany("INSERT INTO export_meta VALUES (?, ?)", [
-        ("generated_at", datetime.now().isoformat()),
-        ("core_names",   json.dumps(sorted(selected_cores))),
-        ("cruise_ids",   json.dumps(cruise_ids)),
-        ("n_cores",      str(len(cores_df))),
-        ("n_sections",   str(len(sections_df))),
-        ("n_ct_xml",     str(len(ct_df))),
-    ])
-    con.commit()
-
-    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
-        tmp_path = tmp.name
-    dest = sqlite3.connect(tmp_path)
-    con.backup(dest)
-    dest.close()
-    con.close()
-    with open(tmp_path, "rb") as f:
-        data = f.read()
-    os.unlink(tmp_path)
-    return data
-
-
 # === Streamlit App ===
 def main():
     st.set_page_config(page_title="CT Data Manager", layout="wide")
@@ -1640,7 +1526,7 @@ def main():
         st.header("Export Data")
         st.write(
             "Select cores and sections, choose what to export, then "
-            "download the rsync script and a portable SQLite database.")
+            "download the rsync script.")
 
         all_cruises = get_cruises_from_db()
         if not all_cruises:
@@ -1822,8 +1708,6 @@ def main():
                                     selected_cores_final)
                                 st.session_state.export_section_numbers = (
                                     selected_section_numbers)
-                                st.session_state.pop("sqlite_bytes", None)
-
                         if "export_preview" in st.session_state:
                             preview = st.session_state.export_preview
                             render_export_preview(preview)
@@ -1843,57 +1727,20 @@ def main():
                                 st.markdown("---")
                                 st.info(
                                     "📋 Download the **rsync script** to copy "
-                                    "files on the server.  Download the "
-                                    "**SQLite database** to use with the Core "
-                                    "Correlator and other offline tools.")
+                                    "files on the server.")
 
                                 script_content = generate_rsync_script(
                                     preview, st.session_state.export_dir)
 
-                                dl_col1, dl_col2 = st.columns(2)
-
-                                with dl_col1:
-                                    st.download_button(
-                                        label=(
-                                            f"📥 Download Export Script "
-                                            f"({total_files:,} files)"),
-                                        data=script_content,
-                                        file_name="ct_export.sh",
-                                        mime="text/plain",
-                                        use_container_width=True,
-                                        type="primary")
-
-                                with dl_col2:
-                                    if "sqlite_bytes" not in st.session_state:
-                                        if st.button(
-                                                "🗄️ Generate & Download SQLite",
-                                                use_container_width=True,
-                                                type="secondary"):
-                                            with st.spinner(
-                                                    "Building export.sqlite…"):
-                                                try:
-                                                    sb = generate_export_sqlite_bytes(
-                                                        st.session_state
-                                                        .export_cores_final,
-                                                        st.session_state
-                                                        .export_section_numbers)
-                                                    st.session_state.sqlite_bytes = sb
-                                                    st.rerun()
-                                                except Exception as e:
-                                                    st.error(
-                                                        f"❌ SQLite generation "
-                                                        f"failed: {e}")
-                                    else:
-                                        sb = st.session_state.sqlite_bytes
-                                        st.download_button(
-                                            label=(
-                                                f"💾 Download export.sqlite "
-                                                f"({len(sb):,} bytes)"),
-                                            data=sb,
-                                            file_name="export.sqlite",
-                                            mime="application/x-sqlite3",
-                                            use_container_width=True,
-                                            type="primary")
+                                st.download_button(
+                                    label=(
+                                        f"📥 Download Export Script "
+                                        f"({total_files:,} files)"),
+                                    data=script_content,
+                                    file_name="ct_export.sh",
+                                    mime="text/plain",
+                                    use_container_width=True,
+                                    type="primary")
 
                                 st.write(
                                     "**To run:** `bash ct_export.sh`")
@@ -1906,9 +1753,7 @@ def main():
                                     f"│   └── {{core}}/\n"
                                     f"│       └── Section_{{n}}/\n"
                                     f"│           └── Slices/\n"
-                                    f"├── {{mirrored xml paths}}/\n"
-                                    f"│   └── (same relative path as xml_path)\n"
-                                    f"└── export.sqlite",
+                                    f"└── (XML files alongside paired images)",
                                     language="text")
                                 with st.expander(
                                         "👀 Preview script contents"):
