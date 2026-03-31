@@ -57,7 +57,7 @@ WINCH_FORMATS = {
         "delimiter": ",",
         "header_lines": 0,
         "columns": ["Date", "Time", "Winch", "LCi90_time", "Tension", "Rate", "Payout_", "Mystery"],
-        "datetime_code": "pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d/%m/%Y %H:%M:%S.%f', errors='coerce')",
+        "datetime_code": "pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%m/%d/%Y %H:%M:%S.%f', errors='coerce')",
         "numeric_columns": ["Tension", "Speed_mmpe", "Payout_m"]
     }
 }
