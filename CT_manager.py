@@ -847,7 +847,22 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
             return
         src_xml = get_full_path(row["xml_path"])
         if src_xml not in seen_xml_paths and os.path.exists(src_xml):
-            manifest["xml_files"].append((src_xml, dst_rel_dir))
+            # Mirror the TIF rename convention so XML and TIF filenames
+            # always match.  index.xml is never renamed — its path already
+            # encodes core/section context.
+            xml_basename = os.path.basename(src_xml)
+            core         = row["core_name"]
+            section      = str(row["section_number"])
+            if (xml_basename.lower() == "index.xml"
+                    or xml_basename.upper().startswith(core.upper())):
+                dst_xml_filename = xml_basename
+            else:
+                grandparent = os.path.basename(
+                    os.path.dirname(os.path.dirname(src_xml)))
+                dst_xml_filename = (
+                    f"{core}_{section}_{grandparent}_{xml_basename}")
+            manifest["xml_files"].append((src_xml, dst_rel_dir,
+                                          dst_xml_filename))
             seen_xml_paths.add(src_xml)
 
     # ── XRay / CT Ortho ──────────────────────────────────────────────────
@@ -1014,12 +1029,20 @@ def render_export_preview(manifest):
 
     # XML files expander
     if manifest.get("xml_files"):
-        with st.expander(
-                f"📄 XML Files ({len(manifest['xml_files'])} files)"):
+        renamed_xml_count = sum(
+            1 for src_abs, _, dst_fn in manifest["xml_files"]
+            if os.path.basename(src_abs) != dst_fn
+        )
+        label = (
+            f"📄 XML Files ({len(manifest['xml_files'])} files"
+            + (f", {renamed_xml_count} renamed" if renamed_xml_count else "")
+            + ")")
+        with st.expander(label):
             st.dataframe(
-                pd.DataFrame(manifest["xml_files"],
-                             columns=["Source Path",
-                                      "Export Directory"]),
+                pd.DataFrame(
+                    [(s, d, f) for s, d, f in manifest["xml_files"]],
+                    columns=["Source Path", "Export Directory",
+                             "Destination Filename"]),
                 use_container_width=True)
 
     if manifest.get("missing_tifs"):
@@ -1120,19 +1143,34 @@ def generate_rsync_script(manifest, export_dir):
     # ── XMLs (alongside paired TIFs/slice folders) ──────────────────────
     if manifest.get("xml_files"):
         lines.append("# --- XML Files (alongside paired TIFs) ---")
-        by_dir: dict = {}
-        for src_abs, dst_rel_dir in manifest["xml_files"]:
-            src_dir = os.path.dirname(src_abs)
-            dst_dir = os.path.join(export_dir, dst_rel_dir)
-            filename = os.path.basename(src_abs)
-            by_dir.setdefault((src_dir, dst_dir), []).append(filename)
+        same_name_by_dir: dict = {}
+        renamed_xmls = []
+        for src_abs, dst_rel_dir, dst_xml_filename in manifest["xml_files"]:
+            src_dir  = os.path.dirname(src_abs)
+            dst_dir  = os.path.join(export_dir, dst_rel_dir)
+            src_name = os.path.basename(src_abs)
+            if src_name == dst_xml_filename:
+                same_name_by_dir.setdefault(
+                    (src_dir, dst_dir), []).append(src_name)
+            else:
+                renamed_xmls.append((src_abs, dst_dir, dst_xml_filename))
 
-        for (src_dir, dst_dir), filenames in by_dir.items():
+        for (src_dir, dst_dir), filenames in same_name_by_dir.items():
             lines.append(f'mkdir -p "{dst_dir}"')
             includes = " ".join(f'--include="{f}"' for f in filenames)
             lines.append(
                 f'rsync -av --ignore-existing {includes} --exclude="*" '
                 f'"{src_dir}/" "{dst_dir}/" >> "$LOG" 2>&1')
+
+        if renamed_xmls:
+            lines.append("# -- renamed XML files --")
+            for src_abs, dst_dir, dst_xml_filename in renamed_xmls:
+                dst_path = os.path.join(dst_dir, dst_xml_filename)
+                lines.append(
+                    f'mkdir -p "{dst_dir}"')
+                lines.append(
+                    f'[ ! -f "{dst_path}" ] && cp "{src_abs}" "{dst_path}" '
+                    f'&& echo "Copied: {dst_xml_filename}" >> "$LOG"')
         lines.append("")
 
     lines += [
