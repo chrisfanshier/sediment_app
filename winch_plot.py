@@ -10,8 +10,6 @@ from sqlalchemy import text
 from utils import parse_winch_dat
 import datetime
 
-st.set_page_config(page_title="Winch Data Plotter", layout="wide")
-
 
 @st.cache_data
 def get_cores_with_winch(cruise_id):
@@ -253,287 +251,288 @@ def create_export_dataframe(core_id, cruise_id, parameters, x_offset, y_offset,
 
     return export_df, metadata
 
-st.title("🔧 Winch Data Plotter")
-st.write("Plot and analyze winch data from sediment coring operations")
+def winch_plot():
+    st.title("🔧 Winch Data Plotter")
+    st.write("Plot and analyze winch data from sediment coring operations")
 
-# Sidebar for controls
-with st.sidebar:
-    st.header("📊 Data Selection")
+    # Sidebar for controls
+    with st.sidebar:
+        st.header("📊 Data Selection")
 
-    # Cruise selection
-    with get_connection() as conn:
-        query = text("""
-            SELECT DISTINCT c.cruise_id, c.cruise_name, v.vessel_name
-            FROM cruises c
-            JOIN winch_data w ON c.cruise_id = w.cruise_id
-            JOIN vessels v ON c.vessel_id = v.vessel_id
-            ORDER BY c.cruise_name
-        """)
-        cruises_with_winch = pd.read_sql(query, conn)
+        # Cruise selection
+        with get_connection() as conn:
+            query = text("""
+                SELECT DISTINCT c.cruise_id, c.cruise_name, v.vessel_name
+                FROM cruises c
+                JOIN winch_data w ON c.cruise_id = w.cruise_id
+                JOIN vessels v ON c.vessel_id = v.vessel_id
+                ORDER BY c.cruise_name
+            """)
+            cruises_with_winch = pd.read_sql(query, conn)
 
-    if cruises_with_winch.empty:
-        st.warning("No cruises found with winch data")
-        st.stop()
-
-    cruise_options = {
-        f"{row['cruise_name']} - {row['vessel_name']}": row['cruise_id']
-        for _, row in cruises_with_winch.iterrows()
-    }
-    selected_cruise = st.selectbox("Select Cruise:", options=list(cruise_options.keys()))
-
-    if selected_cruise:
-        cruise_id = cruise_options[selected_cruise]
-
-        # Core/dredge selection — only cores with overlapping winch data
-        cores_with_winch_df = get_cores_with_winch(cruise_id)
-
-        if cores_with_winch_df.empty:
-            st.warning("No cores/dredges with overlapping winch data found for this cruise")
+        if cruises_with_winch.empty:
+            st.warning("No cruises found with winch data")
             st.stop()
 
-        core_options = {
-            row['core_name']: int(row['core_id'])
-            for _, row in cores_with_winch_df.iterrows()
+        cruise_options = {
+            f"{row['cruise_name']} - {row['vessel_name']}": row['cruise_id']
+            for _, row in cruises_with_winch.iterrows()
         }
-        selected_core = st.selectbox("Select Core/Dredge:", options=list(core_options.keys()))
+        selected_cruise = st.selectbox("Select Cruise:", options=list(cruise_options.keys()))
 
-        if selected_core:
-            core_id = core_options[selected_core]
+        if selected_cruise:
+            cruise_id = cruise_options[selected_cruise]
 
-            # Get parameters from the concatenated winch data
-            winch_params = get_winch_parameters(core_id, cruise_id)
-            if winch_params:
-                selected_parameters = st.multiselect(
-                    "Select Parameters to Plot:",
-                    options=winch_params,
-                    default=[winch_params[0]] if winch_params else [],
-                )
+            # Core/dredge selection — only cores with overlapping winch data
+            cores_with_winch_df = get_cores_with_winch(cruise_id)
 
-                if selected_parameters:
-                    st.divider()
+            if cores_with_winch_df.empty:
+                st.warning("No cores/dredges with overlapping winch data found for this cruise")
+                st.stop()
 
-                    # Plot controls
-                    st.header("🔧 Plot Controls")
+            core_options = {
+                row['core_name']: int(row['core_id'])
+                for _, row in cores_with_winch_df.iterrows()
+            }
+            selected_core = st.selectbox("Select Core/Dredge:", options=list(core_options.keys()))
 
-                    # Get time range from the loaded data
-                    df, _file_names = load_core_winch_data(core_id, cruise_id)
-                    if df is not None:
-                        min_time = df['datetime'].min()
-                        max_time = df['datetime'].max()
+            if selected_core:
+                core_id = core_options[selected_core]
 
-                        # Zoom controls
-                        st.subheader("🔍 Zoom Mode")
+                # Get parameters from the concatenated winch data
+                winch_params = get_winch_parameters(core_id, cruise_id)
+                if winch_params:
+                    selected_parameters = st.multiselect(
+                        "Select Parameters to Plot:",
+                        options=winch_params,
+                        default=[winch_params[0]] if winch_params else [],
+                    )
 
-                        col_start, col_end = st.columns(2)
-
-                        with col_start:
-                            st.write("**Start Time**")
-                            default_start = min_time
-                            start_date = st.date_input("Date:", value=default_start.date(), key="zoom_start_date")
-                            start_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_start.hour, key="zoom_start_hour")
-                            start_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_start.minute, key="zoom_start_minute")
-                            start_second = st.number_input("Second:", min_value=0, max_value=59, value=default_start.second, key="zoom_start_second")
-
-                        with col_end:
-                            st.write("**End Time**")
-                            default_end = min_time + pd.Timedelta(minutes=10)
-                            end_date = st.date_input("Date:", value=default_end.date(), key="zoom_end_date")
-                            end_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_end.hour, key="zoom_end_hour")
-                            end_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_end.minute, key="zoom_end_minute")
-                            end_second = st.number_input("Second:", min_value=0, max_value=59, value=default_end.second, key="zoom_end_second")
-
-                        zoom_start = pd.to_datetime(f"{start_date} {start_hour:02d}:{start_minute:02d}:{start_second:02d}")
-                        zoom_end = pd.to_datetime(f"{end_date} {end_hour:02d}:{end_minute:02d}:{end_second:02d}")
-                        zoom_range = [zoom_start, zoom_end]
-
-                        time_span_seconds = (zoom_end - zoom_start).total_seconds()
-                        time_span_minutes = time_span_seconds / 60
-                        st.info(f"⏰ Selected window: {time_span_minutes:.1f} minutes ({time_span_seconds:.0f} seconds)")
-
-                        zoom_mode = st.checkbox("🔍 Enable Zoom Mode (Plot All Points)", value=False)
-
-                        if not zoom_mode:
-                            max_points = st.number_input(
-                                "Max Points:",
-                                min_value=100,
-                                max_value=50000,
-                                value=5000,
-                                step=500,
-                            )
-                        else:
-                            max_points = 1000000
-
-                        # Offset controls
-                        st.subheader("⚡ Offsets")
-                        x_offset = st.number_input("Time Offset (seconds):", value=0.0, step=0.1, format="%.2f")
-                        y_offset = st.number_input("Value Offset:", value=0.0, step=0.1, format="%.2f")
-
-                        # Export controls
+                    if selected_parameters:
                         st.divider()
-                        st.subheader("💾 Export Data")
 
-                        if st.button("📊 Generate Export Data", type="primary"):
-                            with st.spinner("Preparing export data..."):
-                                export_df, metadata = create_export_dataframe(
-                                    core_id=core_id,
-                                    cruise_id=cruise_id,
-                                    parameters=selected_parameters,
-                                    x_offset=x_offset,
-                                    y_offset=y_offset,
-                                    max_points=max_points,
-                                    zoom_mode=zoom_mode,
-                                    zoom_range=zoom_range if zoom_mode else None,
+                        # Plot controls
+                        st.header("🔧 Plot Controls")
+
+                        # Get time range from the loaded data
+                        df, _file_names = load_core_winch_data(core_id, cruise_id)
+                        if df is not None:
+                            min_time = df['datetime'].min()
+                            max_time = df['datetime'].max()
+
+                            # Zoom controls
+                            st.subheader("🔍 Zoom Mode")
+
+                            col_start, col_end = st.columns(2)
+
+                            with col_start:
+                                st.write("**Start Time**")
+                                default_start = min_time
+                                start_date = st.date_input("Date:", value=default_start.date(), key="zoom_start_date")
+                                start_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_start.hour, key="zoom_start_hour")
+                                start_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_start.minute, key="zoom_start_minute")
+                                start_second = st.number_input("Second:", min_value=0, max_value=59, value=default_start.second, key="zoom_start_second")
+
+                            with col_end:
+                                st.write("**End Time**")
+                                default_end = min_time + pd.Timedelta(minutes=10)
+                                end_date = st.date_input("Date:", value=default_end.date(), key="zoom_end_date")
+                                end_hour = st.number_input("Hour:", min_value=0, max_value=23, value=default_end.hour, key="zoom_end_hour")
+                                end_minute = st.number_input("Minute:", min_value=0, max_value=59, value=default_end.minute, key="zoom_end_minute")
+                                end_second = st.number_input("Second:", min_value=0, max_value=59, value=default_end.second, key="zoom_end_second")
+
+                            zoom_start = pd.to_datetime(f"{start_date} {start_hour:02d}:{start_minute:02d}:{start_second:02d}")
+                            zoom_end = pd.to_datetime(f"{end_date} {end_hour:02d}:{end_minute:02d}:{end_second:02d}")
+                            zoom_range = [zoom_start, zoom_end]
+
+                            time_span_seconds = (zoom_end - zoom_start).total_seconds()
+                            time_span_minutes = time_span_seconds / 60
+                            st.info(f"⏰ Selected window: {time_span_minutes:.1f} minutes ({time_span_seconds:.0f} seconds)")
+
+                            zoom_mode = st.checkbox("🔍 Enable Zoom Mode (Plot All Points)", value=False)
+
+                            if not zoom_mode:
+                                max_points = st.number_input(
+                                    "Max Points:",
+                                    min_value=100,
+                                    max_value=50000,
+                                    value=5000,
+                                    step=500,
+                                )
+                            else:
+                                max_points = 1000000
+
+                            # Offset controls
+                            st.subheader("⚡ Offsets")
+                            x_offset = st.number_input("Time Offset (seconds):", value=0.0, step=0.1, format="%.2f")
+                            y_offset = st.number_input("Value Offset:", value=0.0, step=0.1, format="%.2f")
+
+                            # Export controls
+                            st.divider()
+                            st.subheader("💾 Export Data")
+
+                            if st.button("📊 Generate Export Data", type="primary"):
+                                with st.spinner("Preparing export data..."):
+                                    export_df, metadata = create_export_dataframe(
+                                        core_id=core_id,
+                                        cruise_id=cruise_id,
+                                        parameters=selected_parameters,
+                                        x_offset=x_offset,
+                                        y_offset=y_offset,
+                                        max_points=max_points,
+                                        zoom_mode=zoom_mode,
+                                        zoom_range=zoom_range if zoom_mode else None,
+                                    )
+
+                                    if not export_df.empty:
+                                        st.session_state['export_df'] = export_df
+                                        st.session_state['export_metadata'] = metadata
+                                        st.success(f"✅ {len(export_df):,} rows ready!")
+
+                            if 'export_df' in st.session_state and not st.session_state['export_df'].empty:
+                                export_df = st.session_state['export_df']
+                                metadata = st.session_state['export_metadata']
+
+                                timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
+                                cruise_name = selected_cruise.split(' - ')[0].replace(' ', '_')
+                                filename = f"winch_export_{cruise_name}_{selected_core}_{timestamp}.csv"
+
+                                import io
+                                csv_buffer = io.StringIO()
+                                csv_buffer.write(f"# Winch Data Export - {timestamp}\n")
+                                csv_buffer.write(f"# Cruise: {selected_cruise}\n")
+                                csv_buffer.write(f"# Core: {selected_core}\n")
+                                csv_buffer.write(f"# Winch Files: {metadata['winch_files']}\n")
+                                csv_buffer.write(f"# Parameters: {', '.join(metadata['parameters'])}\n")
+                                csv_buffer.write(f"# Time offset: {metadata['x_offset_seconds']} seconds\n")
+                                csv_buffer.write(f"# Value offset: {metadata['y_offset']}\n")
+                                csv_buffer.write("#\n")
+                                export_df.to_csv(csv_buffer, index=False, float_format='%.6f')
+
+                                st.download_button(
+                                    label="📥 Download CSV",
+                                    data=csv_buffer.getvalue(),
+                                    file_name=filename,
+                                    mime="text/csv",
+                                    type="primary",
                                 )
 
-                                if not export_df.empty:
-                                    st.session_state['export_df'] = export_df
-                                    st.session_state['export_metadata'] = metadata
-                                    st.success(f"✅ {len(export_df):,} rows ready!")
+    # Main plotting area
+    if 'selected_parameters' in locals() and selected_parameters:
+        # Create figure
+        num_params = len(selected_parameters)
 
-                        if 'export_df' in st.session_state and not st.session_state['export_df'].empty:
-                            export_df = st.session_state['export_df']
-                            metadata = st.session_state['export_metadata']
-
-                            timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
-                            cruise_name = selected_cruise.split(' - ')[0].replace(' ', '_')
-                            filename = f"winch_export_{cruise_name}_{selected_core}_{timestamp}.csv"
-
-                            import io
-                            csv_buffer = io.StringIO()
-                            csv_buffer.write(f"# Winch Data Export - {timestamp}\n")
-                            csv_buffer.write(f"# Cruise: {selected_cruise}\n")
-                            csv_buffer.write(f"# Core: {selected_core}\n")
-                            csv_buffer.write(f"# Winch Files: {metadata['winch_files']}\n")
-                            csv_buffer.write(f"# Parameters: {', '.join(metadata['parameters'])}\n")
-                            csv_buffer.write(f"# Time offset: {metadata['x_offset_seconds']} seconds\n")
-                            csv_buffer.write(f"# Value offset: {metadata['y_offset']}\n")
-                            csv_buffer.write("#\n")
-                            export_df.to_csv(csv_buffer, index=False, float_format='%.6f')
-
-                            st.download_button(
-                                label="📥 Download CSV",
-                                data=csv_buffer.getvalue(),
-                                file_name=filename,
-                                mime="text/csv",
-                                type="primary",
-                            )
-
-# Main plotting area
-if 'selected_parameters' in locals() and selected_parameters:
-    # Create figure
-    num_params = len(selected_parameters)
-
-    if num_params == 1:
-        fig = go.Figure()
-    else:
-        fig = make_subplots(
-            rows=num_params, cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.02,
-            subplot_titles=selected_parameters,
-        )
-
-    # Load and plot data
-    df, file_names = load_core_winch_data(core_id, cruise_id)
-    if df is not None:
-        # Apply offsets
-        df = apply_offsets(df, x_offset, y_offset, selected_parameters)
-
-        # Apply zoom/downsample
-        if zoom_mode and zoom_range:
-            df = apply_zoom_filter(df, zoom_range)
-        elif not zoom_mode and len(df) > max_points:
-            step = max(1, len(df) // max_points)
-            df = df.iloc[::step]
-
-        # Plot each parameter
-        colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
-
-        for idx, param in enumerate(selected_parameters):
-            if param in df.columns:
-                color = colors[idx % len(colors)]
-
-                if num_params == 1:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=df['datetime'],
-                            y=df[param],
-                            name=param,
-                            line=dict(color=color, width=2),
-                        )
-                    )
-                else:
-                    fig.add_trace(
-                        go.Scatter(
-                            x=df['datetime'],
-                            y=df[param],
-                            name=param,
-                            line=dict(color=color, width=2),
-                            showlegend=False,
-                        ),
-                        row=idx + 1, col=1,
-                    )
-                    fig.update_yaxes(title_text=param, row=idx + 1, col=1)
-
-        # Update layout
-        plot_height = 600 if num_params == 1 else 300 + (num_params * 150)
-
-        fig.update_layout(
-            height=plot_height,
-            hovermode='x unified',
-            template="plotly_white",
-            title=f"Winch Data: {selected_cruise} — {selected_core}",
-            showlegend=(num_params == 1),
-        )
-
-        if num_params > 1:
-            fig.update_xaxes(title_text="Time", row=num_params, col=1)
+        if num_params == 1:
+            fig = go.Figure()
         else:
-            fig.update_xaxes(title_text="Time")
-            fig.update_yaxes(title_text=selected_parameters[0])
+            fig = make_subplots(
+                rows=num_params, cols=1,
+                shared_xaxes=True,
+                vertical_spacing=0.02,
+                subplot_titles=selected_parameters,
+            )
 
-        st.plotly_chart(fig, use_container_width=True)
+        # Load and plot data
+        df, file_names = load_core_winch_data(core_id, cruise_id)
+        if df is not None:
+            # Apply offsets
+            df = apply_offsets(df, x_offset, y_offset, selected_parameters)
 
-        # Data info
-        st.subheader("📊 Data Information")
-        col1, col2, col3 = st.columns(3)
+            # Apply zoom/downsample
+            if zoom_mode and zoom_range:
+                df = apply_zoom_filter(df, zoom_range)
+            elif not zoom_mode and len(df) > max_points:
+                step = max(1, len(df) // max_points)
+                df = df.iloc[::step]
 
-        with col1:
-            st.metric("Core / Dredge", selected_core)
-            st.metric("Winch Files", len(file_names))
-            if file_names:
-                st.caption(", ".join(file_names))
+            # Plot each parameter
+            colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
 
-        with col2:
-            if zoom_mode:
-                st.metric("Mode", "🔍 Zoom")
-                time_span = (zoom_range[1] - zoom_range[0]).total_seconds() / 60
-                st.metric("Window", f"{time_span:.1f} min")
+            for idx, param in enumerate(selected_parameters):
+                if param in df.columns:
+                    color = colors[idx % len(colors)]
+
+                    if num_params == 1:
+                        fig.add_trace(
+                            go.Scatter(
+                                x=df['datetime'],
+                                y=df[param],
+                                name=param,
+                                line=dict(color=color, width=2),
+                            )
+                        )
+                    else:
+                        fig.add_trace(
+                            go.Scatter(
+                                x=df['datetime'],
+                                y=df[param],
+                                name=param,
+                                line=dict(color=color, width=2),
+                                showlegend=False,
+                            ),
+                            row=idx + 1, col=1,
+                        )
+                        fig.update_yaxes(title_text=param, row=idx + 1, col=1)
+
+            # Update layout
+            plot_height = 600 if num_params == 1 else 300 + (num_params * 150)
+
+            fig.update_layout(
+                height=plot_height,
+                hovermode='x unified',
+                template="plotly_white",
+                title=f"Winch Data: {selected_cruise} — {selected_core}",
+                showlegend=(num_params == 1),
+            )
+
+            if num_params > 1:
+                fig.update_xaxes(title_text="Time", row=num_params, col=1)
             else:
-                st.metric("Mode", "📊 Overview")
-                st.metric("Max Points", f"{max_points:,}")
+                fig.update_xaxes(title_text="Time")
+                fig.update_yaxes(title_text=selected_parameters[0])
 
-        with col3:
-            st.metric("Total Points", f"{len(df):,}")
-            st.metric("Time Range", f"{(df['datetime'].max() - df['datetime'].min()).total_seconds() / 60:.1f} min")
+            st.plotly_chart(fig, use_container_width=True)
 
-else:
-    st.info("👆 Select a cruise and core/dredge from the sidebar to begin plotting")
+            # Data info
+            st.subheader("📊 Data Information")
+            col1, col2, col3 = st.columns(3)
 
-    with st.expander("ℹ️ About this application"):
-        st.write("""
-        This application allows you to:
+            with col1:
+                st.metric("Core / Dredge", selected_core)
+                st.metric("Winch Files", len(file_names))
+                if file_names:
+                    st.caption(", ".join(file_names))
 
-        - **📊 Plot winch data** from sediment coring operations
-        - **📈 Multiple parameters** on separate subplots
-        - **⚡ Apply offsets** to align data
-        - **🔍 Zoom mode** to view all points in a time window
-        - **💾 Export data** to CSV
+            with col2:
+                if zoom_mode:
+                    st.metric("Mode", "🔍 Zoom")
+                    time_span = (zoom_range[1] - zoom_range[0]).total_seconds() / 60
+                    st.metric("Window", f"{time_span:.1f} min")
+                else:
+                    st.metric("Mode", "📊 Overview")
+                    st.metric("Max Points", f"{max_points:,}")
 
-        **Getting Started:**
-        1. Select a cruise
-        2. Choose a core/dredge (only those with overlapping winch data are shown)
-        3. Select one or more parameters to plot
-        4. Adjust zoom and offsets as needed
-        5. Export aligned data if needed
-        """)
+            with col3:
+                st.metric("Total Points", f"{len(df):,}")
+                st.metric("Time Range", f"{(df['datetime'].max() - df['datetime'].min()).total_seconds() / 60:.1f} min")
+
+    else:
+        st.info("👆 Select a cruise and core/dredge from the sidebar to begin plotting")
+
+        with st.expander("ℹ️ About this application"):
+            st.write("""
+            This application allows you to:
+
+            - **📊 Plot winch data** from sediment coring operations
+            - **📈 Multiple parameters** on separate subplots
+            - **⚡ Apply offsets** to align data
+            - **🔍 Zoom mode** to view all points in a time window
+            - **💾 Export data** to CSV
+
+            **Getting Started:**
+            1. Select a cruise
+            2. Choose a core/dredge (only those with overlapping winch data are shown)
+            3. Select one or more parameters to plot
+            4. Adjust zoom and offsets as needed
+            5. Export aligned data if needed
+            """)

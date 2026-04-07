@@ -6,6 +6,7 @@ from view_sections import view_sections
 from view_cruises import view_cruises
 from multiplot_st import multiplot_sensor_data  # Add this import
 from ct_explorer import ct_explorer  # <-- Add this import
+from winch_plot import winch_plot
 
 # Force wide layout for Streamlit
 st.set_page_config(layout="wide")
@@ -39,7 +40,8 @@ menu = [
     "Visualize MSCL Data",
     "View Sensor Data",
     "Sensor Plotter",
-    "CT Explorer"  # <-- Add to menu
+    "CT Explorer",  # <-- Add to menu
+    "Winch Plotter"
 ]
 choice = st.sidebar.radio("Select Option", menu)
 
@@ -58,3 +60,5 @@ elif choice == "Sensor Plotter":
     multiplot_sensor_data()
 elif choice == "CT Explorer":  # <-- Add this
     ct_explorer()
+elif choice == "Winch Plotter":
+    winch_plot()
