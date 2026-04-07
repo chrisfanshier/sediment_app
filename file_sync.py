@@ -137,9 +137,10 @@ def get_files_to_sync():
             elif table_name == 'core_media':
                 query = text(f"""
                     SELECT cm.{id_column}, cm.{path_column}, cm.central_id,
-                           cm.file_name, c.core_name
+                           cm.file_name, c.core_name, cr.cruise_name
                     FROM {table_name} cm
                     LEFT JOIN cores c ON cm.core_id = c.core_id
+                    LEFT JOIN cruises cr ON c.cruise_id = cr.cruise_id
                     WHERE cm.sync_status = 'synced'
                     AND cm.created_on_ship = TRUE
                 """)
@@ -154,9 +155,13 @@ def get_files_to_sync():
                 associated_name = record[4]
                 
                 if relative_path and file_name:
-                    # Combine directory path with filename
-                    full_relative_path = os.path.join(relative_path, file_name)
-                    local_full_path = os.path.join(ROOT_DIRECTORY, full_relative_path)
+                    # Local path is always flat (ship storage has no cruise subfolder)
+                    local_full_path = os.path.join(ROOT_DIRECTORY, relative_path, file_name)
+                    # For core_media, organize into a cruise subfolder on the central drive
+                    if table_name == 'core_media' and len(record) > 5 and record[5]:
+                        full_relative_path = os.path.join(relative_path, record[5], file_name)
+                    else:
+                        full_relative_path = os.path.join(relative_path, file_name)
                     
                     file_exists = os.path.exists(local_full_path)
                     

@@ -248,15 +248,18 @@ def get_pending_records_with_fk_lookup(table_name, id_column, conn):
         return processed
 
     # CORE_MEDIA: Replace core_id with core's central_id, capture_device_id with device's central_id
+    # Also update file_path to include cruise subfolder to match central drive layout
     elif table_name == 'core_media':
         query = text("""
             SELECT
                 cm.*,
                 co.central_id as core_central_id,
-                cd.central_id as device_central_id
+                cd.central_id as device_central_id,
+                cr.cruise_name as cruise_name
             FROM core_media cm
             LEFT JOIN cores co ON cm.core_id = co.core_id
             LEFT JOIN capture_devices cd ON cm.capture_device_id = cd.capture_device_id
+            LEFT JOIN cruises cr ON co.cruise_id = cr.cruise_id
             WHERE cm.sync_status = 'pending'
             AND cm.created_on_ship = TRUE
             ORDER BY cm.created_at
@@ -268,6 +271,7 @@ def get_pending_records_with_fk_lookup(table_name, id_column, conn):
             record_dict = dict(record._mapping)
             core_central_id = record_dict.pop('core_central_id', None)
             device_central_id = record_dict.pop('device_central_id', None)
+            cruise_name = record_dict.pop('cruise_name', None)
 
             if core_central_id:
                 record_dict['core_id'] = core_central_id
@@ -278,6 +282,10 @@ def get_pending_records_with_fk_lookup(table_name, id_column, conn):
                 record_dict['capture_device_id'] = device_central_id
             elif record_dict.get('capture_device_id'):
                 st.warning(f"⚠️ Core media references capture device that hasn't been synced yet!")
+
+            # Rewrite file_path to include cruise subfolder so central DB matches file location
+            if cruise_name and record_dict.get('file_path'):
+                record_dict['file_path'] = f"{record_dict['file_path']}/{cruise_name}"
 
             processed.append(record_dict)
 
