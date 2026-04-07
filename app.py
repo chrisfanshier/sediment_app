@@ -5,6 +5,7 @@ from view_sensor import view_sensor_data
 from view_sections import view_sections
 from view_cruises import view_cruises
 from multiplot_st import multiplot_sensor_data  # Add this import
+from winch_plot import winch_plot
 
 # Force wide layout for Streamlit
 st.set_page_config(layout="wide")
@@ -31,7 +32,7 @@ st.markdown(
 )
 
 # Sidebar navigation
-menu = ["View Cruises", "View Cores", "View Sections", "Visualize MSCL Data", "View Sensor Data", "Sensor Plotter"]  # Add to menu
+menu = ["View Cruises", "View Cores", "View Sections", "Visualize MSCL Data", "View Sensor Data", "Sensor Plotter", "Winch Plotter"]  # Add to menu
 choice = st.sidebar.radio("Select Option", menu)
 
 # Render the selected page
@@ -47,3 +48,5 @@ elif choice == "View Sections":
     view_sections()
 elif choice == "Sensor Plotter":
     multiplot_sensor_data()  # Add this
+elif choice == "Winch Plotter":
+    winch_plot()
