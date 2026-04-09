@@ -29,6 +29,12 @@ def parse_ct_xml(xml_path):
                 el = root.find(f".//{tag}")
                 if el is not None and el.text:
                     return el.text.strip()
+            # Fallback: namespace-agnostic + case-insensitive
+            tags_lower = {t.lower() for t in tags}
+            for elem in root.iter():
+                local = elem.tag.rsplit('}', 1)[-1] if '}' in elem.tag else elem.tag
+                if local.lower() in tags_lower and elem.text and elem.text.strip():
+                    return elem.text.strip()
             return None
 
         section_id = get_text("Section-ID", "section-id", "sectionID")
@@ -239,6 +245,11 @@ def scan_ct_folders(ct_root):
                     "tif_filesize_bytes": tif_filesize_bytes,
                 }
                 found.append(record)
+            else:
+                tag = meta.get("xml_root_tag", "unknown") if meta else "N/A"
+                print(f"\u26a0\ufe0f Skipped (no core_name): {xml_file} [root_tag={tag}, folder={root}]")
+    if len(found) == 0:
+        print(f"\u26a0\ufe0f No XML files with core_name found in {ct_root}")
     return found
 
 
@@ -350,11 +361,23 @@ def import_to_database(validated_records):
                 section_number,
                 xml_root_tag,
                 COALESCE(image_type, '') as image_type,
-                COALESCE(processing_stage, '') as processing_stage
+                COALESCE(processing_stage, '') as processing_stage,
+                xml_path,
+                tiff_folder
             FROM ct_xml
         """))
         for row in result:
-            existing_fingerprints.add((row[0], str(row[1]), row[2], row[3], row[4]))
+            db_record = {
+                "core_name": row[0],
+                "section_number": str(row[1]),
+                "xml_root_tag": row[2],
+                "image_type": row[3],
+                "processing_stage": row[4],
+                "xml_path": row[5] or "",
+                "tiff_folder": row[6] or "",
+            }
+            fp = create_xml_fingerprint(db_record)
+            existing_fingerprints.add(fingerprint_to_string(fp))
 
         for val in validated_records:
             if val["status"] != "valid":
@@ -367,16 +390,11 @@ def import_to_database(validated_records):
                 skipped_by_path += 1
                 continue
 
-            fingerprint = (
-                record["core_name"],
-                str(record["section_number"]),
-                record["xml_root_tag"],
-                record.get("image_type", "") or "",
-                record.get("processing_stage", "") or ""
-            )
+            fp = create_xml_fingerprint(record)
+            fp_string = fingerprint_to_string(fp)
 
-            if fingerprint in existing_fingerprints:
-                print(f"⚠️ Skipping duplicate fingerprint: {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {fingerprint[3]}")
+            if fp_string in existing_fingerprints:
+                print(f"⚠️ Skipping duplicate fingerprint: {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {os.path.basename(record['xml_path'])}")
                 skipped_by_fingerprint += 1
                 continue
 

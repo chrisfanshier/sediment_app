@@ -40,6 +40,12 @@ def parse_ct_xml(xml_path):
                 el = root.find(f".//{tag}")
                 if el is not None and el.text:
                     return el.text.strip()
+            # Fallback: namespace-agnostic + case-insensitive
+            tags_lower = {t.lower() for t in tags}
+            for elem in root.iter():
+                local = elem.tag.rsplit('}', 1)[-1] if '}' in elem.tag else elem.tag
+                if local.lower() in tags_lower and elem.text and elem.text.strip():
+                    return elem.text.strip()
             return None
 
         section_id = get_text("Section-ID", "section-id", "sectionID")
@@ -47,8 +53,8 @@ def parse_ct_xml(xml_path):
             section_id = get_text("Section-Number", "section-number")
 
         data = {
-            "core_name": get_text("Core-ID", "coreID"),
-            "scan_id": get_text("Scan-ID", "scanID"),
+            "core_name": get_text("Core-ID", "coreID", "core-id"),
+            "scan_id": get_text("Scan-ID", "scanID", "scan-id"),
             "section_id": section_id,
             "image_type": get_text("Image-Type", "image-type"),
             "processing_stage": get_text("Processing-Stage", "processing-stage"),
@@ -84,6 +90,9 @@ def scan_ct_folders():
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 }
                 found.append(record)
+            else:
+                tag = meta.get("xml_root_tag", "unknown") if meta else "N/A"
+                st.warning(f"Skipped (no core_name): {xml_file} [root_tag={tag}]")
     return found
 
 def save_ct_folders_to_staging(records):
