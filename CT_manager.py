@@ -1388,42 +1388,67 @@ def main():
                                     st.error(f"  • {error}")
                             else:
                                 fm = CTFileManager(ct_root)
-                                total_files = sum(len(summary_data[(core, section)]["records"]) for (core, section) in valid_edit_data.keys())
-                                progress_bar = st.progress(0)
-                                status_text = st.empty()
-                                total_updated = 0
-                                total_failed = 0
-                                current_file = 0
 
-                                for (core, section), changes in valid_edit_data.items():
+                                # Only edit XMLs not already in the database
+                                with get_connection() as conn:
+                                    existing_paths = set(
+                                        row[0] for row in conn.execute(text("SELECT xml_path FROM ct_xml"))
+                                    )
+
+                                filtered_records = {}
+                                skipped_already_imported = 0
+                                for (core, section) in valid_edit_data.keys():
                                     key = (core, section)
                                     if key in summary_data:
-                                        for val in summary_data[key]["records"]:
-                                            current_file += 1
-                                            record = val["record"]
-                                            xml_path = record["xml_path"]
-                                            status_text.text(f"Processing {current_file}/{total_files}: {os.path.basename(xml_path)}")
-                                            success = True
-                                            if changes["new_core"]:
-                                                if not fm.edit_xml_field(xml_path, "Core-ID", changes["new_core"]):
-                                                    success = False
-                                            if changes["new_section"] and success:
-                                                if not fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"]):
-                                                    success = False
-                                                if success:
-                                                    fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
-                                            if success:
-                                                total_updated += 1
-                                            else:
-                                                total_failed += 1
-                                            progress_bar.progress(current_file / total_files)
+                                        unimported = [v for v in summary_data[key]["records"]
+                                                      if v["record"]["xml_path"] not in existing_paths]
+                                        filtered_records[key] = unimported
+                                        skipped_already_imported += len(summary_data[key]["records"]) - len(unimported)
 
-                                progress_bar.empty()
-                                status_text.empty()
-                                if total_failed > 0:
-                                    st.warning(f"⚠️ Updated {total_updated} XML files, {total_failed} failed")
+                                if skipped_already_imported > 0:
+                                    st.info(f"ℹ️ Skipping {skipped_already_imported} XML(s) already in database (edits not needed)")
+
+                                total_files = sum(len(recs) for recs in filtered_records.values())
+
+                                if total_files == 0:
+                                    st.warning("⚠️ All XMLs for the selected sections are already in the database. Nothing to edit.")
                                 else:
-                                    st.success(f"✅ Successfully updated {total_updated} XML files")
+                                    progress_bar = st.progress(0)
+                                    status_text = st.empty()
+                                    total_updated = 0
+                                    total_failed = 0
+                                    current_file = 0
+
+                                    for (core, section), changes in valid_edit_data.items():
+                                        key = (core, section)
+                                        if key in filtered_records:
+                                            for val in filtered_records[key]:
+                                                current_file += 1
+                                                record = val["record"]
+                                                xml_path = record["xml_path"]
+                                                status_text.text(f"Processing {current_file}/{total_files}: {os.path.basename(xml_path)}")
+                                                success = True
+                                                if changes["new_core"]:
+                                                    if not fm.edit_xml_field(xml_path, "Core-ID", changes["new_core"]):
+                                                        success = False
+                                                if changes["new_section"] and success:
+                                                    if not fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"]):
+                                                        success = False
+                                                    if success:
+                                                        fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
+                                                if success:
+                                                    total_updated += 1
+                                                else:
+                                                    total_failed += 1
+                                                progress_bar.progress(current_file / total_files)
+
+                                    progress_bar.empty()
+                                    status_text.empty()
+                                    if total_failed > 0:
+                                        st.warning(f"⚠️ Updated {total_updated} XML files, {total_failed} failed")
+                                    else:
+                                        st.success(f"✅ Successfully updated {total_updated} XML files")
+
                                 time.sleep(1.5)
                                 if "validated_records" in st.session_state:
                                     del st.session_state.validated_records
