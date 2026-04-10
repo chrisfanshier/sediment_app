@@ -104,7 +104,7 @@ class CTFileManager:
         self.ct_root = ct_root
 
     def edit_xml_field(self, xml_path, field_name, new_value):
-        full_path = xml_path if os.path.isabs(xml_path) else os.path.join(self.ct_root, xml_path)
+        full_path = xml_path if os.path.isabs(xml_path) else get_full_path(xml_path)
 
         try:
             if not os.path.exists(full_path):
@@ -1297,10 +1297,10 @@ def main():
                                             if not fm.edit_xml_field(xml_path, "Core-ID", changes["new_core"]):
                                                 success = False
                                         if changes["new_section"] and success:
-                                            if not fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"]):
+                                            section_id_ok = fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"])
+                                            section_num_ok = fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
+                                            if not section_id_ok and not section_num_ok:
                                                 success = False
-                                            if success:
-                                                fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
                                         if success:
                                             total_updated += 1
                                         else:
@@ -1432,10 +1432,10 @@ def main():
                                                     if not fm.edit_xml_field(xml_path, "Core-ID", changes["new_core"]):
                                                         success = False
                                                 if changes["new_section"] and success:
-                                                    if not fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"]):
+                                                    section_id_ok = fm.edit_xml_field(xml_path, "Section-ID", changes["new_section"])
+                                                    section_num_ok = fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
+                                                    if not section_id_ok and not section_num_ok:
                                                         success = False
-                                                    if success:
-                                                        fm.edit_xml_field(xml_path, "Section-Number", changes["new_section"])
                                                 if success:
                                                     total_updated += 1
                                                 else:
