@@ -17,13 +17,15 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from collections import defaultdict
 from PIL import Image, ImageDraw, ImageFont
+import pyqtgraph as pg
+pg.setConfigOptions(useOpenGL=False, antialias=True, background="w", foreground="k")
 
 # Enable high-DPI rendering before QApplication is created
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QListWidget, QListWidgetItem, QLabel,
+    QPushButton, QListWidget, QListWidgetItem, QLabel,
     QScrollArea, QCheckBox, QComboBox, QSlider, QLineEdit,
     QGroupBox, QStatusBar, QMessageBox, QSizePolicy)
 from PySide6.QtCore import Qt, QThread, Signal
@@ -46,7 +48,7 @@ from config import get_full_path, ROOT_DIRECTORY
 # ── Constants ──────────────────────────────────────────────────────────────────
 FALLBACK_PX_PER_CM  = 35.0
 UI_PX_PER_CM        = 22.0
-RENDER_SCALE        = 2       # internal render multiplier for crisp output
+RENDER_SCALE        = 4       # internal render multiplier for crisp output
 CROP_COL_THRESH     = 0.15
 CROP_ROW_THRESH     = 0.25
 
@@ -57,16 +59,15 @@ SUPPORTED_IMAGE_TYPES = {
 }
 
 MSCL_COLORS = [
-    (80, 190, 255), (255, 100, 100), (100, 255, 100), (255, 200, 50),
-    (200, 100, 255), (255, 150, 50), (50, 255, 200), (255, 100, 200),
+    "#1f77b4", "#d62728", "#2ca02c", "#ff7f0e",
+    "#9467bd", "#8c564b", "#17becf", "#e377c2",
 ]
 
-STRIP_BG     = (31, 31, 31)
-HEADER_BG    = (40, 40, 50)
-SCALE_FG     = (200, 200, 200)
-SECTION_LINE = (80, 80, 100)
-MSCL_BG      = (25, 25, 35)
-LABEL_COLOR  = (200, 200, 200)
+STRIP_BG     = (255, 255, 255)
+HEADER_BG    = (235, 235, 245)
+SCALE_FG     = (60, 60, 60)
+SECTION_LINE = (180, 180, 200)
+LABEL_COLOR  = (30, 30, 30)
 
 
 # ── Database helpers ───────────────────────────────────────────────────────────
@@ -235,6 +236,28 @@ def db_resolve_tif_path(row):
     return None
 
 
+def db_get_section_files(core_name, image_type):
+    """Return {section_number: [row_dict, ...], ...} for all ct_xml rows
+    matching (core_name, image_type).  Each row_dict contains the full
+    ct_xml columns needed to resolve a TIF path.  Sections are sorted
+    numerically and files within each section are sorted by tif_filename."""
+    with get_connection() as conn:
+        rows = conn.execute(sa_text("""
+            SELECT section_number, tiff_folder, xml_path,
+                   tif_filename, processing_stage, xml_root_tag
+            FROM ct_xml
+            WHERE core_name  = :cn
+              AND image_type = :it
+            ORDER BY CAST(section_number AS INTEGER), tif_filename
+        """), {"cn": core_name, "it": image_type}).fetchall()
+    result = defaultdict(list)
+    for r in rows:
+        d = dict(r._mapping)
+        sec = int(d["section_number"] or 0)
+        result[sec].append(d)
+    return dict(result)
+
+
 def db_get_mscl_files_for_core(core_name):
     """Return [(file_name, file_path, remarks), ...] for MSCL files linked to this core."""
     with get_connection() as conn:
@@ -284,7 +307,7 @@ def load_tif_scientific(tif_path, px_per_cm=FALLBACK_PX_PER_CM):
         arr = (arr - lo) / (hi - lo) * 255.0
     else:
         arr[:] = 0
-    return (Image.fromarray(arr.astype(np.uint8), mode="L"),
+    return (Image.fromarray(arr.astype(np.uint8)),
             px_per_cm, crop_top_px, original_px_h)
 
 
@@ -375,9 +398,11 @@ def _pil_font(size):
     return ImageFont.load_default()
 
 
-# ── Draggable Core Strip ───────────────────────────────────────────────────────
+# ── Draggable Core Panel ───────────────────────────────────────────────────
 
 class DraggableCoreStrip(QWidget):
+    """Composite widget: CT image + optional pyqtgraph MSCL plots side by side.
+    The entire panel is draggable vertically for correlation alignment."""
     offset_changed = Signal()
 
     def __init__(self, core_id, px_per_cm_display, parent=None):
@@ -389,7 +414,35 @@ class DraggableCoreStrip(QWidget):
         self._drag_active      = False
         self._drag_start_y     = 0
         self._drag_start_offset = 0
-        self._pixmap           = None
+
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+
+        # CT image label (pixmap includes header + data + padding)
+        self._ct_label = QLabel()
+        self._ct_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self._layout.addWidget(self._ct_label)
+
+        # Right-side container for MSCL plots with header spacer
+        self._plots_container = QWidget()
+        self._plots_vlayout   = QVBoxLayout(self._plots_container)
+        self._plots_vlayout.setContentsMargins(0, 0, 0, 0)
+        self._plots_vlayout.setSpacing(0)
+
+        self._header_spacer = QWidget()
+        self._header_spacer.setFixedHeight(0)
+        self._plots_vlayout.addWidget(self._header_spacer)
+
+        self._plots_row = QHBoxLayout()
+        self._plots_row.setContentsMargins(0, 0, 0, 0)
+        self._plots_row.setSpacing(2)
+        self._plots_vlayout.addLayout(self._plots_row, 1)
+
+        self._plots_container.hide()
+        self._layout.addWidget(self._plots_container, 0, Qt.AlignTop)
+
+        self._plot_widgets = []
         self.setCursor(Qt.OpenHandCursor)
 
     @property
@@ -399,21 +452,53 @@ class DraggableCoreStrip(QWidget):
         return 0.0
 
     def set_pixmap(self, pixmap):
-        self._pixmap = pixmap
+        self._ct_label.setPixmap(pixmap)
         dpr = pixmap.devicePixelRatio()
-        self.setFixedSize(int(pixmap.width() / dpr),
-                          int(pixmap.height() / dpr))
-        self.update()
+        w = int(pixmap.width() / dpr)
+        h = int(pixmap.height() / dpr)
+        self._ct_label.setFixedSize(w, h)
+        self._update_size()
+
+    def set_mscl_plots(self, plot_widgets, data_height, header_height):
+        """Attach pyqtgraph PlotWidgets to the right of the CT image.
+        data_height: pixel height of the CT data area (excludes header).
+        header_height: pixel height of the CT header area."""
+        # Clear old plots
+        for pw in self._plot_widgets:
+            self._plots_row.removeWidget(pw)
+            pw.deleteLater()
+        self._plot_widgets = []
+
+        if not plot_widgets:
+            self._plots_container.hide()
+            self._update_size()
+            return
+
+        # The bottom axis label consumes some height inside the PlotWidget,
+        # so the widget must be taller than the CT data area to compensate.
+        BOTTOM_AXIS_H = 18
+        self._header_spacer.setFixedHeight(header_height)
+        widget_h = data_height + BOTTOM_AXIS_H
+        for pw in plot_widgets:
+            pw.setFixedHeight(widget_h)
+            self._plots_row.addWidget(pw)
+            self._plot_widgets.append(pw)
+        self._plots_container.setFixedHeight(
+            header_height + widget_h)
+        self._plots_container.show()
+        self._update_size()
+
+    def _update_size(self):
+        ct_w = self._ct_label.width()
+        ct_h = self._ct_label.height()
+        plots_w = sum(pw.width() for pw in self._plot_widgets)
+        if plots_w > 0:
+            plots_w += 2 * max(0, len(self._plot_widgets) - 1)  # spacing
+        self.setFixedSize(ct_w + plots_w, ct_h)
 
     def set_locked(self, locked):
         self.locked = locked
         self.setCursor(Qt.ForbiddenCursor if locked else Qt.OpenHandCursor)
-
-    def paintEvent(self, event):
-        if self._pixmap:
-            p = QPainter(self)
-            p.drawPixmap(0, 0, self._pixmap)
-            p.end()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and not self.locked:
@@ -450,7 +535,7 @@ class CorrelationCanvas(QWidget):
         self._guide_y    = -1
         self._show_guide = False
         self.setMouseTracking(True)
-        self.setStyleSheet("background-color: #1a1a1a;")
+        self.setStyleSheet("background-color: #f5f5f5;")
 
     def clear(self):
         for s in self.strips:
@@ -497,7 +582,7 @@ class CorrelationCanvas(QWidget):
         super().paintEvent(event)
         if self._show_guide and self._guide_y >= 0:
             p   = QPainter(self)
-            pen = QPen(QColor(255, 255, 0, 120), 1, Qt.DashLine)
+            pen = QPen(QColor(255, 0, 0, 150), 1, Qt.DashLine)
             p.setPen(pen)
             p.drawLine(0, self._guide_y, self.width(), self._guide_y)
             p.end()
@@ -550,12 +635,18 @@ class CoreCorrelatorApp(QMainWindow):
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central)
 
-        # ── Left panel ─────────────────────────────────────────────────
-        left = QWidget()
-        left.setMaximumWidth(360)
-        left.setMinimumWidth(290)
-        lv = QVBoxLayout(left)
+        # ── Left panel (scrollable) ─────────────────────────────────
+        left_inner = QWidget()
+        left_inner.setMinimumWidth(290)
+        lv = QVBoxLayout(left_inner)
         lv.setContentsMargins(4, 4, 4, 4)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left_inner)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setMaximumWidth(380)
+        left_scroll.setMinimumWidth(290)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         # ── Data Source ────────────────────────────────────────────────
         grp = QGroupBox("Data Source")
@@ -592,28 +683,46 @@ class CoreCorrelatorApp(QMainWindow):
         gl.addWidget(self.combo_suffix)
         lv.addWidget(grp)
 
-        # ── Core selection ─────────────────────────────────────────────
-        grp = QGroupBox("Cores to Compare")
+        # ── Core / Section selection ───────────────────────────────────
+        grp = QGroupBox("Cores / Sections")
         gl  = QVBoxLayout(grp)
+
         self.list_cores = QListWidget()
-        self.list_cores.itemChanged.connect(self.refresh_display)
+        self.list_cores.itemChanged.connect(self._on_core_checked)
         gl.addWidget(self.list_cores)
-        lv.addWidget(grp)
+
+        # Per-section controls (scrollable area below core list)
+        self._sec_inner   = QWidget()
+        self._sec_vlayout = QVBoxLayout(self._sec_inner)
+        self._sec_vlayout.setContentsMargins(2, 2, 2, 2)
+        self._sec_vlayout.setSpacing(2)
+        self.sec_scroll = QScrollArea()
+        self.sec_scroll.setWidget(self._sec_inner)
+        self.sec_scroll.setWidgetResizable(True)
+        gl.addWidget(self.sec_scroll, 1)
+
+        # { core_name: { section_num: {"check": QCheckBox, "combo": QComboBox,
+        #                               "files": [row_dict, ...]} } }
+        self._section_widgets = {}
+
+        lv.addWidget(grp, 1)   # stretch so it fills available space
 
         # ── MSCL ──────────────────────────────────────────────────────
         grp = QGroupBox("MSCL Data")
         gl  = QVBoxLayout(grp)
 
-        row = QHBoxLayout()
+        gl.addWidget(QLabel("Core:"))
         self.combo_mscl_core = QComboBox()
-        self.btn_mscl_load   = QPushButton("Load from DB")
+        self.combo_mscl_core.currentIndexChanged.connect(self._on_mscl_core_changed)
+        gl.addWidget(self.combo_mscl_core)
+
+        gl.addWidget(QLabel("MSCL File:"))
+        self.combo_mscl_file = QComboBox()
+        gl.addWidget(self.combo_mscl_file)
+
+        self.btn_mscl_load = QPushButton("Load from DB")
         self.btn_mscl_load.clicked.connect(self._load_mscl_from_db)
-        self.btn_mscl_file   = QPushButton("Load .out")
-        self.btn_mscl_file.clicked.connect(self._load_mscl_from_file)
-        row.addWidget(self.combo_mscl_core)
-        row.addWidget(self.btn_mscl_load)
-        row.addWidget(self.btn_mscl_file)
-        gl.addLayout(row)
+        gl.addWidget(self.btn_mscl_load)
 
         self.lbl_mscl = QLabel("")
         self.lbl_mscl.setWordWrap(True)
@@ -698,9 +807,9 @@ class CoreCorrelatorApp(QMainWindow):
         self.canvas = CorrelationCanvas()
         self.scroll_area.setWidget(self.canvas)
         self.scroll_area.setWidgetResizable(False)
-        self.scroll_area.setStyleSheet("background-color: #111;")
+        self.scroll_area.setStyleSheet("background-color: #f5f5f5;")
 
-        main_layout.addWidget(left, 0)
+        main_layout.addWidget(left_scroll, 0)
         main_layout.addWidget(self.scroll_area, 1)
 
         self.status = QStatusBar()
@@ -765,10 +874,116 @@ class CoreCorrelatorApp(QMainWindow):
         for cname in self._core_names:
             self.combo_mscl_core.addItem(cname)
 
-        # Clear stale caches
+        # Clear section widgets & stale caches
+        self._clear_section_widgets()
         self.core_sections = {}
         self.image_cache.clear()
         self.canvas.clear()
+
+    def _clear_section_widgets(self):
+        """Remove all per-section widgets from the scroll area."""
+        self._section_widgets = {}
+        while self._sec_vlayout.count():
+            child = self._sec_vlayout.takeAt(0)
+            w = child.widget()
+            if w:
+                w.deleteLater()
+
+    def _on_core_checked(self, item):
+        """Rebuild section widgets when a core is checked/unchecked."""
+        self._rebuild_section_panel()
+        self._auto_load_mscl_for_checked()
+        self.refresh_display()
+
+    def _auto_load_mscl_for_checked(self):
+        """Auto-load the first MSCL .out file for each checked core
+        that doesn't already have MSCL data loaded."""
+        for cname in self._checked_cores():
+            if cname in self.mscl_store:
+                continue
+            try:
+                files = db_get_mscl_files_for_core(cname)
+            except Exception:
+                continue
+            out_files = [(fn, fp) for fn, fp, _r in files
+                         if fn.lower().endswith(".out")]
+            if not out_files:
+                continue
+            fn, fp = out_files[0]
+            full = get_full_path(os.path.join(fp, fn))
+            if os.path.exists(full):
+                self._parse_and_store_mscl(cname, full, fn)
+
+    def _rebuild_section_panel(self):
+        """Rebuild the per-section dropdown panel for all checked cores."""
+        self._clear_section_widgets()
+
+        label      = self.combo_type.currentText()
+        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
+        if not image_type:
+            return
+
+        checked = self._checked_cores()
+        if not checked:
+            return
+
+        for core_name in checked:
+            try:
+                sec_files = db_get_section_files(core_name, image_type)
+            except Exception as e:
+                self.status.showMessage(f"Error loading sections: {e}", 5000)
+                continue
+            if not sec_files:
+                continue
+
+            # Core header label
+            hdr = QLabel(f"  {core_name}")
+            hdr.setStyleSheet("font-weight: bold; color: #ccc; margin-top: 4px;")
+            self._sec_vlayout.addWidget(hdr)
+
+            self._section_widgets[core_name] = {}
+
+            for sec_num in sorted(sec_files.keys()):
+                files = sec_files[sec_num]
+                row_w = QWidget()
+                rl    = QHBoxLayout(row_w)
+                rl.setContentsMargins(12, 0, 0, 0)
+                rl.setSpacing(4)
+
+                chk = QCheckBox(f"S{sec_num}")
+                chk.setChecked(True)
+                chk.stateChanged.connect(self.refresh_display)
+
+                combo = QComboBox()
+                combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                for f in files:
+                    fn = f.get("tif_filename") or ""
+                    if not fn and f.get("xml_path"):
+                        fn = os.path.splitext(
+                            os.path.basename(f["xml_path"]))[0] + ".tif"
+                    stage = f.get("processing_stage") or ""
+                    display = fn if not stage else f"{fn}  [{stage}]"
+                    combo.addItem(display, userData=f)
+                combo.currentIndexChanged.connect(
+                    lambda _idx: self.refresh_display())
+
+                rl.addWidget(chk)
+                rl.addWidget(combo, 1)
+                self._sec_vlayout.addWidget(row_w)
+
+                self._section_widgets[core_name][sec_num] = {
+                    "check": chk, "combo": combo, "files": files}
+
+        self._sec_vlayout.addStretch()
+
+    def _checked_cores(self):
+        """Return list of core names that are currently checked."""
+        checked = []
+        for i in range(self.list_cores.count()):
+            it = self.list_cores.item(i)
+            if it.checkState() == Qt.Checked:
+                checked.append(it.data(Qt.UserRole))
+        return checked
 
     def _populate_suffix_combo(self):
         """Discover available filename suffixes across all cores in the current cruise."""
@@ -805,8 +1020,8 @@ class CoreCorrelatorApp(QMainWindow):
         self._on_cruise_changed()
 
     def _on_suffix_changed(self):
-        self.core_sections = {}
         self.image_cache.clear()
+        self._rebuild_section_panel()
         self.refresh_display()
 
     # ── Zoom ───────────────────────────────────────────────────────────────
@@ -825,8 +1040,9 @@ class CoreCorrelatorApp(QMainWindow):
 
     # ── MSCL ───────────────────────────────────────────────────────────────
 
-    def _load_mscl_from_db(self):
-        """Load MSCL .out file for the selected core via database path."""
+    def _on_mscl_core_changed(self):
+        """Populate the MSCL file dropdown when the core selection changes."""
+        self.combo_mscl_file.clear()
         core_name = self.combo_mscl_core.currentText()
         if not core_name:
             return
@@ -835,33 +1051,31 @@ class CoreCorrelatorApp(QMainWindow):
         except Exception as e:
             self.lbl_mscl.setText(f"DB error: {e}")
             return
-        if not files:
-            self.lbl_mscl.setText(f"No MSCL files in DB for {core_name}")
+        out_files = [(fn, fp, remarks) for fn, fp, remarks in files
+                     if fn.lower().endswith(".out")]
+        if not out_files:
+            self.lbl_mscl.setText(f"No .out files in DB for {core_name}")
             return
-        # Use the first .out file found
-        for fn, fp, remarks in files:
-            if fn.lower().endswith(".out"):
-                full = get_full_path(os.path.join(fp, fn))
-                if os.path.exists(full):
-                    self._parse_and_store_mscl(core_name, full, fn)
-                    return
-                else:
-                    self.lbl_mscl.setText(
-                        f"File not found on disk:\n{full}")
-                    return
-        self.lbl_mscl.setText(f"No .out file in DB for {core_name}")
+        for fn, fp, remarks in out_files:
+            label = fn if not remarks else f"{fn}  ({remarks})"
+            self.combo_mscl_file.addItem(label, userData=(fn, fp))
+        self.lbl_mscl.setText("")
 
-    def _load_mscl_from_file(self):
-        """Manual file picker fallback."""
+    def _load_mscl_from_db(self):
+        """Load MSCL .out file for the selected core via database path."""
         core_name = self.combo_mscl_core.currentText()
         if not core_name:
             return
-        fp, _ = QFileDialog.getOpenFileName(
-            self, f"Load MSCL for {core_name}", "",
-            "MSCL Files (*.out);;All Files (*)")
-        if not fp:
+        file_data = self.combo_mscl_file.currentData()
+        if not file_data:
+            self.lbl_mscl.setText(f"No MSCL file selected for {core_name}")
             return
-        self._parse_and_store_mscl(core_name, fp, Path(fp).name)
+        fn, fp = file_data
+        full = get_full_path(os.path.join(fp, fn))
+        if os.path.exists(full):
+            self._parse_and_store_mscl(core_name, full, fn)
+        else:
+            self.lbl_mscl.setText(f"File not found on disk:\n{full}")
 
     def _parse_and_store_mscl(self, core_name, filepath, display_name):
         data, columns = parse_mscl_file(filepath)
@@ -932,6 +1146,11 @@ class CoreCorrelatorApp(QMainWindow):
         return [c for c, r in self.mscl_col_rows.items()
                 if r["check"].isChecked()]
 
+    def _displayed_section_nums(self, core_name):
+        """Return set of section numbers currently checked for a core."""
+        sw = self._section_widgets.get(core_name, {})
+        return {sn for sn, w in sw.items() if w["check"].isChecked()}
+
     def _global_mscl_ranges(self, cols, core_ids):
         ranges = {}
         for col in cols:
@@ -940,7 +1159,10 @@ class CoreCorrelatorApp(QMainWindow):
                 store = self.mscl_store.get(cid)
                 if not store:
                     continue
-                for sec_data in store["data"].values():
+                displayed = self._displayed_section_nums(cid)
+                for sec_num, sec_data in store["data"].items():
+                    if sec_num not in displayed:
+                        continue
                     if col in sec_data:
                         v = sec_data[col]
                         all_vals.append(v[~np.isnan(v)])
@@ -968,34 +1190,39 @@ class CoreCorrelatorApp(QMainWindow):
             ranges[col] = (v_lo, v_hi)
         return ranges
 
-    # ── Section loading from DB ────────────────────────────────────────────
+    # ── Section loading from widget selections ──────────────────────────
 
     def _get_sections_for_core(self, core_name: str,
                                 image_type: str) -> list[dict]:
-        suffix_filter = self.combo_suffix.currentData()
-        key = (core_name, image_type, suffix_filter)
-        if key in self.core_sections:
-            return self.core_sections[key]
+        """Build section list from the per-section widget selections.
+        Only includes sections whose checkbox is checked, using the
+        file chosen in each section's dropdown."""
+        sec_widgets = self._section_widgets.get(core_name, {})
+        if not sec_widgets:
+            return []
 
-        rows     = db_get_sections_for_core(core_name, image_type,
-                                            suffix_filter=suffix_filter)
         sections = []
-        for row in rows:
+        for sec_num in sorted(sec_widgets.keys()):
+            sw = sec_widgets[sec_num]
+            if not sw["check"].isChecked():
+                continue
+            row = sw["combo"].currentData()
+            if row is None:
+                continue
             tif_path = db_resolve_tif_path(row)
             if tif_path is None:
                 self.status.showMessage(
                     f"⚠️ TIF not found for {core_name} "
-                    f"section {row['section_number']}", 3000)
+                    f"section {sec_num}", 3000)
                 continue
             px_per_cm = db_get_px_per_cm_from_xml(
                 row.get("xml_path", ""))
             sections.append({
                 "tif":            tif_path,
-                "section_number": int(row["section_number"] or 0),
+                "section_number": sec_num,
                 "px_per_cm":      px_per_cm,
                 "core_id":        core_name,
             })
-        self.core_sections[key] = sections
         return sections
 
     # ── Display Refresh ────────────────────────────────────────────────────
@@ -1009,11 +1236,7 @@ class CoreCorrelatorApp(QMainWindow):
         if not image_type:
             return
 
-        checked = []
-        for i in range(self.list_cores.count()):
-            it = self.list_cores.item(i)
-            if it.checkState() == Qt.Checked:
-                checked.append(it.data(Qt.UserRole))
+        checked = self._checked_cores()
         if not checked:
             return
 
@@ -1021,8 +1244,7 @@ class CoreCorrelatorApp(QMainWindow):
         show_mscl  = self.chk_mscl.isChecked()
         show_scale = self.chk_scale.isChecked()
         show_sec   = self.chk_sec_lines.isChecked()
-        mscl_w     = int(self.slider_mscl_w.value()
-                         * self.zoom_factor) if show_mscl else 0
+        mscl_w_per_col = int(self.slider_mscl_w.value()) if show_mscl else 0
         sel_cols   = self._selected_mscl_cols()
         ranges     = {}
         if show_mscl and sel_cols:
@@ -1035,11 +1257,20 @@ class CoreCorrelatorApp(QMainWindow):
                     f"No {label} TIFs found for {cid}", 3000)
                 continue
 
-            pix   = self._render_strip(
-                cid, sections, px_per_cm,
-                show_scale, show_sec, show_mscl, mscl_w, sel_cols, ranges)
+            pix, total_cm, logical_h, header_h, data_h = \
+                self._render_strip(
+                    cid, sections, px_per_cm, show_scale, show_sec)
             strip = DraggableCoreStrip(cid, px_per_cm, self.canvas)
             strip.set_pixmap(pix)
+
+            # Attach per-column pyqtgraph MSCL plots
+            if show_mscl and sel_cols and ranges:
+                plots = self._create_mscl_plots(
+                    cid, total_cm, sel_cols, ranges,
+                    mscl_w_per_col, sections)
+                if plots:
+                    strip.set_mscl_plots(plots, data_h, header_h)
+
             strip.offset_changed.connect(self._update_offsets)
             if cid in old_offsets:
                 strip.offset_px = old_offsets[cid]
@@ -1047,15 +1278,12 @@ class CoreCorrelatorApp(QMainWindow):
 
         self._update_offsets()
 
-    # ── Strip Rendering ────────────────────────────────────────────────────
-
     def _render_strip(self, core_id, sections, px_per_cm,
-                      show_scale, show_sec, show_mscl,
-                      mscl_w, sel_cols, mscl_ranges):
-
-        S = RENDER_SCALE   # internal super-sample factor
+                      show_scale, show_sec):
+        """Render CT image strip with scale bar. MSCL is handled separately
+        via pyqtgraph widgets."""
+        S = RENDER_SCALE
         px_per_cm_r = px_per_cm * S
-        mscl_w_r    = mscl_w * S
 
         # Pre-process sections
         processed  = []
@@ -1087,7 +1315,7 @@ class CoreCorrelatorApp(QMainWindow):
         HEADER_H = max(30 * S, int(36 * self.zoom_factor * S))
         SCALE_W  = int(50 * self.zoom_factor * S) if show_scale else 0
         ct_w     = max_img_w
-        strip_w  = SCALE_W + mscl_w_r + ct_w
+        strip_w  = SCALE_W + ct_w
         strip_h  = HEADER_H + total_h + 20 * S
 
         img  = Image.new("RGB", (strip_w, strip_h), STRIP_BG)
@@ -1119,63 +1347,14 @@ class CoreCorrelatorApp(QMainWindow):
                               fill=SCALE_FG, font=sf)
                 elif tick % 5 == 0:
                     draw.line([(bx - 4 * S, ty), (bx, ty)],
-                              fill=(170, 170, 170), width=S)
+                              fill=(140, 140, 140), width=S)
                 else:
                     draw.line([(bx - 2 * S, ty), (bx, ty)],
-                              fill=(120, 120, 120), width=S)
+                              fill=(180, 180, 180), width=S)
                 tick += 1
 
-        # MSCL plot
-        if show_mscl and mscl_w_r > 0 and sel_cols:
-            mx = SCALE_W
-            draw.rectangle(
-                [(mx, y0), (mx + mscl_w_r - 1, y0 + total_h)], fill=MSCL_BG)
-            PAD = 3 * S
-            draw.line([(mx + PAD, y0), (mx + PAD, y0 + total_h)],
-                      fill=(60, 60, 60), width=S)
-            store = self.mscl_store.get(core_id)
-            if store:
-                usable = mscl_w_r - 2 * PAD
-                for sec in processed:
-                    sd = store["data"].get(sec["sec"])
-                    if not sd or "SECT DEPTH" not in sd:
-                        continue
-                    sy = y0 + int(sec["cum_cm"] * px_per_cm_r)
-                    for ci, cn in enumerate(sel_cols):
-                        if cn not in sd or cn not in mscl_ranges:
-                            continue
-                        depths = sd["SECT DEPTH"]
-                        vals   = sd[cn]
-                        mask   = ~np.isnan(vals)
-                        if mask.sum() < 2:
-                            continue
-                        dd, vv   = depths[mask], vals[mask]
-                        v_lo, v_hi = mscl_ranges[cn]
-                        color    = MSCL_COLORS[ci % len(MSCL_COLORS)]
-                        pts      = []
-                        for j in range(len(dd)):
-                            py = sy + int(dd[j] * px_per_cm_r)
-                            if py < y0 or py >= y0 + total_h:
-                                continue
-                            vc = max(v_lo, min(v_hi, vv[j]))
-                            px_x = mx + PAD + int(
-                                (vc - v_lo) / (v_hi - v_lo)
-                                * max(1, usable - 1))
-                            pts.append((px_x, py))
-                        if len(pts) > 1:
-                            draw.line(pts, fill=color, width=max(1, S))
-
-                fsm = _pil_font(max(8 * S, int(10 * self.zoom_factor * S)))
-                lx, ly = mx + 2 * S, y0 + total_h + 2 * S
-                for ci, cn in enumerate(sel_cols):
-                    if cn in mscl_ranges:
-                        c = MSCL_COLORS[ci % len(MSCL_COLORS)]
-                        draw.text((lx, ly), cn, fill=c, font=fsm)
-                        bb = draw.textbbox((0, 0), cn + "  ", font=fsm)
-                        lx += bb[2] - bb[0]
-
         # CT sections
-        ctx = SCALE_W + mscl_w_r
+        ctx = SCALE_W
         for sec in processed:
             sy      = y0 + int(sec["cum_cm"] * px_per_cm_r)
             resized = sec["pil"].resize(
@@ -1189,18 +1368,103 @@ class CoreCorrelatorApp(QMainWindow):
                           fill=SECTION_LINE, width=S)
                 fs = _pil_font(max(8 * S, int(10 * self.zoom_factor * S)))
                 draw.text((ctx + 3 * S, sy + 2 * S),
-                          f"S{sec['sec']}", fill=(150, 150, 180), font=fs)
+                          f"S{sec['sec']}", fill=(100, 100, 140), font=fs)
 
-        # Down-sample to logical size for the QPixmap, setting devicePixelRatio
-        # so Qt renders it at native display resolution (crisp on HiDPI).
+        # Down-sample to logical size for the QPixmap
         logical_w = strip_w // S
         logical_h = strip_h // S
         img = img.resize((logical_w, logical_h), Image.Resampling.LANCZOS)
         qimg = QImage(img.tobytes(), logical_w, logical_h,
                       logical_w * 3, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg.copy())
-        pixmap.setDevicePixelRatio(S)
-        return pixmap
+        header_h_logical = HEADER_H // S
+        data_h_logical   = total_h // S
+        return pixmap, total_cm, logical_h, header_h_logical, data_h_logical
+
+    # ── MSCL pyqtgraph rendering ──────────────────────────────────────────
+
+    def _create_mscl_plots(self, core_id, total_cm, sel_cols, mscl_ranges,
+                            col_width, sections):
+        """Return a list of per-column PlotWidgets for one core.
+
+        Each PlotWidget has its own x-range so columns don't rescale
+        each other. Returns [] if no data.
+        """
+        store = self.mscl_store.get(core_id)
+        if not store or not sel_cols:
+            return []
+
+        sec_widgets = self._section_widgets.get(core_id, {})
+        displayed_secs = {sn for sn, w in sec_widgets.items()
+                          if w["check"].isChecked()}
+
+        # Compute cumulative depth offsets from the actually-displayed
+        # section images (same order as _render_strip stacks them).
+        cumul = 0.0
+        sec_offsets = {}
+        for sec in sections:
+            sn = sec["section_number"]
+            meta_ppcm = sec["px_per_cm"]
+            _, _, _, orig_h = self.image_cache.get(sec["tif"], meta_ppcm)
+            phys_cm = orig_h / meta_ppcm
+            sec_offsets[sn] = cumul
+            cumul += phys_cm
+
+        plots = []
+        for ci, cn in enumerate(sel_cols):
+            v_lo, v_hi = mscl_ranges.get(cn, (0, 1))
+            if v_lo == v_hi:
+                v_hi = v_lo + 1
+
+            pw = pg.PlotWidget()
+            pw.setFixedWidth(col_width)
+            pw.setBackground("w")
+            pw.showGrid(x=True, y=True, alpha=0.3)
+
+            # Remove all internal margins so Y-axis maps pixel-perfectly
+            # to the widget height — this keeps MSCL aligned with CT.
+            pw.getPlotItem().setContentsMargins(0, 0, 0, 0)
+            pw.getPlotItem().getViewBox().setDefaultPadding(0)
+            pw.getAxis("left").setWidth(0)
+            pw.getAxis("left").setStyle(showValues=False, tickLength=0)
+            pw.getAxis("right").setWidth(0)
+            pw.getAxis("top").setHeight(0)
+            pw.getAxis("bottom").setHeight(18)
+            pw.getAxis("bottom").setStyle(tickLength=-5)
+            pw.setLabel("bottom", cn, **{"font-size": "8pt"})
+            pw.setLabel("left", "")
+            pw.setYRange(0, total_cm, padding=0)
+            pw.setXRange(v_lo, v_hi, padding=0)
+            pw.invertY(True)
+            pw.setMouseEnabled(x=False, y=False)
+            pw.hideButtons()
+            pw.getViewBox().setMenuEnabled(False)
+            pw.enableAutoRange(axis="x", enable=False)
+            pw.enableAutoRange(axis="y", enable=False)
+
+            color = MSCL_COLORS[ci % len(MSCL_COLORS)]
+            has_data = False
+            for sec_num in sorted(displayed_secs):
+                sd = store["data"].get(sec_num)
+                if not sd or "SECT DEPTH" not in sd or cn not in sd:
+                    continue
+                depths = sd["SECT DEPTH"]
+                vals   = sd[cn]
+                mask   = ~np.isnan(vals)
+                if mask.sum() < 2:
+                    continue
+                offset = sec_offsets.get(sec_num, 0.0)
+                abs_depth = offset + depths[mask]
+                vv = vals[mask]
+                pw.plot(vv, abs_depth, pen=pg.mkPen(color, width=2))
+                has_data = True
+
+            if has_data:
+                plots.append(pw)
+            else:
+                pw.deleteLater()
+
+        return plots
 
     # ── Offset management ──────────────────────────────────────────────────
 
