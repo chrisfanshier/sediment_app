@@ -245,7 +245,7 @@ def resolve_tif_info(meta, xml_path, folder):
                 except OSError:
                     return tag_name, None
         # Neither found — store the derived name anyway so export can warn
-        print(f"⚠️ TIF not found on disk: {tif_path}")
+        print(f"WARNING: TIF not found on disk: {tif_path}")
         return filename, None
 
     if root_tag == "geotek-image":
@@ -451,7 +451,7 @@ def import_to_database(validated_records):
             )
 
             if fingerprint in existing_fingerprints:
-                print(f"⚠️ Skipping duplicate fingerprint: {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {os.path.basename(record['xml_path'])}")
+                print(f"WARNING: Skipping duplicate fingerprint: {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {os.path.basename(record['xml_path'])}")
                 skipped_by_fingerprint += 1
                 continue
 
@@ -700,7 +700,7 @@ def update_xml_paths(updates):
             }).fetchone()
 
             if existing:
-                print(f"⚠️ Skipping update for ID {update['id']}: target path already exists (ID {existing[0]})")
+                print(f"WARNING: Skipping update for ID {update['id']}: target path already exists (ID {existing[0]})")
                 skipped_count += 1
                 continue
 
