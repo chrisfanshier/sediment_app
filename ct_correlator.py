@@ -534,6 +534,7 @@ class CorrelationCanvas(QWidget):
         self._gap        = 20
         self._guide_y    = -1
         self._show_guide = False
+        self._align_tops = False     # True in overview: align strip tops
         self.setMouseTracking(True)
         self.setStyleSheet("background-color: #f5f5f5;")
 
@@ -551,16 +552,17 @@ class CorrelationCanvas(QWidget):
         self._reposition()
 
     def _reposition(self):
+        top = 20 if self._align_tops else self._pad_top
         x          = self._pad_sides
         max_bottom = 0
         for strip in self.strips:
-            y = self._pad_top + strip.offset_px
+            y = top + strip.offset_px
             strip.move(x, y)
             strip.show()
             x         += strip.width() + self._gap
             max_bottom = max(max_bottom, y + strip.height())
         total_w = x + self._pad_sides
-        total_h = max(max_bottom + 200, self._pad_top * 2)
+        total_h = max(max_bottom + 200, top * 2)
         self.setMinimumSize(total_w, total_h)
 
     def reset_offsets(self):
@@ -606,7 +608,7 @@ class ZoomableScrollArea(QScrollArea):
 class CoreCorrelatorApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Core Correlator")
+        self.setWindowTitle("CorElator")
         self.resize(1500, 950)
 
         # DB-driven state
@@ -647,6 +649,16 @@ class CoreCorrelatorApp(QMainWindow):
         left_scroll.setMaximumWidth(380)
         left_scroll.setMinimumWidth(290)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # ── Mode ───────────────────────────────────────────────────────
+        grp = QGroupBox("Mode")
+        gl  = QVBoxLayout(grp)
+        self.combo_mode = QComboBox()
+        self.combo_mode.addItem("Correlate")
+        self.combo_mode.addItem("Overview")
+        self.combo_mode.currentIndexChanged.connect(self._on_mode_changed)
+        gl.addWidget(self.combo_mode)
+        lv.addWidget(grp)
 
         # ── Data Source ────────────────────────────────────────────────
         grp = QGroupBox("Data Source")
@@ -789,15 +801,15 @@ class CoreCorrelatorApp(QMainWindow):
         lv.addWidget(grp)
 
         # ── Offset controls ───────────────────────────────────────────
-        grp = QGroupBox("Correlation Offset")
-        gl  = QVBoxLayout(grp)
+        self.grp_offset = QGroupBox("Correlation Offset")
+        gl  = QVBoxLayout(self.grp_offset)
         self.lbl_offsets = QLabel("Drag cores up/down to align")
         self.lbl_offsets.setWordWrap(True)
         gl.addWidget(self.lbl_offsets)
         self.btn_reset = QPushButton("Reset All Offsets")
         self.btn_reset.clicked.connect(self._reset_offsets)
         gl.addWidget(self.btn_reset)
-        lv.addWidget(grp)
+        lv.addWidget(self.grp_offset)
 
         lv.addStretch()
 
@@ -814,6 +826,15 @@ class CoreCorrelatorApp(QMainWindow):
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
+
+    # ── Mode switching ─────────────────────────────────────────────────────
+
+    def _on_mode_changed(self, _idx):
+        mode = self.combo_mode.currentText()
+        is_correlate = (mode == "Correlate")
+        self.grp_offset.setVisible(is_correlate)
+        self.chk_guide.setVisible(is_correlate)
+        self.refresh_display()
 
     # ── Cruise / core population ───────────────────────────────────────────
 
@@ -1228,6 +1249,13 @@ class CoreCorrelatorApp(QMainWindow):
     # ── Display Refresh ────────────────────────────────────────────────────
 
     def refresh_display(self):
+        if self.combo_mode.currentText() == "Overview":
+            self._refresh_overview()
+        else:
+            self._refresh_correlate()
+
+    def _refresh_correlate(self):
+        self.canvas._align_tops = False
         old_offsets = {s.core_id: s.offset_px for s in self.canvas.strips}
         self.canvas.clear()
 
@@ -1277,6 +1305,130 @@ class CoreCorrelatorApp(QMainWindow):
             self.canvas.add_strip(strip)
 
         self._update_offsets()
+
+    def _refresh_overview(self):
+        """Overview mode: one core, sections laid out left-to-right."""
+        self.canvas._align_tops = True
+        self.canvas.clear()
+
+        label      = self.combo_type.currentText()
+        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
+        if not image_type:
+            return
+
+        checked = self._checked_cores()
+        if not checked:
+            return
+        core_id = checked[0]          # overview shows only the first core
+
+        px_per_cm  = UI_PX_PER_CM * self.zoom_factor
+        show_mscl  = self.chk_mscl.isChecked()
+        show_scale = self.chk_scale.isChecked()
+        mscl_w_per_col = int(self.slider_mscl_w.value()) if show_mscl else 0
+        sel_cols   = self._selected_mscl_cols()
+        ranges     = {}
+        if show_mscl and sel_cols:
+            ranges = self._global_mscl_ranges(sel_cols, [core_id])
+
+        sections = self._get_sections_for_core(core_id, image_type)
+        if not sections:
+            self.status.showMessage(
+                f"No {label} TIFs found for {core_id}", 3000)
+            return
+
+        for sec in sections:
+            sec_num = sec["section_number"]
+            pix, sec_cm, logical_h, header_h, data_h = \
+                self._render_section_tile(
+                    core_id, sec, px_per_cm, show_scale)
+            strip = DraggableCoreStrip(
+                f"{core_id}  S{sec_num}", px_per_cm, self.canvas)
+            strip.set_locked(True)   # no vertical drag in overview
+            strip.set_pixmap(pix)
+
+            if show_mscl and sel_cols and ranges:
+                plots = self._create_mscl_plots(
+                    core_id, sec_cm, sel_cols, ranges,
+                    mscl_w_per_col, [sec])
+                if plots:
+                    strip.set_mscl_plots(plots, data_h, header_h)
+
+            self.canvas.add_strip(strip)
+
+    def _render_section_tile(self, core_id, section, px_per_cm, show_scale):
+        """Render a single section as an independent tile (header + image).
+        Returns (pixmap, phys_cm, logical_h, header_h_logical, data_h_logical).
+        """
+        S = RENDER_SCALE
+        px_per_cm_r = px_per_cm * S
+        meta_ppcm = section["px_per_cm"]
+        sec_num   = section["section_number"]
+
+        pil_img, _, crop_top_px, orig_h = self.image_cache.get(
+            section["tif"], meta_ppcm)
+        phys_cm = orig_h / meta_ppcm
+        scale   = px_per_cm_r / meta_ppcm
+        iw      = int(pil_img.size[0] * scale)
+        ih      = int(pil_img.size[1] * scale)
+        cy      = int(crop_top_px * scale)
+        data_h  = int(phys_cm * px_per_cm_r)
+
+        HEADER_H = max(30 * S, int(36 * self.zoom_factor * S))
+        SCALE_W  = int(50 * self.zoom_factor * S) if show_scale else 0
+        tile_w   = SCALE_W + iw
+        tile_h   = HEADER_H + data_h + 20 * S
+
+        img  = Image.new("RGB", (tile_w, tile_h), STRIP_BG)
+        draw = ImageDraw.Draw(img)
+        y0   = HEADER_H
+
+        # Header
+        draw.rectangle([(0, 0), (tile_w - 1, HEADER_H - 1)], fill=HEADER_BG)
+        hf = _pil_font(int(16 * self.zoom_factor * S))
+        title = f"S{sec_num}"
+        bb = draw.textbbox((0, 0), title, font=hf)
+        draw.text(((tile_w - (bb[2] - bb[0])) // 2, 4 * S),
+                  title, fill=LABEL_COLOR, font=hf)
+
+        # Scale bar
+        if show_scale:
+            sf = _pil_font(int(14 * self.zoom_factor * S))
+            bx = SCALE_W - 2
+            draw.line([(bx, y0), (bx, y0 + data_h)],
+                      fill=SCALE_FG, width=S)
+            tick = 0
+            while tick <= int(phys_cm) + 1:
+                ty = y0 + int(tick * px_per_cm_r)
+                if ty > y0 + data_h:
+                    break
+                if tick % 10 == 0:
+                    draw.line([(bx - 6 * S, ty), (bx, ty)],
+                              fill=SCALE_FG, width=S)
+                    draw.text((2 * S, ty - 8 * S), f"{tick}",
+                              fill=SCALE_FG, font=sf)
+                elif tick % 5 == 0:
+                    draw.line([(bx - 4 * S, ty), (bx, ty)],
+                              fill=(140, 140, 140), width=S)
+                else:
+                    draw.line([(bx - 2 * S, ty), (bx, ty)],
+                              fill=(180, 180, 180), width=S)
+                tick += 1
+
+        # Image
+        resized = pil_img.resize((iw, ih),
+                                 Image.Resampling.LANCZOS).convert("RGB")
+        img.paste(resized, (SCALE_W, y0 + cy))
+
+        # Down-sample
+        logical_w = tile_w // S
+        logical_h = tile_h // S
+        img = img.resize((logical_w, logical_h), Image.Resampling.LANCZOS)
+        qimg = QImage(img.tobytes(), logical_w, logical_h,
+                      logical_w * 3, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qimg.copy())
+        header_h_logical = HEADER_H // S
+        data_h_logical   = data_h // S
+        return pixmap, phys_cm, logical_h, header_h_logical, data_h_logical
 
     def _render_strip(self, core_id, sections, px_per_cm,
                       show_scale, show_sec):
@@ -1394,12 +1546,11 @@ class CoreCorrelatorApp(QMainWindow):
         if not store or not sel_cols:
             return []
 
-        sec_widgets = self._section_widgets.get(core_id, {})
-        displayed_secs = {sn for sn, w in sec_widgets.items()
-                          if w["check"].isChecked()}
+        # Only plot sections that are in the provided sections list
+        # (matches what _render_strip / _render_section_tile rendered).
+        section_nums = {sec["section_number"] for sec in sections}
 
-        # Compute cumulative depth offsets from the actually-displayed
-        # section images (same order as _render_strip stacks them).
+        # Compute cumulative depth offsets from the provided sections.
         cumul = 0.0
         sec_offsets = {}
         for sec in sections:
@@ -1444,7 +1595,7 @@ class CoreCorrelatorApp(QMainWindow):
 
             color = MSCL_COLORS[ci % len(MSCL_COLORS)]
             has_data = False
-            for sec_num in sorted(displayed_secs):
+            for sec_num in sorted(section_nums):
                 sd = store["data"].get(sec_num)
                 if not sd or "SECT DEPTH" not in sd or cn not in sd:
                     continue
