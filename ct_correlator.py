@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QListWidgetItem, QLabel,
     QScrollArea, QCheckBox, QComboBox, QSlider, QLineEdit,
-    QGroupBox, QStatusBar, QMessageBox, QSizePolicy)
+    QGroupBox, QStatusBar, QMessageBox, QSizePolicy, QFileDialog)
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QImage, QWheelEvent, QPainter, QColor, QPen
 
@@ -711,6 +711,7 @@ class CoreCorrelatorApp(QMainWindow):
         self.sec_scroll = QScrollArea()
         self.sec_scroll.setWidget(self._sec_inner)
         self.sec_scroll.setWidgetResizable(True)
+        self.sec_scroll.setMinimumHeight(200)
         gl.addWidget(self.sec_scroll, 1)
 
         # { core_name: { section_num: {"check": QCheckBox, "combo": QComboBox,
@@ -799,6 +800,11 @@ class CoreCorrelatorApp(QMainWindow):
         gl.addLayout(zr)
         gl.addWidget(QLabel("Ctrl+Scroll to zoom"))
         lv.addWidget(grp)
+
+        # ── Export ────────────────────────────────────────────────────
+        btn_export = QPushButton("Export High-Res Image…")
+        btn_export.clicked.connect(self._export_view)
+        lv.addWidget(btn_export)
 
         # ── Offset controls ───────────────────────────────────────────
         self.grp_offset = QGroupBox("Correlation Offset")
@@ -1048,7 +1054,7 @@ class CoreCorrelatorApp(QMainWindow):
     # ── Zoom ───────────────────────────────────────────────────────────────
 
     def _set_zoom(self, factor):
-        self.zoom_factor = max(0.3, min(factor, 5.0))
+        self.zoom_factor = max(0.1, min(factor, 5.0))
         self.lbl_zoom.setText(f"Zoom: {int(self.zoom_factor * 100)}%")
         self.refresh_display()
 
@@ -1616,6 +1622,390 @@ class CoreCorrelatorApp(QMainWindow):
                 pw.deleteLater()
 
         return plots
+
+    # ── High-res export ────────────────────────────────────────────────────
+
+    def _export_view(self):
+        """Export the current view as a high-resolution PNG or TIFF."""
+        path, _filt = QFileDialog.getSaveFileName(
+            self, "Export High-Resolution Image", "",
+            "PNG Files (*.png);;TIFF Files (*.tiff *.tif)")
+        if not path:
+            return
+
+        self.status.showMessage("Exporting…")
+        QApplication.processEvents()
+
+        EXP_S = 10  # export render scale (vs RENDER_SCALE=4 for screen)
+        mode = self.combo_mode.currentText()
+
+        label      = self.combo_type.currentText()
+        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
+        if not image_type:
+            return
+
+        checked = self._checked_cores()
+        if not checked:
+            self.status.showMessage("No cores selected", 3000)
+            return
+
+        show_mscl  = self.chk_mscl.isChecked()
+        show_scale = self.chk_scale.isChecked()
+        show_sec   = self.chk_sec_lines.isChecked()
+        sel_cols   = self._selected_mscl_cols() if show_mscl else []
+        mscl_w     = int(self.slider_mscl_w.value()) if show_mscl and sel_cols else 0
+        ranges     = {}
+        if show_mscl and sel_cols:
+            ids = checked if mode == "Correlate" else [checked[0]]
+            ranges = self._global_mscl_ranges(sel_cols, ids)
+
+        gap = 20 * EXP_S
+
+        try:
+            if mode == "Overview":
+                final = self._export_overview(
+                    checked[0], image_type, EXP_S, show_scale,
+                    sel_cols, ranges, mscl_w, gap)
+            else:
+                final = self._export_correlate(
+                    checked, image_type, EXP_S, show_scale, show_sec,
+                    sel_cols, ranges, mscl_w, gap)
+        except Exception as exc:
+            QMessageBox.warning(self, "Export Error", str(exc))
+            self.status.clearMessage()
+            return
+
+        if final is None:
+            self.status.showMessage("Nothing to export", 3000)
+            return
+
+        dpi = 300
+        if path.lower().endswith((".tiff", ".tif")):
+            final.save(path, dpi=(dpi, dpi), compression="tiff_lzw")
+        else:
+            final.save(path, dpi=(dpi, dpi))
+
+        self.status.showMessage(
+            f"Exported {final.size[0]}\u00d7{final.size[1]} px "
+            f"@ {dpi} DPI \u2192 {os.path.basename(path)}", 8000)
+
+    # -- Overview export --
+
+    def _export_overview(self, core_id, image_type, S, show_scale,
+                         sel_cols, ranges, mscl_w, gap):
+        sections = self._get_sections_for_core(core_id, image_type)
+        if not sections:
+            return None
+
+        tiles = []
+        for sec in sections:
+            ct, _cm, hdr_h, data_h = self._export_render_tile(
+                core_id, sec, S, show_scale)
+            mscl = self._export_draw_mscl(
+                core_id, sel_cols, ranges, mscl_w, [sec], S, hdr_h, data_h)
+            tiles.append(self._hconcat(ct, mscl))
+
+        total_w = sum(t.size[0] for t in tiles) + gap * max(len(tiles) - 1, 0)
+        max_h   = max(t.size[1] for t in tiles)
+        final   = Image.new("RGB", (total_w, max_h), STRIP_BG)
+        x = 0
+        for t in tiles:
+            final.paste(t, (x, 0))
+            x += t.size[0] + gap
+        return final
+
+    # -- Correlate export --
+
+    def _export_correlate(self, checked, image_type, S, show_scale,
+                          show_sec, sel_cols, ranges, mscl_w, gap):
+        # Collect current screen offsets (in px at current zoom)
+        screen_off = {}
+        for strip in self.canvas.strips:
+            screen_off[strip.core_id] = strip.offset_px
+
+        panels = []   # (PIL image, export_offset_y)
+        for cid in checked:
+            sections = self._get_sections_for_core(cid, image_type)
+            if not sections:
+                continue
+            ct, _cm, hdr_h, data_h = self._export_render_strip(
+                cid, sections, S, show_scale, show_sec)
+            mscl = self._export_draw_mscl(
+                cid, sel_cols, ranges, mscl_w, sections, S, hdr_h, data_h)
+            combined = self._hconcat(ct, mscl)
+
+            # Convert screen offset → export offset
+            off_cm = screen_off.get(cid, 0) / (UI_PX_PER_CM * self.zoom_factor)
+            off_exp = int(off_cm * UI_PX_PER_CM * S)
+            panels.append((combined, off_exp))
+
+        if not panels:
+            return None
+
+        # Normalise so minimum offset is 0
+        min_off = min(o for _, o in panels)
+        panels  = [(img, o - min_off) for img, o in panels]
+
+        total_w = sum(img.size[0] for img, _ in panels) + gap * max(len(panels) - 1, 0)
+        max_h   = max(img.size[1] + off for img, off in panels)
+        final   = Image.new("RGB", (total_w, max_h), STRIP_BG)
+        x = 0
+        for img, off in panels:
+            final.paste(img, (x, off))
+            x += img.size[0] + gap
+        return final
+
+    # -- Helper: horizontal concat --
+
+    @staticmethod
+    def _hconcat(left, right):
+        if right is None:
+            return left
+        h = max(left.size[1], right.size[1])
+        out = Image.new("RGB", (left.size[0] + right.size[0], h), STRIP_BG)
+        out.paste(left, (0, 0))
+        out.paste(right, (left.size[0], 0))
+        return out
+
+    # -- CT strip render (no down-sample) --
+
+    def _export_render_strip(self, core_id, sections, S,
+                              show_scale, show_sec):
+        """Render a full core strip at export scale *S*.
+        Returns (PIL Image, total_cm, header_h, data_h)."""
+        px_per_cm_r = UI_PX_PER_CM * S
+
+        processed, max_img_w, total_cm = [], 0, 0.0
+        for sec in sections:
+            meta_ppcm = sec["px_per_cm"]
+            pil_img, _, crop_top_px, orig_h = self.image_cache.get(
+                sec["tif"], meta_ppcm)
+            phys_cm = orig_h / meta_ppcm
+            scale   = px_per_cm_r / meta_ppcm
+            iw, ih  = int(pil_img.size[0] * scale), int(pil_img.size[1] * scale)
+            cy      = int(crop_top_px * scale)
+            processed.append(dict(
+                pil=pil_img, sec=sec["section_number"],
+                phys_cm=phys_cm, cum_cm=total_cm,
+                iw=iw, ih=ih, cy=cy))
+            max_img_w = max(max_img_w, iw)
+            total_cm += phys_cm
+
+        data_h   = int(total_cm * px_per_cm_r)
+        HEADER_H = 36 * S
+        SCALE_W  = 50 * S if show_scale else 0
+        ct_w     = max_img_w
+        strip_w  = SCALE_W + ct_w
+        strip_h  = HEADER_H + data_h + 20 * S
+
+        img  = Image.new("RGB", (strip_w, strip_h), STRIP_BG)
+        draw = ImageDraw.Draw(img)
+        y0   = HEADER_H
+
+        # Header
+        draw.rectangle([(0, 0), (strip_w - 1, HEADER_H - 1)], fill=HEADER_BG)
+        hf = _pil_font(18 * S)
+        bb = draw.textbbox((0, 0), core_id, font=hf)
+        draw.text(((strip_w - (bb[2] - bb[0])) // 2, 4 * S),
+                  core_id, fill=LABEL_COLOR, font=hf)
+
+        # Scale bar
+        if show_scale:
+            self._draw_scale_bar(draw, SCALE_W, y0, data_h, total_cm,
+                                 px_per_cm_r, S)
+
+        # CT sections
+        ctx = SCALE_W
+        for p in processed:
+            sy = y0 + int(p["cum_cm"] * px_per_cm_r)
+            resized = p["pil"].resize(
+                (p["iw"], p["ih"]), Image.Resampling.LANCZOS).convert("RGB")
+            xoff = ctx + (ct_w - p["iw"]) // 2
+            img.paste(resized, (xoff, sy + p["cy"]))
+            if show_sec:
+                bot = sy + int(p["phys_cm"] * px_per_cm_r)
+                draw.line([(ctx, bot), (ctx + ct_w, bot)],
+                          fill=SECTION_LINE, width=S)
+                fs = _pil_font(10 * S)
+                draw.text((ctx + 3 * S, sy + 2 * S),
+                          f"S{p['sec']}", fill=(100, 100, 140), font=fs)
+
+        return img, total_cm, HEADER_H, data_h
+
+    # -- Single-section tile render (no down-sample) --
+
+    def _export_render_tile(self, core_id, section, S, show_scale):
+        """Render one section tile at export scale *S*.
+        Returns (PIL Image, phys_cm, header_h, data_h)."""
+        px_per_cm_r = UI_PX_PER_CM * S
+        meta_ppcm   = section["px_per_cm"]
+        sec_num     = section["section_number"]
+
+        pil_img, _, crop_top_px, orig_h = self.image_cache.get(
+            section["tif"], meta_ppcm)
+        phys_cm = orig_h / meta_ppcm
+        scale   = px_per_cm_r / meta_ppcm
+        iw, ih  = int(pil_img.size[0] * scale), int(pil_img.size[1] * scale)
+        cy      = int(crop_top_px * scale)
+        data_h  = int(phys_cm * px_per_cm_r)
+
+        HEADER_H = 36 * S
+        SCALE_W  = 50 * S if show_scale else 0
+        tile_w   = SCALE_W + iw
+        tile_h   = HEADER_H + data_h + 20 * S
+
+        img  = Image.new("RGB", (tile_w, tile_h), STRIP_BG)
+        draw = ImageDraw.Draw(img)
+        y0   = HEADER_H
+
+        # Header
+        draw.rectangle([(0, 0), (tile_w - 1, HEADER_H - 1)], fill=HEADER_BG)
+        hf    = _pil_font(16 * S)
+        title = f"S{sec_num}"
+        bb    = draw.textbbox((0, 0), title, font=hf)
+        draw.text(((tile_w - (bb[2] - bb[0])) // 2, 4 * S),
+                  title, fill=LABEL_COLOR, font=hf)
+
+        # Scale bar
+        if show_scale:
+            self._draw_scale_bar(draw, SCALE_W, y0, data_h, phys_cm,
+                                 px_per_cm_r, S)
+
+        # Image
+        resized = pil_img.resize((iw, ih),
+                                 Image.Resampling.LANCZOS).convert("RGB")
+        img.paste(resized, (SCALE_W, y0 + cy))
+
+        return img, phys_cm, HEADER_H, data_h
+
+    # -- Shared scale-bar drawing --
+
+    @staticmethod
+    def _draw_scale_bar(draw, scale_w, y0, data_h, total_cm, px_per_cm_r, S):
+        sf = _pil_font(14 * S)
+        bx = scale_w - 2
+        draw.line([(bx, y0), (bx, y0 + data_h)], fill=SCALE_FG, width=S)
+        tick = 0
+        while tick <= int(total_cm) + 1:
+            ty = y0 + int(tick * px_per_cm_r)
+            if ty > y0 + data_h:
+                break
+            if tick % 10 == 0:
+                draw.line([(bx - 6 * S, ty), (bx, ty)],
+                          fill=SCALE_FG, width=S)
+                draw.text((2 * S, ty - 8 * S), f"{tick}",
+                          fill=SCALE_FG, font=sf)
+            elif tick % 5 == 0:
+                draw.line([(bx - 4 * S, ty), (bx, ty)],
+                          fill=(140, 140, 140), width=S)
+            else:
+                draw.line([(bx - 2 * S, ty), (bx, ty)],
+                          fill=(180, 180, 180), width=S)
+            tick += 1
+
+    # -- MSCL baked into PIL --
+
+    def _export_draw_mscl(self, core_id, sel_cols, mscl_ranges,
+                           col_w_base, sections, S, header_h, data_h):
+        """Draw MSCL column plots as a PIL image aligned to the CT strip."""
+        store = self.mscl_store.get(core_id)
+        if not store or not sel_cols or not mscl_ranges:
+            return None
+
+        section_nums = {sec["section_number"] for sec in sections}
+
+        # Cumulative depth offsets (same logic as _create_mscl_plots)
+        cumul, sec_offsets = 0.0, {}
+        for sec in sections:
+            sn = sec["section_number"]
+            _, _, _, orig_h = self.image_cache.get(
+                sec["tif"], sec["px_per_cm"])
+            phys_cm = orig_h / sec["px_per_cm"]
+            sec_offsets[sn] = cumul
+            cumul += phys_cm
+        total_cm = cumul
+        if total_cm <= 0:
+            return None
+
+        col_w     = col_w_base * S
+        num_cols  = len(sel_cols)
+        total_w   = col_w * num_cols
+        total_h   = header_h + data_h + 20 * S
+        px_per_cm = data_h / total_cm
+
+        img  = Image.new("RGB", (total_w, total_h), STRIP_BG)
+        draw = ImageDraw.Draw(img)
+
+        label_font = _pil_font(12 * S)
+        range_font = _pil_font(8 * S)
+        data_top   = header_h
+        data_bot   = header_h + data_h
+
+        has_any = False
+        for ci, cn in enumerate(sel_cols):
+            v_lo, v_hi = mscl_ranges.get(cn, (0, 1))
+            if v_lo == v_hi:
+                v_hi = v_lo + 1
+
+            cx = ci * col_w
+
+            # Column border
+            draw.rectangle([(cx, 0), (cx + col_w - 1, total_h - 1)],
+                           outline=(200, 200, 200), width=1)
+
+            # Header label
+            bb = draw.textbbox((0, 0), cn, font=label_font)
+            lw = bb[2] - bb[0]
+            draw.text((cx + (col_w - lw) // 2, 4 * S), cn,
+                      fill=LABEL_COLOR, font=label_font)
+
+            # Vertical grid lines
+            for frac in (0.25, 0.5, 0.75):
+                gx = cx + int(frac * col_w)
+                draw.line([(gx, data_top), (gx, data_bot)],
+                          fill=(230, 230, 230), width=max(1, S // 3))
+
+            # Range annotations below data area
+            draw.text((cx + 2 * S, data_bot + 2 * S),
+                      f"{v_lo:.1f}", fill=SCALE_FG, font=range_font)
+            hi_txt = f"{v_hi:.1f}"
+            hi_bb  = draw.textbbox((0, 0), hi_txt, font=range_font)
+            draw.text((cx + col_w - (hi_bb[2] - hi_bb[0]) - 2 * S,
+                       data_bot + 2 * S),
+                      hi_txt, fill=SCALE_FG, font=range_font)
+
+            # Data lines per section
+            color  = MSCL_COLORS[ci % len(MSCL_COLORS)]
+            margin = 3 * S
+            x_span = col_w - 2 * margin
+
+            for sec_num in sorted(section_nums):
+                sd = store["data"].get(sec_num)
+                if not sd or "SECT DEPTH" not in sd or cn not in sd:
+                    continue
+                depths = sd["SECT DEPTH"]
+                vals   = sd[cn]
+                mask   = ~np.isnan(vals)
+                if mask.sum() < 2:
+                    continue
+
+                offset    = sec_offsets.get(sec_num, 0.0)
+                abs_depth = offset + depths[mask]
+                vv        = vals[mask]
+
+                points = []
+                for d, v in zip(abs_depth, vv):
+                    frac_x = np.clip((v - v_lo) / (v_hi - v_lo), 0, 1)
+                    px_x = cx + margin + int(frac_x * x_span)
+                    px_y = data_top + int(d * px_per_cm)
+                    px_y = max(data_top, min(data_bot, px_y))
+                    points.append((px_x, px_y))
+
+                if len(points) >= 2:
+                    draw.line(points, fill=color, width=max(2, S))
+                    has_any = True
+
+        return img if has_any else None
 
     # ── Offset management ──────────────────────────────────────────────────
 
