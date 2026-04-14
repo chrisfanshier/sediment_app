@@ -19,6 +19,7 @@ APPS = [
     {"name": "Ship Sync",          "script": "ship_sync.py",         "port": 8504},
     {"name": "Winch Plotter",      "script": "winch_plot.py",        "port": 8505},
     {"name": "File Sync",          "script": "file_sync.py",         "port": 8506},
+    {"name": "CT Manager",         "script": "CT_manager_van.py",    "port": 8507},
 ]
 
 def main():
