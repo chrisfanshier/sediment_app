@@ -15,7 +15,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGridLayout, QComboBox, QDoubleSpinBox, QSpinBox, QCheckBox,
-    QFileDialog, QDateTimeEdit,
+    QDateTimeEdit,
 )
 from PySide6.QtCore import Signal, QDateTime
 
@@ -53,10 +53,6 @@ class CalculatePanel(BaseModePanel):
         self.file_label = QLabel("No file loaded")
         self.file_label.setWordWrap(True)
         data_layout.addWidget(self.file_label)
-
-        load_btn = QPushButton("Load CSV File")
-        load_btn.clicked.connect(self._on_load_file)
-        data_layout.addWidget(load_btn)
 
         data_group.setLayout(data_layout)
         self._layout.addWidget(data_group)
@@ -392,15 +388,3 @@ class CalculatePanel(BaseModePanel):
         if win % 2 == 0:
             win += 1
         return win, self.sg_poly_spin.value()
-
-    # ------------------------------------------------------------------
-    # Private
-    # ------------------------------------------------------------------
-
-    def _on_load_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select CSV File", "",
-            "CSV Files (*.csv);;All Files (*)"
-        )
-        if file_path:
-            self.load_file_requested.emit(file_path)

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGridLayout,
-    QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QFileDialog, QMessageBox,
+    QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit,
 )
 from PySide6.QtCore import Signal
 
@@ -51,10 +51,6 @@ class TimeOffsetPanel(BaseModePanel):
         self.file_label = QLabel("No data loaded")
         self.file_label.setWordWrap(True)
         data_layout.addWidget(self.file_label)
-
-        load_btn = QPushButton("Load CSV File")
-        load_btn.clicked.connect(self._on_load_file)
-        data_layout.addWidget(load_btn)
 
         data_group.setLayout(data_layout)
         self._layout.addWidget(data_group)
@@ -203,11 +199,3 @@ class TimeOffsetPanel(BaseModePanel):
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------
-
-    def _on_load_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select CSV File", "",
-            "CSV Files (*.csv);;All Files (*)"
-        )
-        if file_path:
-            self.load_file_requested.emit(file_path)

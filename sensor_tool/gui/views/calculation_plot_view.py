@@ -21,7 +21,7 @@ import numpy as np
 import pyqtgraph as pg
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 
 
@@ -212,6 +212,9 @@ class CalculationPlotView(QWidget):
                 f"{geo.piston_alt_at_start_core:.3f} m"
             )
         self.info_label.setText('  |  '.join(parts))
+        # Force a repaint – PlotWidget inside QStackedWidget can stay black
+        # on first show without this.
+        QTimer.singleShot(0, self.plot_widget.update)
 
     def clear(self):
         """Clear the diagram."""

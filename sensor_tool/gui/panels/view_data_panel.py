@@ -9,7 +9,6 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QGridLayout,
-    QFileDialog, QMessageBox,
 )
 from PySide6.QtCore import Signal
 
@@ -44,10 +43,6 @@ class ViewDataPanel(BaseModePanel):
         self.data_info_label = QLabel("")
         self.data_info_label.setWordWrap(True)
         info_layout.addWidget(self.data_info_label)
-
-        load_btn = QPushButton("Load CSV File")
-        load_btn.clicked.connect(self._on_load_file)
-        info_layout.addWidget(load_btn)
 
         info_group.setLayout(info_layout)
         self._layout.addWidget(info_group)
@@ -86,11 +81,3 @@ class ViewDataPanel(BaseModePanel):
         if core_title:
             info += f"\nCore: {core_title}"
         self.data_info_label.setText(info)
-
-    def _on_load_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select CSV File", "",
-            "CSV Files (*.csv);;All Files (*)"
-        )
-        if file_path:
-            self.load_file_requested.emit(file_path)

@@ -135,7 +135,8 @@ class SensorData:
         return self._df[self.datetime_col]
 
     def get_timestamps_epoch(self) -> np.ndarray:
-        return self._df[self.datetime_col].astype('int64').values / 1e9
+        vals = self._df[self.datetime_col].values.astype('datetime64[ns]')
+        return vals.view('int64') / 1e9
 
     def slice_by_index(self, start: int, end: int) -> 'SensorData':
         sliced_df = self._df.iloc[start:end + 1].copy().reset_index(drop=True)

@@ -36,6 +36,7 @@ from ..domain.processing.calculations import (
 from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
+from ..persistence.database_loader import DatabaseLoader
 
 
 class AnalysisController:
@@ -191,16 +192,7 @@ class AnalysisController:
             self.original_data = self.sensor_data.copy()
             self._loaded_file_path = file_path
 
-            # Clear stale state from previous file
-            self.trip_detection_result = None
-            self._piston_start_core_idx = None
-            self._piston_values = None
-            self._calc_start_core_idx = None
-            self._end_pen_idx = None
-            self._pullout_idx = None
-            self._last_calc_results = None
-            self._last_calc_inputs = None
-
+            self._reset_analysis_state()
             self._update_all_panels_file_info()
             self.main_plot.set_sensor_data(self.sensor_data)
             self.plot_depths()
@@ -212,6 +204,48 @@ class AnalysisController:
         except Exception as e:
             self._show_error("Load Error", str(e))
             self._log_active(f"ERROR: {e}")
+
+    def load_from_database(self, core_id: int, core_info: dict):
+        """Load sensor data for a core directly from the database."""
+        try:
+            self.main_plot.clear_selection()
+
+            self.sensor_data = DatabaseLoader.load_core_sensor_data(
+                core_id, core_info,
+            )
+            self.original_data = self.sensor_data.copy()
+            self._loaded_file_path = None  # no CSV on disk
+
+            self._reset_analysis_state()
+            self._update_all_panels_file_info()
+            self.main_plot.set_sensor_data(self.sensor_data)
+            self.plot_depths()
+
+            self._log_active(
+                f"Loaded from DB: {core_info.get('core_name', core_id)} "
+                f"({self.sensor_data.row_count:,} rows, "
+                f"{self.sensor_data.num_sensors} sensors)"
+            )
+            if self.main_window:
+                self.main_window.statusBar().showMessage(
+                    f"Loaded {core_info.get('core_name', '')} — "
+                    f"{self.sensor_data.row_count:,} rows, "
+                    f"{self.sensor_data.num_sensors} sensors"
+                )
+        except Exception as e:
+            self._show_error("Database Load Error", str(e))
+            self._log_active(f"DB ERROR: {e}")
+
+    def _reset_analysis_state(self):
+        """Clear stale analysis state from a previous load."""
+        self.trip_detection_result = None
+        self._piston_start_core_idx = None
+        self._piston_values = None
+        self._calc_start_core_idx = None
+        self._end_pen_idx = None
+        self._pullout_idx = None
+        self._last_calc_results = None
+        self._last_calc_inputs = None
 
     def load_calibration(self, file_path: str):
         """Load a JSON calibration file and set up mapping UI."""

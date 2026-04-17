@@ -2,26 +2,27 @@
 MainWindow - The top-level application window.
 
 Layout:
-    ┌──────────────────────────────────────────┐
-    │  [Mode Selector ▾]  [Load File]  [About] │  ← Toolbar
-    ├─────────────────┬────────────────────────┤
-    │                 │                        │
-    │  Control Panel  │  Main Plot             │
-    │  (QStacked)     │                        │
-    │                 │                        │
-    │                 ├────────────────────────┤
-    │                 │  Secondary View        │
-    │                 │  (velocity / stats)    │
-    │                 │                        │
-    └─────────────────┴────────────────────────┘
-    │  Status bar                              │
-    └──────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────────────────┐
+    │ [Mode ▾] [Cruise ▾] [Core ▾] [Load CSV…] [About]       │  ← Toolbar
+    ├─────────────────┬────────────────────────────────────────┤
+    │                 │                                        │
+    │  Control Panel  │  Main Plot                             │
+    │  (QStacked)     │                                        │
+    │                 │                                        │
+    │                 ├────────────────────────────────────────┤
+    │                 │  Secondary View                        │
+    │                 │  (velocity / stats)                    │
+    │                 │                                        │
+    └─────────────────┴────────────────────────────────────────┘
+    │  Status bar                                              │
+    └──────────────────────────────────────────────────────────┘
 """
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QComboBox, QSplitter, QStackedWidget,
     QToolBar, QLabel, QFileDialog, QSizePolicy, QVBoxLayout,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction
@@ -56,6 +57,10 @@ class MainWindow(QMainWindow):
         self.controller = AnalysisController()
         self.controller.main_window = self
 
+        # Database dropdown state
+        self._cruises: list[dict] = []
+        self._cores: list[dict] = []
+
         self._build_toolbar()
         self._build_central()
         self._build_status_bar()
@@ -66,6 +71,9 @@ class MainWindow(QMainWindow):
         # Set initial mode
         self.mode_combo.setCurrentIndex(0)
         self._on_mode_changed(MODES[0])
+
+        # Populate cruise dropdown from database (non-blocking)
+        self._populate_cruises()
 
     # ==================================================================
     # Construction
@@ -86,6 +94,25 @@ class MainWindow(QMainWindow):
 
         toolbar.addSeparator()
 
+        # ── Database selectors ──
+        toolbar.addWidget(QLabel("  Cruise: "))
+        self.cruise_combo = QComboBox()
+        self.cruise_combo.setMinimumWidth(220)
+        self.cruise_combo.addItem("Select cruise…")
+        self.cruise_combo.currentIndexChanged.connect(self._on_cruise_changed)
+        toolbar.addWidget(self.cruise_combo)
+
+        toolbar.addWidget(QLabel("  Core: "))
+        self.core_combo = QComboBox()
+        self.core_combo.setMinimumWidth(220)
+        self.core_combo.addItem("Select core…")
+        self.core_combo.setEnabled(False)
+        self.core_combo.currentIndexChanged.connect(self._on_core_changed)
+        toolbar.addWidget(self.core_combo)
+
+        toolbar.addSeparator()
+
+        # Keep Load CSV as a fallback for offline/CSV use
         load_action = QAction("Load CSV…", self)
         load_action.triggered.connect(self._on_load_file)
         toolbar.addAction(load_action)
@@ -195,6 +222,76 @@ class MainWindow(QMainWindow):
 
     def hide_secondary_view(self):
         self.secondary_stack.setVisible(False)
+
+    # ==================================================================
+    # Database cruise / core selection
+    # ==================================================================
+
+    def _populate_cruises(self):
+        """Load cruise list from the database into the combo box."""
+        try:
+            from ..persistence.database_loader import DatabaseLoader
+            self._cruises = DatabaseLoader.fetch_cruises()
+            self.cruise_combo.blockSignals(True)
+            self.cruise_combo.clear()
+            self.cruise_combo.addItem("Select cruise…")
+            for cr in self._cruises:
+                label = cr["cruise_name"]
+                if cr["vessel_name"]:
+                    label += f" — {cr['vessel_name']}"
+                self.cruise_combo.addItem(label)
+            self.cruise_combo.blockSignals(False)
+            self.statusBar().showMessage(
+                f"Connected to database — {len(self._cruises)} cruise(s) available"
+            )
+        except Exception as exc:
+            self.statusBar().showMessage(
+                f"Database unavailable ({exc}); use Load CSV instead"
+            )
+
+    def _on_cruise_changed(self, index: int):
+        """Cruise combo changed — populate the core combo."""
+        self.core_combo.blockSignals(True)
+        self.core_combo.clear()
+        self.core_combo.addItem("Select core…")
+        self._cores = []
+
+        if index <= 0 or index > len(self._cruises):
+            self.core_combo.setEnabled(False)
+            self.core_combo.blockSignals(False)
+            return
+
+        cruise = self._cruises[index - 1]
+        try:
+            from ..persistence.database_loader import DatabaseLoader
+            self._cores = DatabaseLoader.fetch_cores_for_cruise(
+                cruise["cruise_id"]
+            )
+            for ci in self._cores:
+                self.core_combo.addItem(ci["core_name"])
+            self.core_combo.setEnabled(bool(self._cores))
+            if not self._cores:
+                self.statusBar().showMessage(
+                    f"No JPC cores with sensor files in {cruise['cruise_name']}"
+                )
+        except Exception as exc:
+            self.statusBar().showMessage(f"Error fetching cores: {exc}")
+            self.core_combo.setEnabled(False)
+
+        self.core_combo.blockSignals(False)
+
+    def _on_core_changed(self, index: int):
+        """Core combo changed — load the sensor data."""
+        if index <= 0 or index > len(self._cores):
+            return
+
+        core_info = self._cores[index - 1]
+        self.statusBar().showMessage(
+            f"Loading sensor data for {core_info['core_name']}…"
+        )
+        self.controller.load_from_database(
+            core_info["core_id"], core_info
+        )
 
     # ==================================================================
     # Toolbar actions
