@@ -234,13 +234,16 @@ def compute_calculations(
                 else:
                     cross_idx = None
 
-                if cross_idx is not None:
-                    res.piston_suck = abs(
-                        float(piston[ws_max_idx] - piston[cross_idx])
-                    )
+                if cross_idx is not None and cross_idx <= ws_max_idx:
+                    res.piston_suck = float(piston[ws_max_idx] - piston[cross_idx])
                     res.notes.append(
                         f"piston_suck: ws_max_idx={ws_max_idx}, "
                         f"cross_idx={cross_idx}"
+                    )
+                elif cross_idx is not None and cross_idx > ws_max_idx:
+                    res.notes.append(
+                        f"piston_suck: N/A (release crossing at {cross_idx} "
+                        f"is after pullout at {ws_max_idx})"
                     )
                 else:
                     res.notes.append(
