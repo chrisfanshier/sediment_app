@@ -32,6 +32,7 @@ from ..gui.views.velocity_plot_view import HeavePlotView
 from ..gui.views.statistics_table import StatisticsTableView
 from ..gui.views.trip_plot_view import TripPlotView
 from ..gui.views.calculation_plot_view import CalculationPlotView
+from ..gui.views.calibration_plot_view import CalibrationPlotView
 from ..gui.panels.view_data_panel import ViewDataPanel
 from ..gui.panels.depth_offset_panel import DepthOffsetPanel
 from ..gui.panels.time_offset_panel import TimeOffsetPanel
@@ -154,12 +155,14 @@ class MainWindow(QMainWindow):
         self.statistics_table = StatisticsTableView()
         self.trip_plot = TripPlotView()
         self.calculation_plot = CalculationPlotView()
+        self.calibration_plot = CalibrationPlotView()
 
         self.secondary_stack = QStackedWidget()
-        self.secondary_stack.addWidget(self.heave_plot)       # 0
-        self.secondary_stack.addWidget(self.statistics_table) # 1
-        self.secondary_stack.addWidget(self.trip_plot)        # 2
-        self.secondary_stack.addWidget(self.calculation_plot) # 3
+        self.secondary_stack.addWidget(self.heave_plot)         # 0
+        self.secondary_stack.addWidget(self.statistics_table)   # 1
+        self.secondary_stack.addWidget(self.trip_plot)          # 2
+        self.secondary_stack.addWidget(self.calculation_plot)   # 3
+        self.secondary_stack.addWidget(self.calibration_plot)   # 4
         self.secondary_stack.setVisible(False)
 
         # -- Right splitter (main plot + secondary) --
@@ -184,6 +187,7 @@ class MainWindow(QMainWindow):
         self.controller.statistics_table = self.statistics_table
         self.controller.trip_plot = self.trip_plot
         self.controller.calculation_plot = self.calculation_plot
+        self.controller.calibration_plot = self.calibration_plot
         self.controller.view_panel = self.view_panel
         self.controller.depth_panel = self.depth_panel
         self.controller.time_panel = self.time_panel
@@ -218,6 +222,8 @@ class MainWindow(QMainWindow):
             self.secondary_stack.setCurrentIndex(2)
         elif view_type == 'calculation':
             self.secondary_stack.setCurrentIndex(3)
+        elif view_type == 'calibration_plot':
+            self.secondary_stack.setCurrentIndex(4)
         self.secondary_stack.setVisible(True)
 
     def hide_secondary_view(self):
@@ -264,15 +270,23 @@ class MainWindow(QMainWindow):
         cruise = self._cruises[index - 1]
         try:
             from ..persistence.database_loader import DatabaseLoader
-            self._cores = DatabaseLoader.fetch_cores_for_cruise(
-                cruise["cruise_id"]
-            )
+            if self.get_current_mode() == 'Create Calibration':
+                self._cores = DatabaseLoader.fetch_cores_for_cruise_all_types(
+                    cruise["cruise_id"]
+                )
+            else:
+                self._cores = DatabaseLoader.fetch_cores_for_cruise(
+                    cruise["cruise_id"]
+                )
             for ci in self._cores:
-                self.core_combo.addItem(ci["core_name"])
+                label = ci["core_name"]
+                if self.get_current_mode() == 'Create Calibration' and ci.get("core_type_name"):
+                    label += f" ({ci['core_type_name']})"
+                self.core_combo.addItem(label)
             self.core_combo.setEnabled(bool(self._cores))
             if not self._cores:
                 self.statusBar().showMessage(
-                    f"No JPC cores with sensor files in {cruise['cruise_name']}"
+                    f"No cores with sensor files in {cruise['cruise_name']}"
                 )
         except Exception as exc:
             self.statusBar().showMessage(f"Error fetching cores: {exc}")
@@ -289,9 +303,14 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Loading sensor data for {core_info['core_name']}…"
         )
-        self.controller.load_from_database(
-            core_info["core_id"], core_info
-        )
+        if self.get_current_mode() == 'Create Calibration':
+            self.controller._load_cast_from_database(
+                core_info["core_id"], core_info
+            )
+        else:
+            self.controller.load_from_database(
+                core_info["core_id"], core_info
+            )
 
     # ==================================================================
     # Toolbar actions

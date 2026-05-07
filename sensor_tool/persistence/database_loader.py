@@ -240,6 +240,43 @@ class DatabaseLoader:
             for r in rows
         ]
 
+    @staticmethod
+    def fetch_cores_for_cruise_all_types(cruise_id: int) -> list[dict]:
+        """
+        Return all cores with sensor files for the given cruise, regardless
+        of core type. Used for calibration cast selection.
+        """
+        with _get_connection() as conn:
+            rows = conn.execute(text("""
+                SELECT DISTINCT
+                    c.core_id, c.core_name, ct.core_type_name,
+                    c.core_length, c.trigger_core_length,
+                    c.trigger_line_length, c.scope,
+                    c.pig_weights, w.wire_type
+                FROM cores c
+                LEFT JOIN core_types ct ON c.core_type_id = ct.core_type_id
+                LEFT JOIN sensor_files sf ON c.core_id = sf.core_id
+                LEFT JOIN wire w ON c.wire_type_id = w.wire_type_id
+                WHERE c.cruise_id = :cid
+                  AND sf.file_id IS NOT NULL
+                ORDER BY c.core_name
+            """), {"cid": cruise_id}).fetchall()
+
+        return [
+            {
+                "core_id": r.core_id,
+                "core_name": r.core_name,
+                "core_type_name": r.core_type_name,
+                "core_length": r.core_length,
+                "trigger_core_length": r.trigger_core_length,
+                "trigger_line_length": r.trigger_line_length,
+                "scope": r.scope,
+                "pig_weights": r.pig_weights,
+                "wire_type": r.wire_type,
+            }
+            for r in rows
+        ]
+
     # ── full data load ────────────────────────────────────────────────
 
     @staticmethod

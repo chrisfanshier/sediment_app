@@ -72,6 +72,7 @@ class AnalysisController:
         self.statistics_table = None
         self.trip_plot = None
         self.calculation_plot = None
+        self.calibration_plot = None
 
         # Panels
         self.view_panel = None
@@ -122,8 +123,8 @@ class AnalysisController:
         self.time_panel.plot_original_requested.connect(self.plot_depths)
 
         # Create Calibration panel
-        self.calibration_panel.load_cast_requested.connect(self._load_cast)
-        self.calibration_panel.process_cast_requested.connect(self._process_cast)
+        self.calibration_panel.cruise_selected.connect(self._on_cal_cruise_selected)
+        self.calibration_panel.cast_core_selected.connect(self._load_cast_from_database)
         self.calibration_panel.selection_mode_changed.connect(self._set_selection_mode)
         self.calibration_panel.clear_selection_requested.connect(self._clear_selection)
         self.calibration_panel.add_statistics_requested.connect(self._add_statistics)
@@ -563,85 +564,44 @@ class AnalysisController:
     # Create Calibration Mode
     # ==================================================================
 
-    def _load_cast(self, file_path: str):
-        """Load a cast file for calibration creation."""
+    def _on_cal_cruise_selected(self, cruise_id: int):
+        """Populate cast (core) dropdown for the selected cruise."""
         try:
-            panel = self.calibration_panel
-            panel.cast_label.setText(
-                f"File: {Path(file_path).name}\nReady to process."
-            )
-            self._cast_file_path = file_path
-            panel.log_widget.log(f"Cast selected: {Path(file_path).name}")
+            cores = DatabaseLoader.fetch_cores_for_cruise_all_types(cruise_id)
+            self.calibration_panel.set_cores(cores)
+            if not cores:
+                self.calibration_panel.log_widget.log(
+                    "No cores with sensor files found for this cruise."
+                )
         except Exception as e:
-            self._show_error("Load Error", str(e))
+            self._show_error("Database Error", str(e))
+            self.calibration_panel.log_widget.log(f"ERROR fetching cores: {e}")
 
-    def _process_cast(self):
-        """Process the loaded cast with given parameters."""
-        if not hasattr(self, '_cast_file_path'):
-            self._show_warning("Load a cast file first")
-            return
-
+    def _load_cast_from_database(self, core_id: int, core_info: dict):
+        """Load a cast directly from the database for calibration creation."""
         try:
             panel = self.calibration_panel
-            params = panel.get_processing_params()
-            patterns = panel.get_sensor_patterns()
+            core_name = core_info.get('core_name', str(core_id))
+            panel.log_widget.log(f"\nLoading cast: {core_name}")
 
-            panel.log_widget.log(f"\nProcessing with patterns: {patterns}")
+            self.main_plot.clear_selection()
 
-            data = CSVLoader.load_sensor_csv(
-                self._cast_file_path,
-                sensor_patterns=patterns,
-                datetime_col=params['datetime_col'],
-                skip_rows=params['skip_rows'],
-            )
-
-            panel.log_widget.log(
-                f"Loaded {data.row_count} rows, {data.num_sensors} sensors"
-            )
-
-            # Filter by depth
-            df = data.df
-            depth_cols = data.depth_columns
-            existing = [c for c in depth_cols if c in df.columns]
-
-            filter_depth = df[existing[0]].copy()
-            for col in existing[1:]:
-                filter_depth = filter_depth.fillna(df[col])
-
-            mask = (
-                (filter_depth >= params['min_depth'])
-                & (filter_depth <= params['max_depth'])
-            )
-            df = df[mask].copy()
-            panel.log_widget.log(f"After depth filter: {len(df)} rows")
-
-            # Trim
-            trim = params['trim_rows']
-            if len(df) > trim * 2:
-                df = df.iloc[trim:-trim].copy()
-                panel.log_widget.log(f"After trim: {len(df)} rows")
-
-            # Smooth
-            smooth = params['smooth_window']
-            for col in existing:
-                df[col] = df[col].rolling(window=smooth, min_periods=1).mean()
-
-            df = df.reset_index(drop=True)
-            data.update_dataframe(df)
-
+            data = DatabaseLoader.load_core_sensor_data(core_id, core_info)
             self.sensor_data = data
             self.original_data = data.copy()
+
             self.main_plot.set_sensor_data(self.sensor_data)
             self.main_plot.plot_depths(self.sensor_data)
 
             panel.update_cast_info(
-                data.source_file, data.num_sensors, data.row_count,
+                core_name, data.num_sensors, data.row_count,
             )
-            self._update_all_panels_file_info()
-            panel.log_widget.log("Cast processed and plotted!")
+            panel.log_widget.log(
+                f"Loaded {data.row_count:,} rows, {data.num_sensors} sensors"
+            )
 
         except Exception as e:
-            self._show_error("Processing Error", str(e))
+            self._show_error("Load Error", str(e))
             self.calibration_panel.log_widget.log(f"ERROR: {e}")
 
     def _add_statistics(self):
@@ -689,7 +649,16 @@ class AnalysisController:
 
         try:
             panel = self.calibration_panel
-            n = panel.num_sensors_spin.value()
+
+            # Auto-detect sensor count from loaded data
+            if self.sensor_data is not None:
+                n = len(self.sensor_data.depth_columns)
+            else:
+                n = len({
+                    col
+                    for s in self.collected_statistics
+                    for col in s.column_means
+                })
 
             # Build col_to_label mapping from column position
             # The calibration file uses A, B, C ... labels
@@ -705,8 +674,16 @@ class AnalysisController:
                 col_to_label=col_to_label,
             )
 
-            # Build summary
+            # Build summary — sensor key first, then equations
             summary_lines = ["Calibration generated:"]
+
+            if col_to_label is not None:
+                summary_lines.append("  Sensor key:")
+                for col, label in col_to_label.items():
+                    summary_lines.append(
+                        f"    {label} = {SensorData.get_full_label(col)}"
+                    )
+
             for reg in self.generated_calibration.regressions:
                 summary_lines.append(
                     f"  {reg.sensor_j}-{reg.sensor_i}: "
@@ -717,6 +694,14 @@ class AnalysisController:
 
             panel.update_calibration_summary(summary)
             panel.log_widget.log(summary)
+
+            # Show calibration regression plots in secondary panel
+            if self.calibration_plot is not None:
+                self.calibration_plot.plot_calibration(
+                    self.generated_calibration, self.collected_statistics
+                )
+                if self.main_window is not None:
+                    self.main_window.show_secondary_view('calibration_plot')
 
         except Exception as e:
             self._show_error("Generation Error", str(e))
@@ -2305,6 +2290,12 @@ class AnalysisController:
             self.main_window.show_secondary_view('heave')
         elif mode_name == 'Create Calibration':
             self.main_window.show_secondary_view('statistics')
+            # Populate cruise dropdown when entering this mode
+            try:
+                cruises = DatabaseLoader.fetch_cruises()
+                self.calibration_panel.set_cruises(cruises)
+            except Exception:
+                pass  # DB unavailable — user will see empty dropdown
         elif mode_name == 'Trip Detector':
             self.main_window.show_secondary_view('trip')
         elif mode_name == 'Calculate':

@@ -109,6 +109,16 @@ class SensorData:
         return location
 
     @staticmethod
+    def get_full_label(col: str) -> str:
+        """Full label showing filename and location, e.g. '230405.rsk (Weight Stand)'."""
+        parts = col.split('_')
+        location = parts[0] if parts else col
+        filename = parts[1] if len(parts) > 1 else ''
+        if filename:
+            return f"{filename} ({location})"
+        return location
+
+    @staticmethod
     def get_location_name(col: str) -> str:
         """Just the location part, e.g. 'Weight Stand'."""
         return col.split('_')[0]
