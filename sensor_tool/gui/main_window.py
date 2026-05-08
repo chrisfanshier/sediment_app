@@ -40,10 +40,11 @@ from ..gui.panels.create_calibration_panel import CreateCalibrationPanel
 from ..gui.panels.trip_detector_panel import TripDetectorPanel
 from ..gui.panels.piston_position_panel import PistonPositionPanel
 from ..gui.panels.calculate_panel import CalculatePanel
+from ..gui.panels.alter_panel import AlterPanel
 from ..controllers.analysis_controller import AnalysisController
 
 MODES = ['View Data', 'Depth Offset', 'Time Offset', 'Create Calibration',
-         'Trip Detector', 'Piston Position', 'Calculate']
+         'Trip Detector', 'Piston Position', 'Calculate', 'Alter']
 
 
 class MainWindow(QMainWindow):
@@ -140,9 +141,12 @@ class MainWindow(QMainWindow):
         self.panel_stack.addWidget(self.depth_panel)      # 1
         self.panel_stack.addWidget(self.time_panel)       # 2
         self.panel_stack.addWidget(self.calibration_panel) # 3
+        self.alter_panel = AlterPanel()
+
         self.panel_stack.addWidget(self.trip_panel)       # 4
         self.panel_stack.addWidget(self.piston_panel)     # 5
         self.panel_stack.addWidget(self.calculate_panel)  # 6
+        self.panel_stack.addWidget(self.alter_panel)      # 7
 
         self.panel_stack.setMinimumWidth(400)
         self.panel_stack.setMaximumWidth(550)
@@ -195,6 +199,7 @@ class MainWindow(QMainWindow):
         self.controller.trip_panel = self.trip_panel
         self.controller.piston_panel = self.piston_panel
         self.controller.calculate_panel = self.calculate_panel
+        self.controller.alter_panel = self.alter_panel
 
     def _build_status_bar(self):
         self.statusBar().showMessage("Ready")
@@ -305,6 +310,10 @@ class MainWindow(QMainWindow):
         )
         if self.get_current_mode() == 'Create Calibration':
             self.controller._load_cast_from_database(
+                core_info["core_id"], core_info
+            )
+        elif self.get_current_mode() == 'Alter':
+            self.controller._on_alter_core_changed(
                 core_info["core_id"], core_info
             )
         else:

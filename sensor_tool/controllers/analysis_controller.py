@@ -82,6 +82,10 @@ class AnalysisController:
         self.trip_panel = None
         self.piston_panel = None
         self.calculate_panel = None
+        self.alter_panel = None
+
+        # Alter mode state
+        self._alter_core_info: Optional[dict] = None
 
         # Calculate mode state
         self._calc_start_core_idx: Optional[int] = None
@@ -178,6 +182,12 @@ class AnalysisController:
         self.calculate_panel.export_diagram_requested.connect(
             self.export_calculation_diagram
         )
+
+        # Alter panel
+        if self.alter_panel is not None:
+            self.alter_panel.estimate_requested.connect(
+                self._run_alter_estimation
+            )
 
     # ==================================================================
     # Data Loading
@@ -1610,8 +1620,21 @@ class AnalysisController:
             x = self.sensor_data.get_timestamps_epoch()
             self.main_plot.add_piston_trace(x, self._piston_values)
 
-    def _update_start_pen_line(self, trip_idx: Optional[int] = None):
-        """Recompute and display the start-penetration and seafloor lines."""
+    def _update_start_pen_line(
+        self,
+        trip_idx: Optional[int] = None,
+        ws_override: Optional[np.ndarray] = None,
+    ):
+        """Recompute and display the start-penetration and seafloor lines.
+
+        Parameters
+        ----------
+        ws_override : np.ndarray or None
+            Pre-built weight-stand array to use instead of reading from the
+            dataframe.  Pass this when the values have already been shifted
+            (e.g. during Alter-mode estimation) so the start_pen line
+            reflects the modified trace.
+        """
         self.main_plot.remove_start_pen_line()
         self.main_plot.remove_seafloor_line()
         if self.sensor_data is None or trip_idx is None:
@@ -1628,10 +1651,13 @@ class AnalysisController:
         trig_col = panel.get_trigger_col()
         if not ws_col or ws_col not in self.sensor_data.df.columns:
             return
-        ws_vals = (
-            self.sensor_data.df[ws_col]
-            .interpolate().ffill().bfill().values
-        )
+        if ws_override is not None:
+            ws_vals = ws_override
+        else:
+            ws_vals = (
+                self.sensor_data.df[ws_col]
+                .interpolate().ffill().bfill().values
+            )
         sf = None
         if trig_col and trig_col in self.sensor_data.df.columns:
             trig_vals = (
@@ -2300,11 +2326,22 @@ class AnalysisController:
             self.main_window.show_secondary_view('trip')
         elif mode_name == 'Calculate':
             self.main_window.show_secondary_view('calculation')
+        elif mode_name == 'Alter':
+            if self.alter_panel is not None:
+                core_info = self._alter_core_info
+                if core_info is None and self.sensor_data is not None:
+                    core_info = self.sensor_data.metadata
+                if core_info is not None:
+                    self.alter_panel.populate_from_core_info(core_info)
+            if self._last_calc_results is not None:
+                self.main_window.show_secondary_view('calculation')
+            else:
+                self.main_window.hide_secondary_view()
         else:
             self.main_window.hide_secondary_view()
 
-        # Clean up piston overlays when leaving Piston Position mode
-        if mode_name not in ('Piston Position', 'Calculate'):
+        # Clean up piston overlays when leaving Piston Position / Calculate / Alter modes
+        if mode_name not in ('Piston Position', 'Calculate', 'Alter'):
             self.main_plot.remove_piston_trace()
             self.main_plot.remove_start_core_line()
             self.main_plot.remove_end_pen_line()
@@ -2339,6 +2376,208 @@ class AnalysisController:
         # Re-plot current data if available
         if self.sensor_data is not None:
             self.main_plot.set_sensor_data(self.sensor_data)
+
+    # ==================================================================
+    # Alter mode
+    # ==================================================================
+
+    def _on_alter_core_changed(self, core_id: int, core_info: dict):
+        """Store the selected core info and populate the Alter panel."""
+        self._alter_core_info = core_info
+        if self.alter_panel is not None:
+            self.alter_panel.populate_from_core_info(core_info)
+            self.alter_panel.log_widget.log(
+                f"Core selected: {core_info.get('core_name', core_id)}"
+            )
+
+    def _run_alter_estimation(self):
+        """Re-run piston position + calculate with altered parameters."""
+        if self.alter_panel is None:
+            return
+
+        log = self.alter_panel.log_widget
+
+        if self.sensor_data is None:
+            log.log("No data loaded.")
+            return
+        if self._last_calc_results is None:
+            log.log(
+                "No Calculate result available. "
+                "Run Calculate mode first, then return here."
+            )
+            return
+
+        # Use explicit core selection if available, otherwise fall back to
+        # the metadata of the currently loaded sensor data.
+        effective_core_info = self._alter_core_info
+        if effective_core_info is None:
+            effective_core_info = self.sensor_data.metadata
+        if not effective_core_info:
+            log.log("No core parameters available.")
+            return
+
+        FT_TO_M = 1.0 / 3.28
+
+        db_scope_ft = float(effective_core_info.get('scope') or 0.0)
+        db_trig_line_ft = float(
+            effective_core_info.get('trigger_line_length') or 0.0
+        )
+
+        new_scope_ft = self.alter_panel.get_scope()
+        new_trig_line_ft = self.alter_panel.get_trigger_line_length()
+
+        # Log what changed
+        log.log("")
+        log.log("=== Alter Estimation ===")
+        log.log(
+            f"Scope:              {db_scope_ft:.2f} ft → {new_scope_ft:.2f} ft"
+            f"  (Δ {new_scope_ft - db_scope_ft:+.2f} ft)"
+        )
+        log.log(
+            f"Trigger line:       {db_trig_line_ft:.2f} ft → "
+            f"{new_trig_line_ft:.2f} ft"
+            f"  (Δ {new_trig_line_ft - db_trig_line_ft:+.2f} ft)"
+        )
+        if (self.alter_panel.get_core_length() !=
+                float(effective_core_info.get('core_length') or 0.0)):
+            log.log(
+                "Core length change detected — not yet implemented, ignored."
+            )
+        if (self.alter_panel.get_trigger_core_length() !=
+                float(effective_core_info.get('trigger_core_length') or 0.0)):
+            log.log(
+                "Trigger core length change detected — "
+                "not yet implemented, ignored."
+            )
+        if (self.alter_panel.get_num_pigs() !=
+                int(effective_core_info.get('pig_weights') or 0)):
+            log.log(
+                "Number of pigs change detected — not yet implemented, ignored."
+            )
+
+        try:
+            panel = self.calculate_panel
+
+            ws_col = panel.get_weight_stand_col()
+            rel_col = panel.get_release_col()
+            trig_col = panel.get_trigger_col()
+
+            if ws_col is None or rel_col is None:
+                log.log(
+                    "ERROR: Weight Stand and Release Device columns must be "
+                    "set in the Calculate panel."
+                )
+                return
+
+            # Build arrays (same interpolation as run_calculations)
+            ws_vals = (
+                self.sensor_data.df[ws_col]
+                .interpolate().ffill().bfill().values
+            )
+            rel_vals = (
+                self.sensor_data.df[rel_col]
+                .interpolate().ffill().bfill().values
+            )
+            trig_vals = None
+            if (trig_col is not None
+                    and trig_col in self.sensor_data.df.columns):
+                trig_vals = (
+                    self.sensor_data.df[trig_col]
+                    .interpolate().ffill().bfill().values
+                )
+
+            # Apply optional Savitzky-Golay smoothing (same as Calculate)
+            if panel.get_smoothing_enabled():
+                sg_win, sg_poly = panel.get_sg_params()
+                ws_vals = apply_savgol(ws_vals, sg_win, sg_poly)
+                rel_vals = apply_savgol(rel_vals, sg_win, sg_poly)
+                if trig_vals is not None:
+                    trig_vals = apply_savgol(trig_vals, sg_win, sg_poly)
+
+            timestamps_epoch = self.sensor_data.get_timestamps_epoch()
+
+            # Apply trigger line length shift to WS and release
+            delta_trig_m = (new_trig_line_ft - db_trig_line_ft) * FT_TO_M
+            ws_mod = ws_vals - delta_trig_m
+            rel_mod = rel_vals - delta_trig_m
+
+            # Update WS and release traces on the main plot
+            if delta_trig_m != 0.0:
+                self.main_plot.add_smoothed_traces(
+                    {ws_col: ws_mod, rel_col: rel_mod},
+                    self.sensor_data.depth_columns,
+                )
+            else:
+                self.main_plot.remove_smoothed_traces()
+
+            # Resolve trip index (fixed — same as Calculate mode used)
+            trip_idx = self._resolve_calc_trip_index()
+
+            # Re-detect start_core with new scope on shifted arrays
+            new_start_core_idx = None
+            if trip_idx is not None:
+                new_start_core_idx = detect_start_core(
+                    ws_mod, rel_mod, new_scope_ft, trip_idx=trip_idx,
+                )
+
+            # Update start_core line on main plot
+            x = self.sensor_data.get_timestamps_epoch()
+            self.main_plot.remove_start_core_line()
+            if new_start_core_idx is not None and 0 <= new_start_core_idx < len(x):
+                self.main_plot.add_start_core_line(float(x[new_start_core_idx]))
+
+            # Core length for piston computation — use DB value for now
+            core_ft = float(effective_core_info.get('core_length') or 0.0)
+            offset_constant = self.piston_panel.get_offset_constant()
+
+            # Re-compute piston position
+            altered_piston = None
+            if new_start_core_idx is not None and core_ft > 0:
+                altered_piston = compute_piston_position(
+                    ws_mod, rel_mod,
+                    new_scope_ft, core_ft,
+                    new_start_core_idx,
+                    offset_constant=offset_constant,
+                )
+                self.main_plot.update_piston_trace(altered_piston)
+
+            # Metadata for calculate
+            md = self.sensor_data.metadata
+            trigger_core_length_ft = md.get('trigger_core_length')
+            core_length_ft = md.get('core_length')
+            trigger_pen = panel.get_trigger_pen()
+
+            # Re-run calculations
+            results = compute_calculations(
+                weight_stand=ws_mod,
+                release=rel_mod,
+                timestamps_epoch=timestamps_epoch,
+                trip_idx=trip_idx,
+                start_core_idx=new_start_core_idx,
+                piston=altered_piston,
+                trigger_core=trig_vals,
+                trigger_core_length_ft=trigger_core_length_ft,
+                trigger_pen=trigger_pen,
+                core_length_ft=core_length_ft,
+                end_pen_idx=self._end_pen_idx,
+                pullout_idx=self._pullout_idx,
+            )
+
+            log.log(format_results(results))
+
+            # Update geometry diagram
+            self._update_calculation_plot(
+                results, ws_mod, altered_piston, trip_idx,
+                new_start_core_idx, core_ft,
+                self._end_pen_idx, self._pullout_idx,
+            )
+            # Refresh start_pen / seafloor lines using the shifted WS array
+            self._update_start_pen_line(trip_idx, ws_override=ws_mod)
+            if self.main_window is not None:
+                self.main_window.show_secondary_view('calculation')
+
+        except Exception as exc:
+            log.log(f"ERROR during estimation: {exc}")
 
     # ==================================================================
     # Helpers
