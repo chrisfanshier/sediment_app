@@ -1671,6 +1671,8 @@ class AnalysisController:
         trip_idx: Optional[int] = None,
         ws_override: Optional[np.ndarray] = None,
         core_length_ft_override: Optional[float] = None,
+        tc_length_ft_override: Optional[float] = None,
+        trig_override: Optional[np.ndarray] = None,
     ):
         """Recompute and display the start-penetration and seafloor lines.
 
@@ -1684,6 +1686,10 @@ class AnalysisController:
         core_length_ft_override : float or None
             Override for core barrel length in feet.  When provided, used
             instead of the value stored in sensor metadata (e.g. Alter mode).
+        tc_length_ft_override : float or None
+            Override for trigger core length in feet (Alter mode).
+        trig_override : np.ndarray or None
+            Pre-shifted trigger core array (Alter mode).
         """
         self.main_plot.remove_start_pen_line()
         self.main_plot.remove_seafloor_line()
@@ -1710,11 +1716,14 @@ class AnalysisController:
             )
         sf = None
         if trig_col and trig_col in self.sensor_data.df.columns:
-            trig_vals = (
-                self.sensor_data.df[trig_col]
-                .interpolate().ffill().bfill().values
-            )
-            tc_len_ft = md.get('trigger_core_length')
+            if trig_override is not None:
+                trig_vals = trig_override
+            else:
+                trig_vals = (
+                    self.sensor_data.df[trig_col]
+                    .interpolate().ffill().bfill().values
+                )
+            tc_len_ft = tc_length_ft_override if tc_length_ft_override is not None else md.get('trigger_core_length')
             trigger_pen = panel.get_trigger_pen()
             if tc_len_ft and tc_len_ft > 0:
                 sf = (float(trig_vals[trip_idx])
@@ -2477,10 +2486,14 @@ class AnalysisController:
             effective_core_info.get('trigger_line_length') or 0.0
         )
         db_core_length_ft = float(effective_core_info.get('core_length') or 0.0)
+        db_tc_length_ft = float(
+            effective_core_info.get('trigger_core_length') or 0.0
+        )
 
         new_scope_ft = self.alter_panel.get_scope()
         new_trig_line_ft = self.alter_panel.get_trigger_line_length()
         new_core_length_ft = self.alter_panel.get_core_length()
+        new_tc_length_ft = self.alter_panel.get_trigger_core_length()
 
         # Log what changed
         log.log("")
@@ -2499,12 +2512,11 @@ class AnalysisController:
             f"{new_core_length_ft:.2f} ft"
             f"  (Δ {new_core_length_ft - db_core_length_ft:+.2f} ft)"
         )
-        if (self.alter_panel.get_trigger_core_length() !=
-                float(effective_core_info.get('trigger_core_length') or 0.0)):
-            log.log(
-                "Trigger core length change detected — "
-                "not yet implemented, ignored."
-            )
+        log.log(
+            f"Trigger core length: {db_tc_length_ft:.2f} ft → "
+            f"{new_tc_length_ft:.2f} ft"
+            f"  (Δ {new_tc_length_ft - db_tc_length_ft:+.2f} ft)"
+        )
         if (self.alter_panel.get_num_pigs() !=
                 int(effective_core_info.get('pig_weights') or 0)):
             log.log(
@@ -2557,11 +2569,23 @@ class AnalysisController:
             ws_mod = ws_vals - delta_trig_m
             rel_mod = rel_vals - delta_trig_m
 
-            # Update WS and release traces on the main plot
-            if delta_trig_m != 0.0:
+            # Apply trigger core length shift to all three traces.
+            # A longer trigger core fires the trip shallower (all sensors rise by Δ).
+            # Seafloor stays constant because trace shift and length change cancel.
+            delta_tc_m = (new_tc_length_ft - db_tc_length_ft) * FT_TO_M
+            ws_mod = ws_mod - delta_tc_m
+            rel_mod = rel_mod - delta_tc_m
+            if trig_vals is not None:
+                trig_vals = trig_vals - delta_tc_m
+
+            # Determine which columns have altered traces for overlay display
+            total_shift_m = delta_trig_m + delta_tc_m
+            if total_shift_m != 0.0:
+                overlay = {ws_col: ws_mod, rel_col: rel_mod}
+                if trig_col is not None and trig_vals is not None:
+                    overlay[trig_col] = trig_vals
                 self.main_plot.add_smoothed_traces(
-                    {ws_col: ws_mod, rel_col: rel_mod},
-                    self.sensor_data.depth_columns,
+                    overlay, self.sensor_data.depth_columns,
                 )
             else:
                 self.main_plot.remove_smoothed_traces()
@@ -2599,7 +2623,7 @@ class AnalysisController:
 
             # Metadata for calculate
             md = self.sensor_data.metadata
-            trigger_core_length_ft = md.get('trigger_core_length')
+            trigger_core_length_ft = new_tc_length_ft if new_tc_length_ft > 0 else db_tc_length_ft
             core_length_ft = core_ft
             trigger_pen = self.alter_panel.get_trigger_pen()
 
@@ -2629,7 +2653,10 @@ class AnalysisController:
             )
             # Refresh start_pen / seafloor lines using the shifted WS array and altered core length
             self._update_start_pen_line(
-                trip_idx, ws_override=ws_mod, core_length_ft_override=core_length_ft
+                trip_idx, ws_override=ws_mod,
+                core_length_ft_override=core_length_ft,
+                tc_length_ft_override=trigger_core_length_ft,
+                trig_override=trig_vals,
             )
             if self.main_window is not None:
                 self.main_window.show_secondary_view('calculation')
