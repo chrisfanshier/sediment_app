@@ -51,6 +51,8 @@ class SensorPlotView(QWidget):
         self._selection_end_idx: int | None = None
         self._selection_region: pg.LinearRegionItem | None = None
         self._use_datetime_axis = use_datetime_axis
+        self._x_is_index = False  # True when x-axis is integer row index (e.g. differences mode)
+        self._diff_series: dict[tuple[str, str], pd.Series] = {}  # cached for hover display
         self._y_inverted = False
         self._piston_plot_item = None
         self._start_core_line: pg.InfiniteLine | None = None
@@ -126,6 +128,8 @@ class SensorPlotView(QWidget):
         if self._sensor_data is None:
             return
 
+        self._x_is_index = False
+        self._diff_series = {}
         self._clear_plot()
 
         if title:
@@ -162,6 +166,8 @@ class SensorPlotView(QWidget):
         label_suffix keys are depth column names.
         """
         self._sensor_data = sensor_data
+        self._x_is_index = False
+        self._diff_series = {}
         self._clear_plot()
 
         if title:
@@ -198,10 +204,11 @@ class SensorPlotView(QWidget):
         self.plot_widget.setLabel('left', 'Depth Difference (m)')
         self.plot_widget.setTitle('Sensor Differences')
 
-        diffs = self._sensor_data.compute_pairwise_differences()
+        self._x_is_index = True
+        self._diff_series = self._sensor_data.compute_pairwise_differences()
         x = np.arange(len(self._sensor_data.df))
 
-        for idx, ((col_j, col_i), series) in enumerate(diffs.items()):
+        for idx, ((col_j, col_i), series) in enumerate(self._diff_series.items()):
             pen = pg.mkPen(
                 color=SENSOR_COLORS_QT[idx % len(SENSOR_COLORS_QT)], width=2
             )
@@ -655,23 +662,31 @@ class SensorPlotView(QWidget):
         self._vline.setVisible(True)
         self._hline.setVisible(True)
 
-        if self._use_datetime_axis:
+        if self._x_is_index or not self._use_datetime_axis:
+            idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
+        else:
             timestamps = self._sensor_data.get_timestamps_epoch()
             idx = int(np.argmin(np.abs(timestamps - x_pos)))
-        else:
-            idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
 
         if 0 <= idx < len(self._sensor_data.df):
             actual_time = self._sensor_data.df[self._sensor_data.datetime_col].iloc[idx]
             time_str = actual_time.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(actual_time) else 'N/A'
             info_text = f"Index: {idx}  |  Time: {time_str}  |  "
 
-            for col in self._sensor_data.depth_columns:
-                if col in self._sensor_data.df.columns:
-                    val = self._sensor_data.df[col].iloc[idx]
+            if self._x_is_index and self._diff_series:
+                for (col_j, col_i), series in self._diff_series.items():
+                    val = series.iloc[idx]
                     if pd.notna(val):
-                        loc_name = SensorData.get_location_name(col)
-                        info_text += f"{loc_name}: {val:.3f}m  "
+                        name_j = SensorData.get_short_name(col_j)
+                        name_i = SensorData.get_short_name(col_i)
+                        info_text += f"{name_j}-{name_i}: {val:+.4f}m  "
+            else:
+                for col in self._sensor_data.depth_columns:
+                    if col in self._sensor_data.df.columns:
+                        val = self._sensor_data.df[col].iloc[idx]
+                        if pd.notna(val):
+                            loc_name = SensorData.get_location_name(col)
+                            info_text += f"{loc_name}: {val:.3f}m  "
 
             self.info_label.setText(info_text)
 
