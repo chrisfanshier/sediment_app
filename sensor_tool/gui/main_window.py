@@ -33,6 +33,7 @@ from ..gui.views.statistics_table import StatisticsTableView
 from ..gui.views.trip_plot_view import TripPlotView
 from ..gui.views.calculation_plot_view import CalculationPlotView
 from ..gui.views.calibration_plot_view import CalibrationPlotView
+from ..gui.views.piston_analysis_view import PistonAnalysisView
 from ..gui.panels.view_data_panel import ViewDataPanel
 from ..gui.panels.depth_offset_panel import DepthOffsetPanel
 from ..gui.panels.time_offset_panel import TimeOffsetPanel
@@ -41,10 +42,12 @@ from ..gui.panels.trip_detector_panel import TripDetectorPanel
 from ..gui.panels.piston_position_panel import PistonPositionPanel
 from ..gui.panels.calculate_panel import CalculatePanel
 from ..gui.panels.alter_panel import AlterPanel
+from ..gui.panels.piston_analysis_panel import PistonAnalysisPanel
 from ..controllers.analysis_controller import AnalysisController
 
 MODES = ['View Data', 'Depth Offset', 'Time Offset', 'Create Calibration',
-         'Trip Detector', 'Piston Position', 'Calculate', 'Alter']
+         'Trip Detector', 'Piston Position', 'Calculate', 'Alter',
+         'Piston Analysis']
 
 
 class MainWindow(QMainWindow):
@@ -148,6 +151,9 @@ class MainWindow(QMainWindow):
         self.panel_stack.addWidget(self.calculate_panel)  # 6
         self.panel_stack.addWidget(self.alter_panel)      # 7
 
+        self.piston_analysis_panel = PistonAnalysisPanel()
+        self.panel_stack.addWidget(self.piston_analysis_panel)  # 8
+
         self.panel_stack.setMinimumWidth(400)
         self.panel_stack.setMaximumWidth(550)
 
@@ -167,6 +173,9 @@ class MainWindow(QMainWindow):
         self.secondary_stack.addWidget(self.trip_plot)          # 2
         self.secondary_stack.addWidget(self.calculation_plot)   # 3
         self.secondary_stack.addWidget(self.calibration_plot)   # 4
+
+        self.piston_analysis_view = PistonAnalysisView()
+        self.secondary_stack.addWidget(self.piston_analysis_view)  # 5
         self.secondary_stack.setVisible(False)
 
         # -- Right splitter (main plot + secondary) --
@@ -200,6 +209,8 @@ class MainWindow(QMainWindow):
         self.controller.piston_panel = self.piston_panel
         self.controller.calculate_panel = self.calculate_panel
         self.controller.alter_panel = self.alter_panel
+        self.controller.piston_analysis_panel = self.piston_analysis_panel
+        self.controller.piston_analysis_view = self.piston_analysis_view
 
     def _build_status_bar(self):
         self.statusBar().showMessage("Ready")
@@ -229,6 +240,8 @@ class MainWindow(QMainWindow):
             self.secondary_stack.setCurrentIndex(3)
         elif view_type == 'calibration_plot':
             self.secondary_stack.setCurrentIndex(4)
+        elif view_type == 'piston_analysis':
+            self.secondary_stack.setCurrentIndex(5)
         self.secondary_stack.setVisible(True)
 
     def hide_secondary_view(self):

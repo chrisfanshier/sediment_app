@@ -33,6 +33,9 @@ from ..domain.processing.piston_position import (
 from ..domain.processing.calculations import (
     compute_calculations, format_results, apply_savgol,
 )
+from ..domain.processing.piston_analysis import (
+    PistonAnalysisProcessor,
+)
 from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
@@ -63,6 +66,7 @@ class AnalysisController:
         self.collected_statistics: list[StatisticsResult] = []
         self._piston_start_core_idx: Optional[int] = None
         self._piston_values: Optional[np.ndarray] = None
+        self._start_pen_idx: Optional[int] = None
 
         # GUI references (set by main_window after construction)
         self.main_window = None
@@ -73,6 +77,7 @@ class AnalysisController:
         self.trip_plot = None
         self.calculation_plot = None
         self.calibration_plot = None
+        self.piston_analysis_view = None
 
         # Panels
         self.view_panel = None
@@ -83,6 +88,7 @@ class AnalysisController:
         self.piston_panel = None
         self.calculate_panel = None
         self.alter_panel = None
+        self.piston_analysis_panel = None
 
         # Alter mode state
         self._alter_core_info: Optional[dict] = None
@@ -167,6 +173,9 @@ class AnalysisController:
         # Main plot pullout line drag signal
         self.main_plot.pullout_changed.connect(self._on_pullout_moved)
 
+        # Main plot start-pen drag signal
+        self.main_plot.start_pen_changed.connect(self._on_start_pen_moved)
+
         # Piston export
         self.piston_panel.export_piston_requested.connect(self.export_piston_csv)
 
@@ -188,6 +197,18 @@ class AnalysisController:
         if self.alter_panel is not None:
             self.alter_panel.estimate_requested.connect(
                 self._run_alter_estimation
+            )
+
+        # Piston Analysis panel
+        if self.piston_analysis_panel is not None:
+            self.piston_analysis_panel.load_file_requested.connect(
+                self.load_export_csv
+            )
+            self.piston_analysis_panel.plot_original_requested.connect(
+                self.plot_depths
+            )
+            self.piston_analysis_panel.analyze_requested.connect(
+                self.run_piston_analysis
             )
 
     # ==================================================================
@@ -253,6 +274,7 @@ class AnalysisController:
         self.trip_detection_result = None
         self._piston_start_core_idx = None
         self._piston_values = None
+        self._start_pen_idx = None
         self._calc_start_core_idx = None
         self._end_pen_idx = None
         self._pullout_idx = None
@@ -1025,7 +1047,7 @@ class AnalysisController:
         )
 
         # Handle Calculate mode: just update the stored index and panel label
-        if mode == 'Calculate':
+        if mode in ('Calculate', 'Piston Analysis'):
             self._calc_start_core_idx = new_idx
             dt_col = self.sensor_data.datetime_col
             ts_str = ''
@@ -1034,10 +1056,16 @@ class AnalysisController:
                 ts = self.sensor_data.df[dt_col].iloc[new_idx]
                 if pd.notna(ts):
                     ts_str = str(ts)
-            self.calculate_panel.update_start_core_info(new_idx, ts_str)
-            self.calculate_panel.log_widget.log(
-                f"Start core moved to index {new_idx}"
-            )
+            if mode == 'Calculate':
+                self.calculate_panel.update_start_core_info(new_idx, ts_str)
+                self.calculate_panel.log_widget.log(
+                    f"Start core moved to index {new_idx}"
+                )
+            else:
+                if self.piston_analysis_panel is not None:
+                    self.piston_analysis_panel.log_widget.log(
+                        f"Start core moved to index {new_idx}"
+                    )
             return
 
         if mode != 'Piston Position':
@@ -1227,6 +1255,12 @@ class AnalysisController:
         self.calculate_panel.log_widget.log(
             f"Pullout line moved to index {new_idx}"
         )
+
+    def _on_start_pen_moved(self, new_idx: int):
+        """Handle the user dragging the start-penetration line."""
+        if self.sensor_data is None:
+            return
+        self._start_pen_idx = new_idx
 
     def _reset_lines(self):
         """Reset end-of-penetration and pullout lines to auto-calculated positions."""
@@ -1741,6 +1775,7 @@ class AnalysisController:
         if len(candidates) > 0:
             sp_idx = search_from + int(candidates[0])
             if 0 <= sp_idx < len(x):
+                self._start_pen_idx = sp_idx
                 self.main_plot.add_start_pen_line(float(x[sp_idx]))
 
     def export_calculation_results(self):
@@ -2400,15 +2435,25 @@ class AnalysisController:
                 self.main_window.show_secondary_view('calculation')
             else:
                 self.main_window.hide_secondary_view()
+        elif mode_name == 'Piston Analysis':
+            self.main_window.show_secondary_view('piston_analysis')
         else:
             self.main_window.hide_secondary_view()
 
-        # Clean up piston overlays when leaving Piston Position / Calculate / Alter modes
-        if mode_name not in ('Piston Position', 'Calculate', 'Alter'):
+        # Clean up piston overlays when leaving Piston Position / Calculate / Alter / Piston Analysis modes
+        if mode_name not in ('Piston Position', 'Calculate', 'Alter', 'Piston Analysis'):
             self.main_plot.remove_piston_trace()
             self.main_plot.remove_start_core_line()
             self.main_plot.remove_end_pen_line()
             self.main_plot.remove_pullout_line()
+
+        # When entering Piston Analysis mode, restore all Calculate-mode overlays
+        if mode_name == 'Piston Analysis':
+            if self.sensor_data is not None:
+                self._plot_calculate_mode()
+                if self._piston_values is not None:
+                    self.main_plot.update_piston_trace(self._piston_values)
+            return
 
         # When entering Calculate mode, restore trip / start_core / piston lines
         if mode_name == 'Calculate':
@@ -2665,6 +2710,97 @@ class AnalysisController:
             log.log(f"ERROR during estimation: {exc}")
 
     # ==================================================================
+    # Piston Analysis Mode
+    # ==================================================================
+
+    def run_piston_analysis(self):
+        """Run piston analysis over the penetration interval and display results."""
+        panel = self.piston_analysis_panel
+        log = panel.log_widget if panel is not None else None
+
+        def _err(msg):
+            if log:
+                log.log(f"ERROR: {msg}")
+            self._show_warning(msg)
+
+        if self.sensor_data is None:
+            _err("No data loaded.")
+            return
+        if self._start_pen_idx is None:
+            _err(
+                "Start-penetration index not set.\n"
+                "Run Calculate mode first (or drag the Start Pen line)."
+            )
+            return
+        if self._pullout_idx is None:
+            _err(
+                "Pullout index not set.\n"
+                "Run Calculate mode first (or drag the Pullout line)."
+            )
+            return
+        if self._piston_values is None:
+            _err(
+                "No piston position data.\n"
+                "Run Piston Position mode first."
+            )
+            return
+
+        calc_panel = self.calculate_panel
+        ws_col = calc_panel.get_weight_stand_col() if calc_panel else None
+        if not ws_col or ws_col not in self.sensor_data.df.columns:
+            _err("Weight-stand column not set or not found.")
+            return
+
+        try:
+            ws_vals = (
+                self.sensor_data.df[ws_col]
+                .interpolate().ffill().bfill().values
+            )
+            ts = self.sensor_data.get_timestamps_epoch()
+            piston_vals = self._piston_values
+
+            seafloor = None
+            if self._last_calc_results is not None:
+                sf = getattr(self._last_calc_results, 'seafloor', None)
+                if sf is not None:
+                    seafloor = float(sf)
+
+            sg_window = panel.get_sg_window() if panel else 51
+            sg_polyorder = panel.get_sg_polyorder() if panel else 3
+
+            result = PistonAnalysisProcessor.compute_analysis(
+                ws_vals=ws_vals,
+                piston_vals=piston_vals,
+                timestamps_epoch=ts,
+                start_pen_idx=self._start_pen_idx,
+                pullout_idx=self._pullout_idx,
+                sg_window=sg_window,
+                sg_polyorder=sg_polyorder,
+                seafloor=seafloor,
+            )
+
+            if self.piston_analysis_view is not None:
+                self.piston_analysis_view.plot(result)
+            if self.main_window is not None:
+                self.main_window.show_secondary_view('piston_analysis')
+
+            n = len(result.core_depth)
+            if log:
+                log.log(
+                    f"Piston analysis complete — {n} samples, "
+                    f"core depth 0 – {float(result.core_depth[-1]):.2f} m, "
+                    f"SG window={result.sg_window}"
+                )
+            if panel:
+                panel.update_status(
+                    f"Analyzed {n} samples. "
+                    f"Core depth range: {float(result.core_depth[-1]):.2f} m"
+                )
+
+        except Exception as exc:
+            _err(f"Piston analysis failed: {exc}")
+
+    # ==================================================================
     # Helpers
     # ==================================================================
 
@@ -2750,6 +2886,13 @@ class AnalysisController:
             )
             self.calculate_panel.set_parameters_from_metadata(sd.metadata)
 
+        # Update piston analysis panel
+        if self.piston_analysis_panel is not None:
+            self.piston_analysis_panel.update_file_info(
+                f"{sd.source_file}  ({sd.core_title})"
+                if sd.core_title else sd.source_file
+            )
+
     def _log_active(self, msg: str):
         """Log to the currently active panel."""
         mode = (
@@ -2769,6 +2912,8 @@ class AnalysisController:
             self.piston_panel.log_widget.log(msg)
         elif mode == 'Calculate':
             self.calculate_panel.log_widget.log(msg)
+        elif mode == 'Piston Analysis' and self.piston_analysis_panel is not None:
+            self.piston_analysis_panel.log_widget.log(msg)
 
     def _show_error(self, title: str, msg: str):
         if self.main_window:

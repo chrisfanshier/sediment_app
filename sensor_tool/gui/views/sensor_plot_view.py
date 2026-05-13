@@ -39,6 +39,7 @@ class SensorPlotView(QWidget):
     trip_line_changed = Signal(int)
     end_pen_changed = Signal(int)
     pullout_changed = Signal(int)
+    start_pen_changed = Signal(int)
 
     def __init__(self, parent=None, use_datetime_axis: bool = True):
         super().__init__(parent)
@@ -400,23 +401,43 @@ class SensorPlotView(QWidget):
     # ------------------------------------------------------------------
 
     def add_start_pen_line(self, x_pos: float):
-        """Add a non-draggable start-of-penetration indicator line."""
+        """Add a draggable start-of-penetration indicator line."""
         self.remove_start_pen_line()
         self._start_pen_line = pg.InfiniteLine(
-            pos=x_pos, angle=90, movable=False,
+            pos=x_pos, angle=90, movable=True,
             pen=pg.mkPen('#17becf', width=2, style=Qt.DashLine),
             label='Start Pen',
             labelOpts={'position': 0.85, 'color': '#17becf'},
+        )
+        self._start_pen_line.sigPositionChangeFinished.connect(
+            self._on_start_pen_moved
         )
         self.plot_widget.addItem(self._start_pen_line)
 
     def remove_start_pen_line(self):
         if self._start_pen_line is not None:
             try:
+                self._start_pen_line.sigPositionChangeFinished.disconnect(
+                    self._on_start_pen_moved
+                )
+            except Exception:
+                pass
+            try:
                 self.plot_widget.removeItem(self._start_pen_line)
             except Exception:
                 pass
             self._start_pen_line = None
+
+    def _on_start_pen_moved(self):
+        if self._start_pen_line is None or self._sensor_data is None:
+            return
+        x_pos = self._start_pen_line.value()
+        if self._use_datetime_axis:
+            timestamps = self._sensor_data.get_timestamps_epoch()
+            idx = int(np.argmin(np.abs(timestamps - x_pos)))
+        else:
+            idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
+        self.start_pen_changed.emit(idx)
 
     # ------------------------------------------------------------------
     # Seafloor line (horizontal, non-draggable)
