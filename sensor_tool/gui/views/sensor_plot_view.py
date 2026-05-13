@@ -40,6 +40,7 @@ class SensorPlotView(QWidget):
     end_pen_changed = Signal(int)
     pullout_changed = Signal(int)
     start_pen_changed = Signal(int)
+    seafloor_changed = Signal(float)  # emits new depth (m) when dragged
 
     def __init__(self, parent=None, use_datetime_axis: bool = True):
         super().__init__(parent)
@@ -443,25 +444,43 @@ class SensorPlotView(QWidget):
     # Seafloor line (horizontal, non-draggable)
     # ------------------------------------------------------------------
 
-    def add_seafloor_line(self, depth: float):
+    def add_seafloor_line(self, depth: float, movable: bool = False):
         """Add a horizontal dashed line indicating the seafloor depth."""
         self.remove_seafloor_line()
         self._seafloor_line = pg.InfiniteLine(
-            pos=depth, angle=0, movable=False,
+            pos=depth, angle=0, movable=movable,
             pen=pg.mkPen('#c0392b', width=1.5, style=Qt.DashLine),
             label=f'Seafloor {depth:.1f} m',
             labelOpts={'position': 0.9, 'color': '#c0392b',
                        'anchors': [(1, 0), (1, 1)]},
         )
+        if movable:
+            self._seafloor_line.sigPositionChangeFinished.connect(
+                self._on_seafloor_moved
+            )
         self.plot_widget.addItem(self._seafloor_line)
 
     def remove_seafloor_line(self):
         if self._seafloor_line is not None:
             try:
+                self._seafloor_line.sigPositionChangeFinished.disconnect(
+                    self._on_seafloor_moved
+                )
+            except Exception:
+                pass
+            try:
                 self.plot_widget.removeItem(self._seafloor_line)
             except Exception:
                 pass
             self._seafloor_line = None
+
+    def _on_seafloor_moved(self):
+        if self._seafloor_line is None:
+            return
+        depth = float(self._seafloor_line.value())
+        # Update the label to reflect the new position
+        self._seafloor_line.label.setFormat(f'Seafloor {depth:.1f} m')
+        self.seafloor_changed.emit(depth)
 
     # ------------------------------------------------------------------
     # End-of-penetration line

@@ -43,6 +43,8 @@ class CalculatePanel(BaseModePanel):
     export_results_requested = Signal()
     export_diagram_requested = Signal()
     reset_lines_requested = Signal()
+    seafloor_override_changed = Signal(object)   # float or None
+    seafloor_estimate_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -210,6 +212,55 @@ class CalculatePanel(BaseModePanel):
 
         trigger_group.setLayout(trigger_layout)
         self._layout.addWidget(trigger_group)
+
+        # -- Manual Seafloor Override ----------------------------------------
+        sf_group = QGroupBox("Manual Seafloor Override")
+        sf_layout = QVBoxLayout()
+
+        self.seafloor_check = QCheckBox("Override seafloor depth")
+        self.seafloor_check.setToolTip(
+            "When checked the value below is used instead of the\n"
+            "trigger-sensor formula. Drag the red dashed line on\n"
+            "the plot to adjust."
+        )
+        sf_layout.addWidget(self.seafloor_check)
+
+        sf_spin_row = QHBoxLayout()
+        self.seafloor_spin = QDoubleSpinBox()
+        self.seafloor_spin.setRange(0.0, 15000.0)
+        self.seafloor_spin.setDecimals(2)
+        self.seafloor_spin.setSingleStep(1.0)
+        self.seafloor_spin.setValue(0.0)
+        self.seafloor_spin.setEnabled(False)
+        sf_spin_row.addWidget(self.seafloor_spin)
+        sf_spin_row.addWidget(QLabel("m"))
+        sf_layout.addLayout(sf_spin_row)
+
+        self.seafloor_estimate_btn = QPushButton("Estimate from Trip")
+        self.seafloor_estimate_btn.setToolTip(
+            "Sets depth to:  WS[trip] + core_length + 1.5 m + scope\n"
+            "(assumes zero freefall — actual seafloor is shallower)"
+        )
+        self.seafloor_estimate_btn.setEnabled(False)
+        self.seafloor_estimate_btn.clicked.connect(
+            self.seafloor_estimate_requested.emit
+        )
+        sf_layout.addWidget(self.seafloor_estimate_btn)
+
+        sf_note = QLabel(
+            "Estimate is an upper bound; actual seafloor is shallower\n"
+            "by the freefall distance."
+        )
+        sf_note.setStyleSheet("QLabel { color: gray; font-style: italic; }")
+        sf_note.setWordWrap(True)
+        sf_layout.addWidget(sf_note)
+
+        sf_group.setLayout(sf_layout)
+        self._layout.addWidget(sf_group)
+
+        # Connect checkbox to enable/disable controls
+        self.seafloor_check.toggled.connect(self._on_seafloor_check_toggled)
+        self.seafloor_spin.valueChanged.connect(self._on_seafloor_value_changed)
 
         # -- Actions ---------------------------------------------------------
         action_group = QGroupBox("Actions")
@@ -388,3 +439,29 @@ class CalculatePanel(BaseModePanel):
         if win % 2 == 0:
             win += 1
         return win, self.sg_poly_spin.value()
+
+    # ------------------------------------------------------------------
+    # Seafloor override helpers
+    # ------------------------------------------------------------------
+
+    def _on_seafloor_check_toggled(self, checked: bool):
+        self.seafloor_spin.setEnabled(checked)
+        self.seafloor_estimate_btn.setEnabled(checked)
+        if checked:
+            self.seafloor_override_changed.emit(self.seafloor_spin.value())
+        else:
+            self.seafloor_override_changed.emit(None)
+
+    def _on_seafloor_value_changed(self, value: float):
+        if self.seafloor_check.isChecked():
+            self.seafloor_override_changed.emit(value)
+
+    def get_seafloor_override(self) -> float | None:
+        """Return the manual seafloor depth, or None if override is off."""
+        if self.seafloor_check.isChecked():
+            return self.seafloor_spin.value()
+        return None
+
+    def set_seafloor_override(self, depth: float):
+        """Set the spinbox value (does not check the checkbox)."""
+        self.seafloor_spin.setValue(depth)

@@ -99,6 +99,7 @@ class AnalysisController:
         self._pullout_idx: Optional[int] = None
         self._last_calc_results = None
         self._last_calc_inputs: Optional[dict] = None
+        self._manual_seafloor: Optional[float] = None  # None = use trigger formula
 
     # ==================================================================
     # Initialization - called by MainWindow
@@ -175,6 +176,17 @@ class AnalysisController:
 
         # Main plot start-pen drag signal
         self.main_plot.start_pen_changed.connect(self._on_start_pen_moved)
+
+        # Main plot seafloor drag signal
+        self.main_plot.seafloor_changed.connect(self._on_seafloor_dragged)
+
+        # Calculate panel seafloor override signals
+        self.calculate_panel.seafloor_override_changed.connect(
+            self._on_seafloor_override_changed
+        )
+        self.calculate_panel.seafloor_estimate_requested.connect(
+            self._estimate_seafloor_from_trip
+        )
 
         # Piston export
         self.piston_panel.export_piston_requested.connect(self.export_piston_csv)
@@ -280,6 +292,7 @@ class AnalysisController:
         self._pullout_idx = None
         self._last_calc_results = None
         self._last_calc_inputs = None
+        self._manual_seafloor = None
 
     def load_calibration(self, file_path: str):
         """Load a JSON calibration file and set up mapping UI."""
@@ -1262,6 +1275,66 @@ class AnalysisController:
             return
         self._start_pen_idx = new_idx
 
+    def _on_seafloor_dragged(self, depth: float):
+        """Handle the user dragging the seafloor line on the main plot."""
+        if self.calculate_panel is None:
+            return
+        # Only update when manual override is active
+        if self.calculate_panel.seafloor_check.isChecked():
+            self.calculate_panel.seafloor_spin.blockSignals(True)
+            self.calculate_panel.seafloor_spin.setValue(depth)
+            self.calculate_panel.seafloor_spin.blockSignals(False)
+            self._manual_seafloor = depth
+            # Recompute start_pen line to reflect new seafloor position
+            trip_idx = self._resolve_calc_trip_index()
+            self._update_start_pen_line(trip_idx)
+
+    def _on_seafloor_override_changed(self, value):
+        """Handle checkbox toggle or spinbox change from calculate panel."""
+        self._manual_seafloor = float(value) if value is not None else None
+        trip_idx = self._resolve_calc_trip_index()
+        if self._manual_seafloor is not None:
+            # Draw movable seafloor line
+            self.main_plot.add_seafloor_line(self._manual_seafloor, movable=True)
+        else:
+            # Revert to trigger-formula seafloor (non-draggable) or remove
+            self._update_start_pen_line(trip_idx)
+            return
+        self._update_start_pen_line(trip_idx)
+
+    def _estimate_seafloor_from_trip(self):
+        """Fill the seafloor spinbox with WS[trip] + core_length + 1.5 + scope."""
+        if self.sensor_data is None or self.calculate_panel is None:
+            return
+        trip_idx = self._resolve_calc_trip_index()
+        if trip_idx is None:
+            self._show_warning("Trip time not set — cannot estimate seafloor.")
+            return
+        panel = self.calculate_panel
+        ws_col = panel.get_weight_stand_col()
+        if not ws_col or ws_col not in self.sensor_data.df.columns:
+            self._show_warning("Weight-stand column not set.")
+            return
+        ws_vals = (
+            self.sensor_data.df[ws_col]
+            .interpolate().ffill().bfill().values
+        )
+        md = self.sensor_data.metadata
+        FT_TO_M_local = 1.0 / 3.28
+        core_length_ft = md.get('core_length') or 0.0
+        scope_ft = md.get('scope') or 0.0
+        estimate = (
+            float(ws_vals[trip_idx])
+            + core_length_ft * FT_TO_M_local
+            + 1.5
+            + scope_ft * FT_TO_M_local
+        )
+        panel.set_seafloor_override(estimate)
+        panel.log_widget.log(
+            f"Seafloor estimate (WS[trip]+core+1.5+scope): {estimate:.2f} m  "
+            f"[upper bound — actual seafloor is shallower by freefall distance]"
+        )
+
     def _reset_lines(self):
         """Reset end-of-penetration and pullout lines to auto-calculated positions."""
         self._end_pen_idx = None
@@ -1429,6 +1502,7 @@ class AnalysisController:
                 core_length_ft=core_length_ft,
                 end_pen_idx=end_pen_idx,
                 pullout_idx=pullout_idx,
+                seafloor_override=self._manual_seafloor,
             )
 
             # Store results & inputs for export
@@ -1749,7 +1823,10 @@ class AnalysisController:
                 .interpolate().ffill().bfill().values
             )
         sf = None
-        if trig_col and trig_col in self.sensor_data.df.columns:
+        # Manual override takes priority over trigger-sensor formula
+        if self._manual_seafloor is not None:
+            sf = self._manual_seafloor
+        elif trig_col and trig_col in self.sensor_data.df.columns:
             if trig_override is not None:
                 trig_vals = trig_override
             else:
@@ -1765,8 +1842,9 @@ class AnalysisController:
                       - trigger_pen)
         if sf is None:
             return
-        # Add seafloor line
-        self.main_plot.add_seafloor_line(sf)
+        # Add seafloor line (movable when using manual override)
+        movable = self._manual_seafloor is not None
+        self.main_plot.add_seafloor_line(sf, movable=movable)
         # Add start_pen line
         core_tip = ws_vals + WEIGHT_LENGTH + core_length_m
         search_from = trip_idx
@@ -2760,7 +2838,9 @@ class AnalysisController:
             piston_vals = self._piston_values
 
             seafloor = None
-            if self._last_calc_results is not None:
+            if self._manual_seafloor is not None:
+                seafloor = self._manual_seafloor
+            elif self._last_calc_results is not None:
                 sf = getattr(self._last_calc_results, 'seafloor', None)
                 if sf is not None:
                     seafloor = float(sf)

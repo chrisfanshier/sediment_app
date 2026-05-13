@@ -119,6 +119,7 @@ def compute_calculations(
     core_length_ft: Optional[float] = None,
     end_pen_idx: Optional[int] = None,
     pullout_idx: Optional[int] = None,
+    seafloor_override: Optional[float] = None,
 ) -> CalculationResults:
     """Compute coring analysis values.
 
@@ -256,7 +257,25 @@ def compute_calculations(
         # -----------------------------------------------------------------
         # Seafloor-dependent calculations
         # -----------------------------------------------------------------
-        if (trigger_core is not None
+        if seafloor_override is not None:
+            sf = float(seafloor_override)
+            res.seafloor = sf
+            ws_max_depth = float(np.nanmax(weight_stand))
+            res.pen_deficit = sf - ws_max_depth
+            if (piston is not None
+                    and start_core_idx is not None
+                    and 0 <= start_core_idx < n):
+                res.piston_alt = sf - float(piston[start_core_idx])
+            if core_length_ft is not None and core_length_ft > 0:
+                core_length_m = core_length_ft * FT_TO_M
+                res.freefall_est = abs(
+                    float(weight_stand[trip_idx])
+                    + 1.5
+                    + core_length_m
+                    - sf
+                )
+            res.notes.append("Seafloor: manual override")
+        elif (trigger_core is not None
                 and trigger_core_length_ft is not None
                 and trigger_core_length_ft > 0):
             tc_length_m = trigger_core_length_ft * FT_TO_M
