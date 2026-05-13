@@ -85,14 +85,25 @@ class AlterPanel(BaseModePanel):
         )
         params_layout.addWidget(self.trigger_core_spin, 3, 1)
 
-        params_layout.addWidget(QLabel("Number of Pigs:"), 4, 0)
+        params_layout.addWidget(QLabel("Trigger Pen (m):"), 4, 0)
+        self.trigger_pen_spin = QDoubleSpinBox()
+        self.trigger_pen_spin.setRange(0.0, 100.0)
+        self.trigger_pen_spin.setDecimals(2)
+        self.trigger_pen_spin.setSingleStep(0.1)
+        self.trigger_pen_spin.setToolTip(
+            "Estimated trigger core penetration in metres. "
+            "Increasing this raises the computed seafloor depth."
+        )
+        params_layout.addWidget(self.trigger_pen_spin, 4, 1)
+
+        params_layout.addWidget(QLabel("Number of Pigs:"), 5, 0)
         self.num_pigs_spin = QSpinBox()
         self.num_pigs_spin.setRange(0, 20)
         self.num_pigs_spin.setToolTip(
             "Number of lead pigs on the weight stand. "
             "(Effect on calculations not yet implemented.)"
         )
-        params_layout.addWidget(self.num_pigs_spin, 4, 1)
+        params_layout.addWidget(self.num_pigs_spin, 5, 1)
 
         params_group.setLayout(params_layout)
         self._layout.addWidget(params_group)
@@ -119,8 +130,21 @@ class AlterPanel(BaseModePanel):
     # Public API
     # ------------------------------------------------------------------
 
-    def populate_from_core_info(self, core_info: dict):
-        """Fill spinboxes from database core_info dict and enable Estimate."""
+    def populate_from_core_info(
+        self,
+        core_info: dict,
+        trigger_pen: float = 0.0,
+    ):
+        """Fill spinboxes from database core_info dict and enable Estimate.
+
+        Parameters
+        ----------
+        core_info : dict
+            Database core record (keys: core_length, scope,
+            trigger_line_length, trigger_core_length, pig_weights).
+        trigger_pen : float
+            Current trigger penetration value from the Calculate panel (m).
+        """
         self.core_length_spin.setValue(float(core_info.get('core_length') or 0.0))
         self.scope_spin.setValue(float(core_info.get('scope') or 0.0))
         self.trigger_line_spin.setValue(
@@ -129,6 +153,7 @@ class AlterPanel(BaseModePanel):
         self.trigger_core_spin.setValue(
             float(core_info.get('trigger_core_length') or 0.0)
         )
+        self.trigger_pen_spin.setValue(trigger_pen)
         self.num_pigs_spin.setValue(int(core_info.get('pig_weights') or 0))
         self.estimate_btn.setEnabled(True)
 
@@ -145,6 +170,9 @@ class AlterPanel(BaseModePanel):
 
     def get_trigger_core_length(self) -> float:
         return self.trigger_core_spin.value()
+
+    def get_trigger_pen(self) -> float:
+        return self.trigger_pen_spin.value()
 
     def get_num_pigs(self) -> int:
         return self.num_pigs_spin.value()

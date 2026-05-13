@@ -328,29 +328,29 @@ class AnalysisController:
 
             panel.log_widget.log(f"\n{'='*50}")
             panel.log_widget.log("APPLYING CORRECTIONS")
-
-            # Get calibration mapping and reference
-            cal_mapping = panel.get_calibration_mapping()  # cal_label -> col_name
-            ref_label = panel.get_ref_sensor()             # calibration label
-
-            # Find corresponding column for reference
-            ref_col = cal_mapping.get(ref_label)
-            if ref_col is None:
-                self._show_warning(
-                    f"Reference sensor '{ref_label}' is not mapped to a column.\n"
-                    f"Check the calibration label mapping."
-                )
-                return
-
-            ref_short = SensorData.get_short_name(ref_col)
-            panel.log_widget.log(
-                f"Reference: {ref_label} = {ref_short} (will NOT be modified)"
-            )
             panel.log_widget.log(f"{'='*50}")
 
             # Apply regression corrections if calibration loaded
             correction_results = {}
             if self.calibration is not None and panel.correction_checkboxes:
+                # Get calibration mapping and reference (only needed for regression)
+                cal_mapping = panel.get_calibration_mapping()  # cal_label -> col_name
+                ref_label = panel.get_ref_sensor()             # calibration label
+
+                # Find corresponding column for reference
+                ref_col = cal_mapping.get(ref_label)
+                if ref_col is None:
+                    self._show_warning(
+                        f"Reference sensor '{ref_label}' is not mapped to a column.\n"
+                        f"Check the calibration label mapping."
+                    )
+                    return
+
+                ref_short = SensorData.get_short_name(ref_col)
+                panel.log_widget.log(
+                    f"Reference: {ref_label} = {ref_short} (will NOT be modified)"
+                )
+                panel.log_widget.log(f"{'='*50}")
                 enabled_targets = panel.get_enabled_calibration_targets()
 
                 panel.log_widget.log("\nApplying depth-dependent corrections...")
@@ -1443,22 +1443,25 @@ class AnalysisController:
                 piston_alt_sc = results.piston_alt  # seafloor - piston[start_core]
 
         # -- Start Penetration values --
-        # start_pen = first index >= start_core where core_tip >= seafloor
+        # start_pen = first index >= trip where core_tip >= seafloor
+        # (independent of start_core — barrel may reach seafloor before scope opens)
         ws_at_sp = None
         piston_at_sp = None
         piston_alt_sp = None
+        pen_before_core = False
         core_tip_series = ws_vals + WEIGHT_LENGTH + core_length_m
-        search_from = start_core_idx if (start_core_idx is not None
-                                         and 0 <= start_core_idx < n) else trip_idx
-        after_search = core_tip_series[search_from:]
+        after_search = core_tip_series[trip_idx:]
         pen_candidates = np.where(after_search >= results.seafloor)[0]
         if len(pen_candidates) > 0:
-            sp_idx = search_from + int(pen_candidates[0])
+            sp_idx = trip_idx + int(pen_candidates[0])
             if 0 <= sp_idx < n:
                 ws_at_sp = float(ws_vals[sp_idx])
                 if piston is not None and sp_idx < len(piston):
                     piston_at_sp = float(piston[sp_idx])
                     piston_alt_sp = results.seafloor - piston_at_sp
+                if (start_core_idx is not None
+                        and sp_idx < start_core_idx):
+                    pen_before_core = True
 
         # -- End-of-penetration values --
         ws_at_ep = None
@@ -1484,6 +1487,7 @@ class AnalysisController:
             ws_at_start_pen=ws_at_sp,
             piston_at_start_pen=piston_at_sp,
             piston_alt_at_start_pen=piston_alt_sp,
+            start_pen_before_start_core=pen_before_core,
             ws_at_end_pen=ws_at_ep,
             ws_at_pullout=ws_at_po,
             piston_at_pullout=piston_at_po,
@@ -1676,9 +1680,7 @@ class AnalysisController:
         self.main_plot.add_seafloor_line(sf)
         # Add start_pen line
         core_tip = ws_vals + WEIGHT_LENGTH + core_length_m
-        search_from = (self._calc_start_core_idx
-                       if self._calc_start_core_idx is not None
-                       else trip_idx)
+        search_from = trip_idx
         after = core_tip[search_from:]
         candidates = np.where(after >= sf)[0]
         if len(candidates) > 0:
@@ -2332,7 +2334,13 @@ class AnalysisController:
                 if core_info is None and self.sensor_data is not None:
                     core_info = self.sensor_data.metadata
                 if core_info is not None:
-                    self.alter_panel.populate_from_core_info(core_info)
+                    tpen = (
+                        self.calculate_panel.get_trigger_pen()
+                        if self.calculate_panel is not None else 0.0
+                    )
+                    self.alter_panel.populate_from_core_info(
+                        core_info, trigger_pen=tpen
+                    )
             if self._last_calc_results is not None:
                 self.main_window.show_secondary_view('calculation')
             else:
@@ -2545,7 +2553,7 @@ class AnalysisController:
             md = self.sensor_data.metadata
             trigger_core_length_ft = md.get('trigger_core_length')
             core_length_ft = md.get('core_length')
-            trigger_pen = panel.get_trigger_pen()
+            trigger_pen = self.alter_panel.get_trigger_pen()
 
             # Re-run calculations
             results = compute_calculations(

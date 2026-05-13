@@ -44,6 +44,8 @@ class GeometryInput:
     ws_at_start_pen: Optional[float] = None
     piston_at_start_pen: Optional[float] = None
     piston_alt_at_start_pen: Optional[float] = None
+    # Ordering flag — True when barrel hits seafloor before scope opens
+    start_pen_before_start_core: bool = False
     # End-of-initial-penetration values
     ws_at_end_pen: Optional[float] = None
     # Pullout values
@@ -109,31 +111,32 @@ class CalculationPlotView(QWidget):
         positions.append(x)
         x += gap
 
-        # -- GROUP 2: @ Start Core --
+        # -- GROUPS 2 & 3: @ Start Core and @ Start Pen (temporal order) --
+        # When start_pen occurs before start_core (barrel hits seafloor before
+        # scope fully opens), draw Start Pen first to keep left=earlier.
+        _groups_23 = []
         if geo.ws_at_start_core is not None:
-            ws = geo.ws_at_start_core
-            self._draw_box(x, ws, WEIGHT_LENGTH, '#3498db', 'Weight')
-            self._draw_box(x, ws + WEIGHT_LENGTH,
-                           geo.core_length_m, '#2ecc71', 'Core Barrel')
-            self._draw_piston_alt(
-                x, geo.piston_at_start_core,
-                geo.piston_alt_at_start_core, geo.seafloor,
-            )
-            self._add_group_label(x, ws, '@ Start Core')
-            positions.append(x)
-            x += gap
-
-        # -- GROUP 3: @ Start Penetration --
+            _groups_23.append((
+                geo.ws_at_start_core,
+                geo.piston_at_start_core,
+                geo.piston_alt_at_start_core,
+                '@ Start Core',
+            ))
         if geo.ws_at_start_pen is not None:
-            ws = geo.ws_at_start_pen
-            self._draw_box(x, ws, WEIGHT_LENGTH, '#3498db', 'Weight')
-            self._draw_box(x, ws + WEIGHT_LENGTH,
+            _groups_23.append((
+                geo.ws_at_start_pen,
+                geo.piston_at_start_pen,
+                geo.piston_alt_at_start_pen,
+                '@ Start Pen',
+            ))
+        if geo.start_pen_before_start_core and len(_groups_23) == 2:
+            _groups_23 = list(reversed(_groups_23))
+        for _ws, _piston, _piston_alt, _label in _groups_23:
+            self._draw_box(x, _ws, WEIGHT_LENGTH, '#3498db', 'Weight')
+            self._draw_box(x, _ws + WEIGHT_LENGTH,
                            geo.core_length_m, '#2ecc71', 'Core Barrel')
-            self._draw_piston_alt(
-                x, geo.piston_at_start_pen,
-                geo.piston_alt_at_start_pen, geo.seafloor,
-            )
-            self._add_group_label(x, ws, '@ Start Pen')
+            self._draw_piston_alt(x, _piston, _piston_alt, geo.seafloor)
+            self._add_group_label(x, _ws, _label)
             positions.append(x)
             x += gap
 
