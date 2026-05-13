@@ -1670,6 +1670,7 @@ class AnalysisController:
         self,
         trip_idx: Optional[int] = None,
         ws_override: Optional[np.ndarray] = None,
+        core_length_ft_override: Optional[float] = None,
     ):
         """Recompute and display the start-penetration and seafloor lines.
 
@@ -1680,6 +1681,9 @@ class AnalysisController:
             dataframe.  Pass this when the values have already been shifted
             (e.g. during Alter-mode estimation) so the start_pen line
             reflects the modified trace.
+        core_length_ft_override : float or None
+            Override for core barrel length in feet.  When provided, used
+            instead of the value stored in sensor metadata (e.g. Alter mode).
         """
         self.main_plot.remove_start_pen_line()
         self.main_plot.remove_seafloor_line()
@@ -1687,7 +1691,7 @@ class AnalysisController:
             return
         x = self.sensor_data.get_timestamps_epoch()
         md = self.sensor_data.metadata
-        core_length_ft = md.get('core_length')
+        core_length_ft = core_length_ft_override if core_length_ft_override is not None else md.get('core_length')
         if not core_length_ft or core_length_ft <= 0:
             return
         FT_TO_M_local = 1.0 / 3.28
@@ -2472,9 +2476,11 @@ class AnalysisController:
         db_trig_line_ft = float(
             effective_core_info.get('trigger_line_length') or 0.0
         )
+        db_core_length_ft = float(effective_core_info.get('core_length') or 0.0)
 
         new_scope_ft = self.alter_panel.get_scope()
         new_trig_line_ft = self.alter_panel.get_trigger_line_length()
+        new_core_length_ft = self.alter_panel.get_core_length()
 
         # Log what changed
         log.log("")
@@ -2488,11 +2494,11 @@ class AnalysisController:
             f"{new_trig_line_ft:.2f} ft"
             f"  (Δ {new_trig_line_ft - db_trig_line_ft:+.2f} ft)"
         )
-        if (self.alter_panel.get_core_length() !=
-                float(effective_core_info.get('core_length') or 0.0)):
-            log.log(
-                "Core length change detected — not yet implemented, ignored."
-            )
+        log.log(
+            f"Core length:        {db_core_length_ft:.2f} ft → "
+            f"{new_core_length_ft:.2f} ft"
+            f"  (Δ {new_core_length_ft - db_core_length_ft:+.2f} ft)"
+        )
         if (self.alter_panel.get_trigger_core_length() !=
                 float(effective_core_info.get('trigger_core_length') or 0.0)):
             log.log(
@@ -2576,8 +2582,8 @@ class AnalysisController:
             if new_start_core_idx is not None and 0 <= new_start_core_idx < len(x):
                 self.main_plot.add_start_core_line(float(x[new_start_core_idx]))
 
-            # Core length for piston computation — use DB value for now
-            core_ft = float(effective_core_info.get('core_length') or 0.0)
+            # Core length for piston computation — use altered value from panel
+            core_ft = new_core_length_ft if new_core_length_ft > 0 else db_core_length_ft
             offset_constant = self.piston_panel.get_offset_constant()
 
             # Re-compute piston position
@@ -2594,7 +2600,7 @@ class AnalysisController:
             # Metadata for calculate
             md = self.sensor_data.metadata
             trigger_core_length_ft = md.get('trigger_core_length')
-            core_length_ft = md.get('core_length')
+            core_length_ft = core_ft
             trigger_pen = self.alter_panel.get_trigger_pen()
 
             # Re-run calculations
@@ -2621,8 +2627,10 @@ class AnalysisController:
                 new_start_core_idx, core_ft,
                 self._end_pen_idx, self._pullout_idx,
             )
-            # Refresh start_pen / seafloor lines using the shifted WS array
-            self._update_start_pen_line(trip_idx, ws_override=ws_mod)
+            # Refresh start_pen / seafloor lines using the shifted WS array and altered core length
+            self._update_start_pen_line(
+                trip_idx, ws_override=ws_mod, core_length_ft_override=core_length_ft
+            )
             if self.main_window is not None:
                 self.main_window.show_secondary_view('calculation')
 
