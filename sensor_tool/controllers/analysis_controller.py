@@ -122,6 +122,7 @@ class AnalysisController:
         self.time_panel.clear_selection_requested.connect(self._clear_selection)
         self.time_panel.calculate_offsets_requested.connect(self.calculate_time_offsets)
         self.time_panel.apply_correction_requested.connect(self.apply_time_corrections)
+        self.time_panel.apply_manual_requested.connect(self.apply_manual_time_corrections)
         self.time_panel.reset_requested.connect(self.reset_to_original)
         self.time_panel.export_requested.connect(self.export_corrected_csv)
         self.time_panel.plot_original_requested.connect(self.plot_depths)
@@ -565,6 +566,47 @@ class AnalysisController:
                         f"Applied {r.offset_seconds:+.4f}s shift to {short}"
                     )
             panel.log_widget.log("Time corrections applied!")
+
+        except Exception as e:
+            self._show_error("Correction Error", str(e))
+            self.time_panel.log_widget.log(f"ERROR: {e}")
+
+    def apply_manual_time_corrections(self):
+        """Apply manual constant time shifts."""
+        if self.sensor_data is None:
+            self._show_warning("No data loaded")
+            return
+
+        try:
+            panel = self.time_panel
+            manual = panel.get_manual_offsets()
+
+            panel.log_widget.log(f"\n{'='*50}")
+            panel.log_widget.log("APPLYING MANUAL TIME CORRECTIONS")
+            panel.log_widget.log(f"{'='*50}")
+
+            applied = TimeCorrectionProcessor.apply_manual_offsets(
+                self.sensor_data, manual
+            )
+
+            if not applied:
+                panel.log_widget.log("No non-zero offsets to apply.")
+                return
+
+            self.main_plot.set_sensor_data(self.sensor_data)
+
+            suffixes = {}
+            for col, offset in applied.items():
+                short = SensorData.get_short_name(col)
+                suffixes[col] = f" ({offset:+.3f}s)"
+                panel.log_widget.log(f"Applied {offset:+.4f}s shift to {short}")
+
+            self.main_plot.plot_depths_with_labels(
+                self.sensor_data, suffixes,
+                title=self.sensor_data.core_title or 'Time-Corrected',
+            )
+
+            panel.log_widget.log("Manual time corrections applied!")
 
         except Exception as e:
             self._show_error("Correction Error", str(e))
@@ -2632,8 +2674,9 @@ class AnalysisController:
                 self.calibration.sensor_labels, sd.depth_columns,
             )
 
-        # Populate time offset ref sensor combo
+        # Populate time offset ref sensor combo and manual offset spinboxes
         self.time_panel.populate_ref_sensor_combo(sd.depth_columns)
+        self.time_panel.setup_manual_offsets(sd.depth_columns)
 
         # Update piston panel
         if self.piston_panel is not None:

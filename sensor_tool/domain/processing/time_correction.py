@@ -271,3 +271,44 @@ class TimeCorrectionProcessor:
                 ))
 
         return new_data
+
+    @staticmethod
+    def apply_manual_offsets(
+        sensor_data: SensorData,
+        offsets: dict[str, float],
+    ) -> dict[str, float]:
+        """
+        Apply constant manual time shifts to specified depth columns.
+
+        Args:
+            sensor_data: The SensorData to modify (mutated in place).
+            offsets: Maps depth_column_name -> offset_seconds.
+
+        Returns:
+            dict of actually applied offsets (non-zero only).
+        """
+        datetime_col = sensor_data.datetime_col
+        timestamps = pd.to_datetime(sensor_data.df[datetime_col])
+        t_sec = (timestamps - timestamps.iloc[0]).dt.total_seconds().values
+
+        applied = {}
+        for col, offset in offsets.items():
+            if offset == 0.0:
+                continue
+            if col not in sensor_data.df.columns:
+                continue
+
+            shifted = TimeCorrectionProcessor.apply_offset_to_series(
+                t_sec, sensor_data.df[col].values.astype(float), offset
+            )
+            sensor_data.update_depth_column(col, shifted)
+
+            sensor_data.add_correction(CorrectionRecord(
+                correction_type='time_shift_manual',
+                sensor_column=col,
+                description=f"Manual time shift: {offset:+.4f}s",
+                parameters={'offset_seconds': offset},
+            ))
+            applied[col] = offset
+
+        return applied

@@ -36,6 +36,7 @@ class TimeOffsetPanel(BaseModePanel):
     load_file_requested = Signal(str)
     calculate_offsets_requested = Signal()
     apply_correction_requested = Signal()
+    apply_manual_requested = Signal()
     reset_requested = Signal()
     export_requested = Signal()
     plot_original_requested = Signal()
@@ -124,6 +125,13 @@ class TimeOffsetPanel(BaseModePanel):
         offset_group.setLayout(offset_layout)
         self._layout.addWidget(offset_group)
 
+        # -- Manual Time Corrections --
+        self.manual_group = QGroupBox("Manual Time Corrections")
+        self.manual_layout = QGridLayout()
+        self.manual_offset_spinboxes: dict[str, QDoubleSpinBox] = {}
+        self.manual_group.setLayout(self.manual_layout)
+        self._layout.addWidget(self.manual_group)
+
         # -- Actions --
         action_group = QGroupBox("Actions")
         action_layout = QVBoxLayout()
@@ -136,9 +144,13 @@ class TimeOffsetPanel(BaseModePanel):
         calc_btn.clicked.connect(self.calculate_offsets_requested.emit)
         action_layout.addWidget(calc_btn)
 
-        apply_btn = QPushButton("Apply Correction")
+        apply_btn = QPushButton("Apply Heave Correction")
         apply_btn.clicked.connect(self.apply_correction_requested.emit)
         action_layout.addWidget(apply_btn)
+
+        apply_manual_btn = QPushButton("Apply Manual Corrections")
+        apply_manual_btn.clicked.connect(self.apply_manual_requested.emit)
+        action_layout.addWidget(apply_manual_btn)
 
         reset_btn = QPushButton("Reset to Original")
         reset_btn.clicked.connect(self.reset_requested.emit)
@@ -188,6 +200,32 @@ class TimeOffsetPanel(BaseModePanel):
                 self.offset_text.append(
                     f"{short}: {r.offset_seconds:+.3f}s  (RMS: {r.rms_value:.6f})"
                 )
+
+    def setup_manual_offsets(self, depth_columns: list[str]):
+        """Build manual time-offset spinboxes for each depth column."""
+        while self.manual_layout.count():
+            item = self.manual_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        self.manual_offset_spinboxes = {}
+
+        for i, col in enumerate(depth_columns):
+            short = SensorData.get_short_name(col)
+            self.manual_layout.addWidget(QLabel(f"{short}:"), i, 0)
+            spinbox = QDoubleSpinBox()
+            spinbox.setRange(-3600.0, 3600.0)
+            spinbox.setSingleStep(0.1)
+            spinbox.setDecimals(3)
+            spinbox.setValue(0.0)
+            spinbox.setToolTip(col)
+            self.manual_layout.addWidget(spinbox, i, 1)
+            self.manual_layout.addWidget(QLabel("s"), i, 2)
+            self.manual_offset_spinboxes[col] = spinbox
+
+    def get_manual_offsets(self) -> dict[str, float]:
+        """Return manual offsets: depth_column -> offset_seconds."""
+        return {col: spin.value() for col, spin in self.manual_offset_spinboxes.items()}
 
     def get_filter_params(self) -> tuple[float, float, int]:
         return (
