@@ -59,6 +59,13 @@ WINCH_FORMATS = {
         "columns": ["Date", "Time", "Winch", "LCi90_time", "Tension", "Rate", "Payout_", "Mystery"],
         "datetime_code": "pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%m/%d/%Y %H:%M:%S.%f', errors='coerce')",
         "numeric_columns": ["Tension", "Speed_mmpe", "Payout_m"]
+    },
+    "Kilo Moana": {
+    "delimiter": "\\s+",
+    "header_lines": 0,
+    "columns": ["YR", "JULIANDAY", "HR", "MIN", "SEC", "MSEC", "WINCHID", "SPEED", "PAYOUT", "TENSION", "ALARM1", "ALARM2"],
+    "datetime_code": "pd.to_datetime(df['YR'].astype(str) + ' ' + df['JULIANDAY'].astype(str) + ' ' + df['HR'].astype(str) + ' ' + df['MIN'].astype(str) + ' ' + df['SEC'].astype(str) + ' ' + df['MSEC'].astype(str), format='%Y %j %H %M %S %f')",
+    "numeric_columns": ["SPEED", "PAYOUT", "TENSION"]
     }
 }
 

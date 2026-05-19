@@ -417,6 +417,27 @@ def winch_plot():
                                     type="primary",
                                 )
 
+    # Cache control
+    st.divider()
+    st.subheader("🔄 Cache Control")
+
+    col_cache1, col_cache2 = st.columns(2)
+
+    with col_cache1:
+        if st.button("Clear Data Cache", help="Clear cached winch data to reload fresh from database"):
+            st.cache_data.clear()
+            st.success("✅ Cache cleared!")
+            st.rerun()
+
+    with col_cache2:
+        if st.button("Clear All Cache", help="Clear all cached data including parameters"):
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.success("✅ All cache cleared!")
+            st.rerun()
+
+    st.caption("💡 Use after adding or updating data in database")
+
     # Main plotting area
     if 'selected_parameters' in locals() and selected_parameters:
         # Create figure
