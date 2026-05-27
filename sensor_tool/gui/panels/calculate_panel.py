@@ -42,6 +42,7 @@ class CalculatePanel(BaseModePanel):
     plot_original_requested = Signal()
     export_results_requested = Signal()
     export_diagram_requested = Signal()
+    save_to_db_requested = Signal()
     reset_lines_requested = Signal()
     seafloor_override_changed = Signal(object)   # float or None
     seafloor_estimate_requested = Signal()

@@ -297,6 +297,62 @@ def select_cruises_to_keep():
         else:
             print("  ✓ All cruises selected")
 
+def create_sensor_analysis_table():
+    """Create the sensor_analysis_results table for sensor_tool DB export."""
+    print("\n4. Creating sensor_analysis_results table...")
+
+    with get_connection() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sensor_analysis_results (
+                result_id       SERIAL PRIMARY KEY,
+                core_id         INTEGER REFERENCES cores(core_id),
+                analyzed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                -- Trip detection (real columns — queried by recoil tool)
+                trip_index              INTEGER,
+                trip_datetime           TIMESTAMP,
+
+                -- Piston position (real columns — queried by recoil tool)
+                start_core_index        INTEGER,
+                start_core_datetime     TIMESTAMP,
+
+                -- Calculation results (all real columns — queried/reported directly)
+                result_recoil_max       FLOAT,
+                result_fall_dist        FLOAT,
+                result_suck_in          FLOAT,
+                result_recoil_start     FLOAT,
+                result_freefall_start   FLOAT,
+                result_piston_suck      FLOAT,
+                result_seafloor         FLOAT,
+                result_piston_alt       FLOAT,
+                result_pen_deficit      FLOAT,
+                result_freefall_est     FLOAT,
+                trigger_pen_m           FLOAT,
+
+                -- All input parameters stored as JSONB (no schema migrations needed)
+                -- Keys: depth_offset, time_offset, trip, piston, calc_inputs, calc_notes
+                params                  JSONB,
+
+                -- Sync tracking (same pattern as all other tables)
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                modified_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_on_ship BOOLEAN DEFAULT TRUE,
+                sync_status     VARCHAR(20) DEFAULT 'pending',
+                last_synced_at  TIMESTAMP,
+                central_id      INTEGER
+            );
+
+            DROP TRIGGER IF EXISTS sensor_analysis_results_modified
+                ON sensor_analysis_results;
+
+            CREATE TRIGGER sensor_analysis_results_modified
+                BEFORE UPDATE ON sensor_analysis_results
+                FOR EACH ROW EXECUTE FUNCTION update_modified_at();
+        """))
+        conn.commit()
+    print("  ✓ sensor_analysis_results table ready")
+
+
 def main():
     print("\n")
     print("=" * 70)
@@ -314,6 +370,7 @@ def main():
         return
     
     add_sync_tracking()
+    create_sensor_analysis_table()
     select_cruises_to_keep()
     
     print("\n" + "=" * 70)

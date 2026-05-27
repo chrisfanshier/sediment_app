@@ -40,6 +40,7 @@ from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
 from ..persistence.database_loader import DatabaseLoader
+from ..persistence.analysis_results_io import insert_result, update_result
 
 
 class AnalysisController:
@@ -55,6 +56,8 @@ class AnalysisController:
         self.sensor_data: Optional[SensorData] = None      # Primary data
         self.original_data: Optional[SensorData] = None     # Backup for reset
         self._loaded_file_path: Optional[str] = None        # Full path to loaded file
+        self._loaded_core_id: Optional[int] = None           # core_id when loaded from DB
+        self._current_db_result_id: Optional[int] = None     # active sensor_analysis_results row
         self.calibration: Optional[DepthCalibration] = None
         self.generated_calibration: Optional[DepthCalibration] = None
         self.time_offset_results: Optional[list[TimeOffsetResult]] = None
@@ -191,6 +194,10 @@ class AnalysisController:
         # Piston export
         self.piston_panel.export_piston_requested.connect(self.export_piston_csv)
 
+        # Save All to DB — single toolbar action
+        if self.main_window is not None:
+            self.main_window.save_all_action.triggered.connect(self.save_all_to_db)
+
         # Calculate panel
         self.calculate_panel.load_file_requested.connect(self.load_export_csv)
         self.calculate_panel.calculate_requested.connect(self.run_calculations)
@@ -236,6 +243,7 @@ class AnalysisController:
             self.sensor_data = CSVLoader.load_export_csv(file_path)
             self.original_data = self.sensor_data.copy()
             self._loaded_file_path = file_path
+            self._loaded_core_id = None  # CSV has no DB context
 
             self._reset_analysis_state()
             self._update_all_panels_file_info()
@@ -260,6 +268,7 @@ class AnalysisController:
             )
             self.original_data = self.sensor_data.copy()
             self._loaded_file_path = None  # no CSV on disk
+            self._loaded_core_id = core_id
 
             self._reset_analysis_state()
             self._update_all_panels_file_info()
@@ -293,6 +302,7 @@ class AnalysisController:
         self._last_calc_results = None
         self._last_calc_inputs = None
         self._manual_seafloor = None
+        self._current_db_result_id = None  # new analysis session
 
     def load_calibration(self, file_path: str):
         """Load a JSON calibration file and set up mapping UI."""
@@ -2413,6 +2423,376 @@ class AnalysisController:
             for line in header_lines:
                 f.write(line + '\n')
             df_out.to_csv(f, index=False)
+
+    # ==================================================================
+    # Save to Database
+    # ==================================================================
+
+    def _upsert_analysis_result(self,
+                                 flat_data: Optional[dict] = None,
+                                 params_section: Optional[dict] = None) -> None:
+        """
+        Insert a new result row or update the current session row.
+
+        Creates a new row (and caches its result_id) on the first call
+        after a core is loaded or analysis is reset.  Subsequent calls
+        within the same session update that same row so each panel
+        contributes to one consolidated record.
+        """
+        if self._loaded_core_id is None:
+            self._show_warning(
+                "Cannot save to database.\n\n"
+                "This session was loaded from a CSV file.  "
+                "Load data via the database selector to enable DB export."
+            )
+            return
+
+        try:
+            if self._current_db_result_id is None:
+                self._current_db_result_id = insert_result(
+                    self._loaded_core_id, flat_data, params_section
+                )
+                msg = (
+                    f"Analysis result saved to DB "
+                    f"(result_id={self._current_db_result_id})"
+                )
+            else:
+                update_result(
+                    self._current_db_result_id, flat_data, params_section
+                )
+                msg = (
+                    f"Analysis result updated in DB "
+                    f"(result_id={self._current_db_result_id})"
+                )
+
+            self._log_active(msg)
+            if self.main_window:
+                self.main_window.statusBar().showMessage(msg, 5000)
+
+        except Exception as e:
+            self._show_error("Database Save Error", str(e))
+
+    # ------------------------------------------------------------------
+
+    def save_all_to_db(self):
+        """Save all available analysis results to the DB in a single upsert."""
+        if self._loaded_core_id is None:
+            self._show_warning(
+                "Cannot save to database.\n\n"
+                "Load data via the database selector to enable DB export."
+            )
+            return
+
+        import pandas as pd
+        flat_data: dict = {}
+        params_section: dict = {}
+        saved: list = []
+        skipped: list = []
+
+        # --- Depth offset ---
+        if self.sensor_data is not None:
+            panel = self.depth_panel
+            calib_json = self.calibration.to_dict() if self.calibration is not None else None
+            params_section["depth_offset"] = {
+                "calib_json": calib_json,
+                "label_mapping": panel.get_calibration_mapping(),
+                "reference_sensor": panel.get_ref_sensor(),
+                "manual_offsets": panel.get_manual_offsets(),
+            }
+            saved.append("depth offset")
+        else:
+            skipped.append("depth offset (no data)")
+
+        # --- Time offset ---
+        if self.sensor_data is not None:
+            panel = self.time_panel
+            low_hz, high_hz, order = panel.get_filter_params()
+            offsets_data = []
+            if self.time_offset_results:
+                for r in self.time_offset_results:
+                    offsets_data.append({
+                        "sensor_col": r.sensor_column,
+                        "offset_seconds": r.offset_seconds,
+                        "rms_value": r.rms_value,
+                        "is_reference": r.is_reference,
+                    })
+            params_section["time_offset"] = {
+                "reference_col": panel.get_ref_col(),
+                "filter_low_hz": low_hz,
+                "filter_high_hz": high_hz,
+                "filter_order": order,
+                "manual_offsets": panel.get_manual_offsets(),
+                "offsets": offsets_data,
+            }
+            saved.append("time offset")
+
+        # --- Trip detection ---
+        if self.trip_detection_result is not None:
+            panel = self.trip_panel
+            sg_window, sg_poly = panel.get_sg_params()
+            trip_dt_native = (
+                pd.Timestamp(self.trip_detection_result.trip_datetime)
+                .to_pydatetime().replace(tzinfo=None)
+            )
+            flat_data["trip_index"] = int(self.trip_detection_result.trip_index)
+            flat_data["trip_datetime"] = trip_dt_native
+            params_section["trip"] = {
+                "sg_window": sg_window,
+                "sg_poly": sg_poly,
+                "derivative_order": panel.get_derivative_order(),
+                "threshold": panel.get_threshold(),
+                "sampling_rate_hz": panel.get_sampling_rate(),
+                "edge_buffer": panel.get_edge_buffer(),
+            }
+            saved.append("trip detection")
+        else:
+            skipped.append("trip (not detected)")
+
+        # --- Piston position ---
+        if self._piston_start_core_idx is not None:
+            panel = self.piston_panel
+            idx = self._piston_start_core_idx
+            start_dt = None
+            if self.sensor_data is not None:
+                dt_col = self.sensor_data.datetime_col
+                if (dt_col in self.sensor_data.df.columns
+                        and 0 <= idx < len(self.sensor_data.df)):
+                    ts = self.sensor_data.df[dt_col].iloc[idx]
+                    if pd.notna(ts):
+                        start_dt = (
+                            pd.Timestamp(ts).to_pydatetime().replace(tzinfo=None)
+                        )
+            flat_data["start_core_index"] = int(idx)
+            if start_dt is not None:
+                flat_data["start_core_datetime"] = start_dt
+            params_section["piston"] = {
+                "weight_stand_col": panel.get_weight_stand_col(),
+                "release_col": panel.get_release_col(),
+                "scope_ft": panel.get_scope(),
+                "core_length_ft": panel.get_core_length(),
+                "offset_constant_m": panel.get_offset_constant(),
+            }
+            saved.append("piston position")
+        else:
+            skipped.append("piston position (not calculated)")
+
+        # --- Calculation results ---
+        if self._last_calc_results is not None and self._last_calc_inputs is not None:
+            r = self._last_calc_results
+            inp = self._last_calc_inputs
+            calc_flat = {
+                "result_recoil_max":     r.recoil_max,
+                "result_fall_dist":      r.fall_dist,
+                "result_suck_in":        r.suck_in,
+                "result_recoil_start":   r.recoil_start,
+                "result_freefall_start": r.freefall_start,
+                "result_piston_suck":    r.piston_suck,
+                "result_seafloor":       r.seafloor,
+                "result_piston_alt":     r.piston_alt,
+                "result_pen_deficit":    r.pen_deficit,
+                "result_freefall_est":   r.freefall_est,
+                "trigger_pen_m":         inp.get("trigger_pen"),
+            }
+            flat_data.update({k: v for k, v in calc_flat.items() if v is not None})
+            params_section["calc_inputs"] = {
+                "weight_stand_col":       inp.get("weight_stand_col"),
+                "release_col":            inp.get("release_col"),
+                "trigger_col":            inp.get("trigger_col"),
+                "smoothing_enabled":      inp.get("smoothing_enabled"),
+                "sg_window":              inp.get("sg_window"),
+                "sg_poly":                inp.get("sg_poly"),
+                "trip_idx":               inp.get("trip_idx"),
+                "start_core_idx":         inp.get("start_core_idx"),
+                "end_pen_idx":            self._end_pen_idx,
+                "pullout_idx":            self._pullout_idx,
+                "trigger_pen_m":          inp.get("trigger_pen"),
+                "core_length_ft":         inp.get("core_length_ft"),
+                "trigger_core_length_ft": inp.get("trigger_core_length_ft"),
+                "seafloor_manual":        self._manual_seafloor,
+            }
+            params_section["calc_notes"] = list(r.notes)
+            saved.append("calculations")
+        else:
+            skipped.append("calculations (not run)")
+
+        self._upsert_analysis_result(
+            flat_data=flat_data if flat_data else None,
+            params_section=params_section if params_section else None,
+        )
+
+        parts = []
+        if saved:
+            parts.append(f"Saved: {', '.join(saved)}")
+        if skipped:
+            parts.append(f"Skipped: {', '.join(skipped)}")
+        self._log_active("Save All — " + " | ".join(parts))
+
+    def save_depth_offset_to_db(self):
+        """Save depth offset correction parameters to the DB."""
+        if self.sensor_data is None:
+            self._show_warning("No data loaded.")
+            return
+
+        panel = self.depth_panel
+        calib_json = (
+            self.calibration.to_dict() if self.calibration is not None else None
+        )
+        params_section = {
+            "depth_offset": {
+                "calib_json": calib_json,
+                "label_mapping": panel.get_calibration_mapping(),
+                "reference_sensor": panel.get_ref_sensor(),
+                "manual_offsets": panel.get_manual_offsets(),
+            }
+        }
+        self._upsert_analysis_result(params_section=params_section)
+
+    def save_time_offset_to_db(self):
+        """Save time offset correction parameters and results to the DB."""
+        if self.sensor_data is None:
+            self._show_warning("No data loaded.")
+            return
+
+        panel = self.time_panel
+        low_hz, high_hz, order = panel.get_filter_params()
+        offsets_data = []
+        if self.time_offset_results:
+            for r in self.time_offset_results:
+                offsets_data.append({
+                    "sensor_col": r.sensor_column,
+                    "offset_seconds": r.offset_seconds,
+                    "rms_value": r.rms_value,
+                    "is_reference": r.is_reference,
+                })
+        params_section = {
+            "time_offset": {
+                "reference_col": panel.get_ref_col(),
+                "filter_low_hz": low_hz,
+                "filter_high_hz": high_hz,
+                "filter_order": order,
+                "manual_offsets": panel.get_manual_offsets(),
+                "offsets": offsets_data,
+            }
+        }
+        self._upsert_analysis_result(params_section=params_section)
+
+    def save_trip_to_db(self):
+        """Save trip detection result and parameters to the DB."""
+        if self.trip_detection_result is None:
+            self._show_warning("No trip has been detected yet.")
+            return
+
+        panel = self.trip_panel
+        sg_window, sg_poly = panel.get_sg_params()
+        trip_dt = self.trip_detection_result.trip_datetime
+        # Convert to plain Python datetime for SQLAlchemy / JSON
+        import pandas as pd
+        trip_dt_native = pd.Timestamp(trip_dt).to_pydatetime().replace(tzinfo=None)
+
+        flat_data = {
+            "trip_index": int(self.trip_detection_result.trip_index),
+            "trip_datetime": trip_dt_native,
+        }
+        params_section = {
+            "trip": {
+                "sg_window": sg_window,
+                "sg_poly": sg_poly,
+                "derivative_order": panel.get_derivative_order(),
+                "threshold": panel.get_threshold(),
+                "sampling_rate_hz": panel.get_sampling_rate(),
+                "edge_buffer": panel.get_edge_buffer(),
+            }
+        }
+        self._upsert_analysis_result(flat_data=flat_data,
+                                      params_section=params_section)
+
+    def save_piston_to_db(self):
+        """Save piston position parameters and start-core index to the DB."""
+        if self._piston_start_core_idx is None:
+            self._show_warning("Piston position has not been calculated yet.")
+            return
+
+        panel = self.piston_panel
+        ws_col = panel.get_weight_stand_col()
+        rel_col = panel.get_release_col()
+
+        start_dt = None
+        idx = self._piston_start_core_idx
+        if self.sensor_data is not None:
+            dt_col = self.sensor_data.datetime_col
+            if (dt_col in self.sensor_data.df.columns
+                    and 0 <= idx < len(self.sensor_data.df)):
+                ts = self.sensor_data.df[dt_col].iloc[idx]
+                import pandas as pd
+                if pd.notna(ts):
+                    start_dt = (
+                        pd.Timestamp(ts).to_pydatetime().replace(tzinfo=None)
+                    )
+
+        flat_data = {
+            "start_core_index": int(idx),
+            "start_core_datetime": start_dt,
+        }
+        params_section = {
+            "piston": {
+                "weight_stand_col": ws_col,
+                "release_col": rel_col,
+                "scope_ft": panel.get_scope(),
+                "core_length_ft": panel.get_core_length(),
+                "offset_constant_m": panel.get_offset_constant(),
+            }
+        }
+        self._upsert_analysis_result(flat_data=flat_data,
+                                      params_section=params_section)
+
+    def save_calculations_to_db(self):
+        """Save all calculation results and inputs to the DB."""
+        if self._last_calc_results is None or self._last_calc_inputs is None:
+            self._show_warning(
+                "No calculation results available.  Click 'Calculate' first."
+            )
+            return
+
+        r = self._last_calc_results
+        inp = self._last_calc_inputs
+        flat_data = {
+            "result_recoil_max":     r.recoil_max,
+            "result_fall_dist":      r.fall_dist,
+            "result_suck_in":        r.suck_in,
+            "result_recoil_start":   r.recoil_start,
+            "result_freefall_start": r.freefall_start,
+            "result_piston_suck":    r.piston_suck,
+            "result_seafloor":       r.seafloor,
+            "result_piston_alt":     r.piston_alt,
+            "result_pen_deficit":    r.pen_deficit,
+            "result_freefall_est":   r.freefall_est,
+            "trigger_pen_m":         inp.get("trigger_pen"),
+        }
+        # Drop None floats so we don't overwrite already-set columns with NULL
+        flat_data = {k: v for k, v in flat_data.items() if v is not None}
+
+        inp = self._last_calc_inputs
+        params_section = {
+            "calc_inputs": {
+                "weight_stand_col":        inp.get("weight_stand_col"),
+                "release_col":             inp.get("release_col"),
+                "trigger_col":             inp.get("trigger_col"),
+                "smoothing_enabled":       inp.get("smoothing_enabled"),
+                "sg_window":               inp.get("sg_window"),
+                "sg_poly":                 inp.get("sg_poly"),
+                "trip_idx":                inp.get("trip_idx"),
+                "start_core_idx":          inp.get("start_core_idx"),
+                "end_pen_idx":             self._end_pen_idx,
+                "pullout_idx":             self._pullout_idx,
+                "trigger_pen_m":           inp.get("trigger_pen"),
+                "core_length_ft":          inp.get("core_length_ft"),
+                "trigger_core_length_ft":  inp.get("trigger_core_length_ft"),
+                "seafloor_manual":         self._manual_seafloor,
+            },
+            "calc_notes": list(r.notes),
+        }
+        self._upsert_analysis_result(flat_data=flat_data,
+                                      params_section=params_section)
 
     # ==================================================================
     # Selection handling

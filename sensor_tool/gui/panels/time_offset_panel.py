@@ -39,6 +39,7 @@ class TimeOffsetPanel(BaseModePanel):
     apply_manual_requested = Signal()
     reset_requested = Signal()
     export_requested = Signal()
+    save_to_db_requested = Signal()
     plot_original_requested = Signal()
     selection_mode_changed = Signal(bool)
     clear_selection_requested = Signal()

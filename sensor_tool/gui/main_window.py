@@ -128,6 +128,15 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._show_about)
         toolbar.addAction(about_action)
 
+        toolbar.addSeparator()
+
+        self.save_all_action = QAction("💾 Save All to DB", self)
+        self.save_all_action.setToolTip(
+            "Save all analysis results to the database "
+            "(depth offset, time offset, trip, piston, calculations)."
+        )
+        toolbar.addAction(self.save_all_action)
+
     def _build_central(self):
         # -- Control panels (left) --
         self.panel_stack = QStackedWidget()

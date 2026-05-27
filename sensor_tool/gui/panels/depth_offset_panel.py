@@ -37,6 +37,7 @@ class DepthOffsetPanel(BaseModePanel):
     apply_corrections_requested = Signal()
     reset_requested = Signal()
     export_requested = Signal()
+    save_to_db_requested = Signal()
     plot_original_requested = Signal()
 
     def __init__(self, parent=None):
