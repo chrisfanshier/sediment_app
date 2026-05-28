@@ -353,6 +353,59 @@ def create_sensor_analysis_table():
     print("  ✓ sensor_analysis_results table ready")
 
 
+def create_recoil_calibration_table():
+    """Create the recoil_calibration table for the recoil fitting tool."""
+    print("\n5. Creating recoil_calibration table...")
+
+    with get_connection() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS recoil_calibration (
+                cal_id          SERIAL PRIMARY KEY,
+                result_id       INTEGER REFERENCES sensor_analysis_results(result_id),
+                core_id         INTEGER REFERENCES cores(core_id),
+                fitted_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                -- Deployment parameters used for this fit
+                depth_m         FLOAT,
+                corer_lbs       FLOAT,
+                instrument_lbs  FLOAT,
+                rope_type       VARCHAR(20),
+                rope_dia_mm     FLOAT,
+
+                -- Fit results
+                "E_eff_gpa"         FLOAT,
+                "C_drag"            FLOAT,
+                v0_ms               FLOAT,
+                rebound_magnitude_m FLOAT,
+                rebound_time_s      FLOAT,
+                rmse_m              FLOAT,
+                r_squared           FLOAT,
+                k_nm                FLOAT,
+                static_stretch_m    FLOAT,
+
+                -- User annotation
+                notes           TEXT,
+
+                -- Sync tracking
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                modified_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_on_ship BOOLEAN DEFAULT TRUE,
+                sync_status     VARCHAR(20) DEFAULT 'pending',
+                last_synced_at  TIMESTAMP,
+                central_id      INTEGER
+            );
+
+            DROP TRIGGER IF EXISTS recoil_calibration_modified
+                ON recoil_calibration;
+
+            CREATE TRIGGER recoil_calibration_modified
+                BEFORE UPDATE ON recoil_calibration
+                FOR EACH ROW EXECUTE FUNCTION update_modified_at();
+        """))
+        conn.commit()
+    print("  ✓ recoil_calibration table ready")
+
+
 def main():
     print("\n")
     print("=" * 70)
@@ -371,6 +424,7 @@ def main():
     
     add_sync_tracking()
     create_sensor_analysis_table()
+    create_recoil_calibration_table()
     select_cruises_to_keep()
     
     print("\n" + "=" * 70)
