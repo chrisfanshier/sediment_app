@@ -39,6 +39,19 @@ class DeploymentParams:
     deployment_id: Optional[str] = None
     """Optional label (e.g. core name) for display/export."""
 
+    # Empirical curve-fitting options (ignored by physics model path)
+    curve_type: str = 'physics'
+    """One of 'physics', 'exponential', 'critically_damped'."""
+
+    A_m: float = 2.0
+    """Asymptotic rebound magnitude (m) for empirical curves."""
+
+    tau_s: float = 1.0
+    """Time constant (s) for empirical curves."""
+
+    auto_fit: bool = True
+    """When True, run curve_fit automatically; otherwise use A_m/tau_s directly."""
+
 
 @dataclass
 class ModelResult:

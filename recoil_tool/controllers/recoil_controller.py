@@ -15,7 +15,10 @@ import numpy as np
 from PySide6.QtWidgets import QMessageBox
 
 from ..domain.models.recoil_params import DeploymentParams, ModelResult
-from ..domain.processing.recoil_model import forward_model, estimate_v0, _spring_constant
+from ..domain.processing.recoil_model import (
+    forward_model, estimate_v0, _spring_constant,
+    fit_empirical_curve, evaluate_empirical_curve,
+)
 from ..persistence.recoil_loader import RecoilLoader
 
 if TYPE_CHECKING:
@@ -160,7 +163,11 @@ class RecoilController:
                 trip_idx=self._trip_idx,
                 core_name=core_info.get('core_name', ''),
             )
-            self.deployment_panel.pre_populate(core_info)
+            # Augment core_info with depth at trip so pre_populate can use it
+            # as deployment depth (more accurate than result_seafloor estimate)
+            augmented = dict(core_info)
+            augmented['depth_at_trip'] = float(self._depth_m[self._trip_idx])
+            self.deployment_panel.pre_populate(augmented)
             self.results_panel.clear()
             self._status(
                 f"Loaded {core_info.get('core_name', core_id)} — "
@@ -180,56 +187,82 @@ class RecoilController:
         self._status(f"Trip index updated to {idx}")
 
     def _on_plot_requested(self, params: DeploymentParams):
-        """Run the forward model with user-supplied parameters and overlay on the plot."""
+        """Run the model or empirical fit and overlay on the plot."""
         if self._time_s is None or self._depth_m is None:
             self._show_warning("No data loaded", "Load a core first.")
             return
         if self._trip_idx is None:
             self._show_warning("No trip index", "Place a trip marker first.")
             return
-        if params.corer_lbs <= 0:
-            self._show_warning("Invalid input", "Corer weight must be > 0.")
-            return
         if params.depth_m <= 0:
             self._show_warning("Invalid input", "Deployment depth must be > 0.")
             return
 
-        self._status("Running forward model…")
-        try:
-            v0 = estimate_v0(self._time_s, self._depth_m, self._trip_idx)
+        if params.curve_type == 'physics':
+            if params.corer_lbs <= 0:
+                self._show_warning("Invalid input", "Corer weight must be > 0.")
+                return
 
-            t_post = self._time_s[self._trip_idx:]
-            d_post = self._depth_m[self._trip_idx:]
-            t_rel = t_post - t_post[0]
+            self._status("Running forward model…")
+            try:
+                v0 = estimate_v0(self._time_s, self._depth_m, self._trip_idx)
 
-            x_model = forward_model(
-                t_rel, params, params.E_gpa, params.C_drag, v0
-            )
+                t_post = self._time_s[self._trip_idx:]
+                d_post = self._depth_m[self._trip_idx:]
+                t_rel = t_post - t_post[0]
 
-            # Convert upward displacement to absolute depth
-            depth_model = d_post[0] - x_model
+                x_model = forward_model(
+                    t_rel, params, params.E_gpa, params.C_drag, v0
+                )
 
-            self.plot_view.plot_model_overlay(self._trip_idx, depth_model)
+                # Convert upward displacement to absolute depth
+                depth_model = d_post[0] - x_model
 
-            # Build summary result
-            k = _spring_constant(params.E_gpa, params.rope_dia_mm, params.depth_m)
-            peak_idx = int(np.argmax(x_model))
-            result = ModelResult(
-                v0_ms=v0,
-                peak_displacement_m=float(x_model[peak_idx]),
-                peak_time_s=float(t_rel[peak_idx]),
-                k_nm=float(k),
-                deployment=params,
-            )
-            self.results_panel.show_result(result)
+                self.plot_view.plot_model_overlay(self._trip_idx, depth_model)
 
-            self._status(
-                f"Model plotted — E={params.E_gpa:.1f} GPa, "
-                f"k={k:,.0f} N/m, "
-                f"peak={result.peak_displacement_m:.3f} m at {result.peak_time_s:.1f} s"
-            )
-        except Exception as exc:
-            self._show_error("Model Error", str(exc))
+                # Build summary result
+                k = _spring_constant(params.E_gpa, params.rope_dia_mm, params.depth_m)
+                peak_idx = int(np.argmax(x_model))
+                result = ModelResult(
+                    v0_ms=v0,
+                    peak_displacement_m=float(x_model[peak_idx]),
+                    peak_time_s=float(t_rel[peak_idx]),
+                    k_nm=float(k),
+                    deployment=params,
+                )
+                self.results_panel.show_result(result)
+
+                self._status(
+                    f"Model plotted — E={params.E_gpa:.1f} GPa, "
+                    f"k={k:,.0f} N/m, "
+                    f"peak={result.peak_displacement_m:.3f} m at {result.peak_time_s:.1f} s"
+                )
+            except Exception as exc:
+                self._show_error("Model Error", str(exc))
+
+        else:  # empirical curve
+            self._status("Fitting empirical curve…")
+            try:
+                if params.auto_fit:
+                    A, tau, depth_model = fit_empirical_curve(
+                        self._time_s, self._depth_m, self._trip_idx, params.curve_type
+                    )
+                    self.deployment_panel.set_empirical_params(A, tau)
+                else:
+                    A, tau = params.A_m, params.tau_s
+                    depth_model = evaluate_empirical_curve(
+                        self._time_s, self._depth_m, self._trip_idx,
+                        params.curve_type, A, tau,
+                    )
+
+                self.plot_view.plot_model_overlay(
+                    self._trip_idx, depth_model, color='#756bb1'
+                )
+                self._status(
+                    f"Empirical curve plotted — A={A:.3f} m, tau={tau:.3f} s"
+                )
+            except Exception as exc:
+                self._show_error("Fit Error", str(exc))
 
     # ------------------------------------------------------------------
     # Helpers

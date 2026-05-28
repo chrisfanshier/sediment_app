@@ -131,7 +131,7 @@ class RecoilLoader:
           - at least one sensor_analysis_results row with trip_index NOT NULL
           - at least one sensor_files row with sensor_location = 'Release Device'
 
-        Includes pig_weights and wire_type for pre-populating the deployment form.
+        Includes pig_weights, wire_type, and core_length for pre-populating the deployment form.
         """
         with get_connection() as conn:
             rows = conn.execute(text("""
@@ -139,6 +139,7 @@ class RecoilLoader:
                     c.core_id,
                     c.core_name,
                     c.pig_weights,
+                    c.core_length,
                     w.wire_type,
                     (
                         SELECT sar.result_seafloor
@@ -169,6 +170,7 @@ class RecoilLoader:
                 "core_id": r.core_id,
                 "core_name": r.core_name,
                 "pig_weights": r.pig_weights,
+                "core_length": r.core_length,
                 "wire_type": r.wire_type or "",
                 "result_seafloor": r.result_seafloor,
             }
@@ -219,6 +221,7 @@ class RecoilLoader:
                 FROM sensor_files
                 WHERE core_id = :cid
                   AND sensor_location = 'Release Device'
+                  AND LOWER(file_name) NOT LIKE '%.acc'
                 ORDER BY file_name
                 LIMIT 1
             """), {"cid": core_id}).fetchone()

@@ -176,3 +176,117 @@ def estimate_v0(
         return float(savgol_filter(seg, win, polyorder, deriv=1, delta=dt)[-1])
     except Exception:
         return 0.0
+
+
+# ---------------------------------------------------------------------------
+# Empirical rebound curves
+# ---------------------------------------------------------------------------
+
+def _exp_curve(t: np.ndarray, A: float, tau: float) -> np.ndarray:
+    """x(t) = A * (1 - exp(-t/tau))  — upward displacement (m)."""
+    return A * (1.0 - np.exp(-t / tau))
+
+
+def _crit_damped_curve(t: np.ndarray, A: float, tau: float) -> np.ndarray:
+    """x(t) = A * (1 - (1 + t/tau) * exp(-t/tau))  — upward displacement (m)."""
+    return A * (1.0 - (1.0 + t / tau) * np.exp(-t / tau))
+
+
+def fit_empirical_curve(
+    time_s: np.ndarray,
+    depth_m: np.ndarray,
+    trip_idx: int,
+    curve_type: str,
+) -> tuple[float, float, np.ndarray]:
+    """
+    Fit an empirical rebound curve to the observed upswing.
+
+    Parameters
+    ----------
+    time_s : array
+        Absolute time in seconds.
+    depth_m : array
+        Depth in metres (positive downward).
+    trip_idx : int
+        Index of trip in the arrays.
+    curve_type : str
+        'exponential' or 'critically_damped'.
+
+    Returns
+    -------
+    (A, tau, depth_model)
+        A           : fitted asymptotic magnitude (m)
+        tau         : fitted time constant (s)
+        depth_model : absolute depth array over the full post-trip window
+    """
+    from scipy.optimize import curve_fit as _curve_fit
+
+    curve_fn = _exp_curve if curve_type == 'exponential' else _crit_damped_curve
+
+    # Sample interval from the time array
+    dt = float(np.median(np.diff(time_s)))
+    if dt <= 0:
+        dt = 1.0
+
+    # Peak = shallowest point after trip (minimum depth = maximum rebound)
+    post_depth = depth_m[trip_idx:]
+    peak_rel = int(np.argmin(post_depth))
+    peak_idx = trip_idx + peak_rel
+
+    # Upswing window: trip to peak (inclusive)
+    n_fit = peak_rel + 1
+    t_fit = np.arange(n_fit) * dt
+    trip_depth = float(depth_m[trip_idx])
+    x_fit = trip_depth - depth_m[trip_idx: peak_idx + 1]  # upward displacement
+
+    obs_A = float(np.max(x_fit)) if len(x_fit) > 0 else 2.0
+    est_tau = (t_fit[-1] / 3.0) if len(t_fit) > 1 else 1.0
+    p0 = [max(obs_A, 0.01), max(est_tau, 0.1)]
+
+    try:
+        popt, _ = _curve_fit(
+            curve_fn, t_fit, x_fit,
+            p0=p0,
+            bounds=([0.0, 0.01], [50.0, 60.0]),
+            maxfev=5000,
+        )
+        A_fit, tau_fit = float(popt[0]), float(popt[1])
+    except Exception:
+        # Fitting failed — fall back to initial guess
+        A_fit, tau_fit = float(p0[0]), float(p0[1])
+
+    # Evaluate over the full post-trip window
+    t_post = np.arange(len(post_depth)) * dt
+    x_model = curve_fn(t_post, A_fit, tau_fit)
+    depth_model = trip_depth - x_model
+
+    return A_fit, tau_fit, depth_model
+
+
+def evaluate_empirical_curve(
+    time_s: np.ndarray,
+    depth_m: np.ndarray,
+    trip_idx: int,
+    curve_type: str,
+    A: float,
+    tau: float,
+) -> np.ndarray:
+    """
+    Evaluate an empirical rebound curve with user-supplied A and tau.
+
+    Returns
+    -------
+    np.ndarray
+        Absolute depth array over the full post-trip window.
+    """
+    curve_fn = _exp_curve if curve_type == 'exponential' else _crit_damped_curve
+
+    dt = float(np.median(np.diff(time_s)))
+    if dt <= 0:
+        dt = 1.0
+
+    post_depth = depth_m[trip_idx:]
+    t_post = np.arange(len(post_depth)) * dt
+    x_model = curve_fn(t_post, A, tau)
+    trip_depth = float(depth_m[trip_idx])
+    return trip_depth - x_model

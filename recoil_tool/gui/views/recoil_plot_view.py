@@ -125,13 +125,13 @@ class RecoilPlotView(QWidget):
     # Public: model overlay
     # ------------------------------------------------------------------
 
-    def plot_model_overlay(self, start_idx: int, depth_model_m: np.ndarray):
+    def plot_model_overlay(self, start_idx: int, depth_model_m: np.ndarray, color: str = _MODEL_COLOR):
         """Overlay the forward-model depth curve starting at start_idx."""
         self.clear_overlay()
         x = np.arange(start_idx, start_idx + len(depth_model_m))
         self._model_curve = self._depth_plot.plot(
             x, depth_model_m,
-            pen=pg.mkPen(color=_MODEL_COLOR, width=2.5),
+            pen=pg.mkPen(color=color, width=2.5),
         )
 
     def clear_overlay(self):

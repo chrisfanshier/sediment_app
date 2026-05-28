@@ -14,7 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QDoubleSpinBox, QComboBox,
-    QPushButton, QGroupBox, QLabel, QSizePolicy,
+    QPushButton, QGroupBox, QLabel, QSizePolicy, QCheckBox,
 )
 
 from ...domain.models.recoil_params import DeploymentParams
@@ -73,7 +73,7 @@ class DeploymentPanel(QWidget):
         form.addRow("Deployment depth:", self._depth_spin)
 
         self._corer_spin = QDoubleSpinBox()
-        self._corer_spin.setRange(0.0, 5000.0)
+        self._corer_spin.setRange(0.0, 20000.0)
         self._corer_spin.setDecimals(1)
         self._corer_spin.setSuffix(" lbs")
         self._corer_spin.setValue(0.0)
@@ -117,6 +117,45 @@ class DeploymentPanel(QWidget):
 
         root.addWidget(params_group)
 
+        # ── Curve fitting group ──
+        curve_group = QGroupBox("Curve Fitting")
+        curve_vlayout = QVBoxLayout(curve_group)
+
+        curve_form = QFormLayout()
+        self._curve_combo = QComboBox()
+        self._curve_combo.addItems(["Physics model", "Exponential", "Critically damped"])
+        self._curve_combo.currentIndexChanged.connect(self._on_curve_type_changed)
+        curve_form.addRow("Curve type:", self._curve_combo)
+        curve_vlayout.addLayout(curve_form)
+
+        # Empirical parameter widgets — hidden when Physics model is selected
+        self._empirical_widget = QWidget()
+        emp_form = QFormLayout(self._empirical_widget)
+        emp_form.setContentsMargins(0, 0, 0, 0)
+
+        self._A_spin = QDoubleSpinBox()
+        self._A_spin.setRange(0.0, 50.0)
+        self._A_spin.setDecimals(3)
+        self._A_spin.setSuffix(" m")
+        self._A_spin.setValue(2.0)
+        emp_form.addRow("A:", self._A_spin)
+
+        self._tau_spin = QDoubleSpinBox()
+        self._tau_spin.setRange(0.01, 60.0)
+        self._tau_spin.setDecimals(3)
+        self._tau_spin.setSuffix(" s")
+        self._tau_spin.setValue(1.0)
+        emp_form.addRow("tau:", self._tau_spin)
+
+        self._autofit_check = QCheckBox("Auto-fit on plot")
+        self._autofit_check.setChecked(True)
+        emp_form.addRow("", self._autofit_check)
+
+        curve_vlayout.addWidget(self._empirical_widget)
+        self._empirical_widget.setVisible(False)
+
+        root.addWidget(curve_group)
+
         # ── Button ──
         self._plot_btn = QPushButton("Plot Model")
         self._plot_btn.setMinimumHeight(32)
@@ -132,11 +171,17 @@ class DeploymentPanel(QWidget):
     def pre_populate(self, core_info: dict):
         """
         Pre-populate form fields from a core_info dict as returned by
-        RecoilLoader.fetch_cores_with_results().
+        RecoilLoader.fetch_cores_with_results() (optionally augmented with
+        'depth_at_trip' and 'core_length' by the controller).
         """
-        seafloor = core_info.get('result_seafloor')
-        if seafloor is not None:
-            self._depth_spin.setValue(float(seafloor))
+        # Deployment depth: prefer actual sensor depth at trip time
+        depth_at_trip = core_info.get('depth_at_trip')
+        if depth_at_trip is not None:
+            self._depth_spin.setValue(float(depth_at_trip))
+        else:
+            seafloor = core_info.get('result_seafloor')
+            if seafloor is not None:
+                self._depth_spin.setValue(float(seafloor))
 
         wire_type = core_info.get('wire_type') or ''
         self._rope_combo.setCurrentText(_guess_rope_type(wire_type))
@@ -146,11 +191,20 @@ class DeploymentPanel(QWidget):
         pig = core_info.get('pig_weights')
         self._pig_label.setText(str(pig) if pig is not None else "—")
 
-        # Reset corer weight to zero — always manual
-        self._corer_spin.setValue(0.0)
+        # Auto-compute corer weight: base + barrel length term + pig weights
+        # Formula: 3200 + (200 * core_length_ft / 10) + 200 + (600 * num_pigs)
+        core_length_ft = float(core_info.get('core_length') or 0.0)
+        num_pigs = int(core_info.get('pig_weights') or 0)
+        if core_length_ft > 0:
+            corer_wt = 3200 + (200 * core_length_ft / 10) + 200 + (600 * num_pigs)
+            self._corer_spin.setValue(round(corer_wt, 1))
+        else:
+            self._corer_spin.setValue(0.0)
 
     def get_params(self) -> DeploymentParams:
         """Read current form values into a DeploymentParams."""
+        _CURVE_TYPES = ['physics', 'exponential', 'critically_damped']
+        curve_type = _CURVE_TYPES[self._curve_combo.currentIndex()]
         return DeploymentParams(
             depth_m=self._depth_spin.value(),
             corer_lbs=self._corer_spin.value(),
@@ -159,11 +213,31 @@ class DeploymentPanel(QWidget):
             rope_dia_mm=self._dia_spin.value(),
             E_gpa=self._E_spin.value(),
             C_drag=self._Cd_spin.value(),
+            curve_type=curve_type,
+            A_m=self._A_spin.value(),
+            tau_s=self._tau_spin.value(),
+            auto_fit=self._autofit_check.isChecked(),
         )
+
+    # ------------------------------------------------------------------
+    # Public: empirical params push-back
+    # ------------------------------------------------------------------
+
+    def set_empirical_params(self, A: float, tau: float):
+        """Push fitted A and tau into the spinboxes (called by controller after auto-fit)."""
+        self._A_spin.blockSignals(True)
+        self._tau_spin.blockSignals(True)
+        self._A_spin.setValue(round(A, 3))
+        self._tau_spin.setValue(round(tau, 3))
+        self._A_spin.blockSignals(False)
+        self._tau_spin.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _on_curve_type_changed(self, index: int):
+        self._empirical_widget.setVisible(index != 0)
 
     def _on_plot_clicked(self):
         self.plot_requested.emit(self.get_params())

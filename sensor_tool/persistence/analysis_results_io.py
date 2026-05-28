@@ -127,7 +127,7 @@ def update_result(result_id: int,
         # Merge into existing JSONB: COALESCE handles NULL initial value.
         data["_params_merge"] = json.dumps(params_section, cls=_NumpyEncoder)
         set_parts.append(
-            "params = COALESCE(params, '{}'::jsonb) || :_params_merge::jsonb"
+            "params = COALESCE(params, '{}'::jsonb) || (:_params_merge)::jsonb"
         )
 
     if not set_parts:
