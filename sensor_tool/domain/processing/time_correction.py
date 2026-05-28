@@ -81,7 +81,7 @@ class TimeCorrectionProcessor:
         else:
             delta = 0.0
 
-        offset_seconds = (lags[idx] + delta) / fs
+        offset_seconds = float((lags[idx] + delta) / fs)
         lags_seconds = lags / fs
 
         return offset_seconds, corr, lags_seconds

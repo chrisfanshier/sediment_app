@@ -10,9 +10,42 @@ overwriting other panels' data.
 from __future__ import annotations
 
 import json
+import math
 import sys
 import os
 from typing import Optional
+
+import numpy as np
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """JSON encoder that handles numpy scalar types and non-finite floats."""
+
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+    def iterencode(self, o, _one_shot=False):
+        # Also convert plain Python float NaN/Inf to null.
+        return super().iterencode(self._sanitize(o), _one_shot)
+
+    def _sanitize(self, obj):
+        if isinstance(obj, float):
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+            return obj
+        if isinstance(obj, dict):
+            return {k: self._sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [self._sanitize(v) for v in obj]
+        return obj
 
 # Allow running from the sensor_tool package context.
 # db_util lives two levels up from this file (scripts/).
@@ -48,7 +81,7 @@ def insert_result(core_id: int,
     data["core_id"] = core_id
 
     if params_section is not None:
-        data["params"] = json.dumps(params_section)
+        data["params"] = json.dumps(params_section, cls=_NumpyEncoder)
 
     data = add_sync_tracking(data, created_on_ship=True, is_update=False)
 
@@ -92,7 +125,7 @@ def update_result(result_id: int,
 
     if params_section is not None:
         # Merge into existing JSONB: COALESCE handles NULL initial value.
-        data["_params_merge"] = json.dumps(params_section)
+        data["_params_merge"] = json.dumps(params_section, cls=_NumpyEncoder)
         set_parts.append(
             "params = COALESCE(params, '{}'::jsonb) || :_params_merge::jsonb"
         )

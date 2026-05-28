@@ -209,10 +209,10 @@ class PistonPositionPanel(BaseModePanel):
 
     def set_parameters_from_metadata(self, metadata: dict):
         """Pre-fill scope, core-length, and trip time from CSV metadata."""
-        if 'scope' in metadata:
-            self.scope_spin.setValue(metadata['scope'])
-        if 'core_length' in metadata:
-            self.core_length_spin.setValue(metadata['core_length'])
+        # Always set so a null DB value resets the spinbox instead of leaving
+        # a stale value from the previously loaded core.
+        self.scope_spin.setValue(metadata.get('scope', 0.0))
+        self.core_length_spin.setValue(metadata.get('core_length', 0.0))
         if 'trip_time' in metadata:
             self.set_trip_time(metadata['trip_time'], source='CSV header')
 
