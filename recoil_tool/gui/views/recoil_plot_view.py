@@ -15,9 +15,10 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 pg.setConfigOptions(antialias=True, useOpenGL=True)
 
-_DEPTH_COLOR = '#6baed6'
-_MODEL_COLOR = '#e6550d'
-_TRIP_PEN = pg.mkPen(color='#888888', width=2, style=Qt.DashLine)
+_DEPTH_COLOR   = '#6baed6'
+_MODEL_COLOR   = '#e6550d'
+_TRIP_PEN      = pg.mkPen(color='#888888', width=2, style=Qt.DashLine)
+_FIT_END_PEN   = pg.mkPen(color='#2ca02c', width=2, style=Qt.SolidLine)
 
 
 class RecoilPlotView(QWidget):
@@ -32,6 +33,7 @@ class RecoilPlotView(QWidget):
     """
 
     trip_index_changed = Signal(int)
+    fit_end_changed    = Signal(int)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -39,6 +41,7 @@ class RecoilPlotView(QWidget):
         self._time_s: np.ndarray | None = None
         self._depth_m: np.ndarray | None = None
         self._trip_line: pg.InfiniteLine | None = None
+        self._fit_end_line: pg.InfiniteLine | None = None
         self._model_curve = None
 
         self._setup_ui()
@@ -114,12 +117,33 @@ class RecoilPlotView(QWidget):
         self._trip_line.sigPositionChangeFinished.connect(self._on_trip_line_moved)
         self._depth_plot.addItem(self._trip_line)
 
+        # Fit endpoint line — default 10 s after trip
+        dt = float(np.median(np.diff(time_s))) if len(time_s) > 1 else 1.0
+        default_end = min(trip_idx + max(1, int(10.0 / dt)), len(depth_m) - 1)
+        self._fit_end_line = pg.InfiniteLine(
+            pos=float(default_end),
+            angle=90,
+            movable=True,
+            pen=_FIT_END_PEN,
+            label='Fit end',
+            labelOpts={'color': '#2ca02c', 'position': 0.85},
+        )
+        self._fit_end_line.sigPositionChangeFinished.connect(self._on_fit_end_line_moved)
+        self._depth_plot.addItem(self._fit_end_line)
+
     def update_trip_marker(self, trip_idx: int):
         if self._trip_line is None:
             return
         self._trip_line.blockSignals(True)
         self._trip_line.setPos(float(trip_idx))
         self._trip_line.blockSignals(False)
+
+    def update_fit_end_marker(self, fit_end_idx: int):
+        if self._fit_end_line is None:
+            return
+        self._fit_end_line.blockSignals(True)
+        self._fit_end_line.setPos(float(fit_end_idx))
+        self._fit_end_line.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Public: model overlay
@@ -148,6 +172,7 @@ class RecoilPlotView(QWidget):
         """Clear the depth plot and reset state."""
         self._depth_plot.clear()
         self._trip_line = None
+        self._fit_end_line = None
         self._model_curve = None
         self._time_s = None
         self._depth_m = None
@@ -160,4 +185,25 @@ class RecoilPlotView(QWidget):
         if self._trip_line is None:
             return
         idx = max(0, int(round(self._trip_line.getXPos())))
+        # Clamp: trip must stay strictly left of fit end
+        if self._fit_end_line is not None:
+            fit_end_pos = int(round(self._fit_end_line.getXPos()))
+            if idx >= fit_end_pos:
+                idx = max(0, fit_end_pos - 1)
+                self._trip_line.blockSignals(True)
+                self._trip_line.setPos(float(idx))
+                self._trip_line.blockSignals(False)
         self.trip_index_changed.emit(idx)
+
+    def _on_fit_end_line_moved(self):
+        if self._fit_end_line is None:
+            return
+        idx = max(0, int(round(self._fit_end_line.getXPos())))
+        # Clamp: fit end must stay strictly right of trip
+        trip_pos = int(round(self._trip_line.getXPos())) if self._trip_line is not None else 0
+        if idx <= trip_pos:
+            idx = trip_pos + 1
+            self._fit_end_line.blockSignals(True)
+            self._fit_end_line.setPos(float(idx))
+            self._fit_end_line.blockSignals(False)
+        self.fit_end_changed.emit(idx)

@@ -56,6 +56,7 @@ class RecoilController:
         self._time_s: Optional[np.ndarray] = None
         self._depth_m: Optional[np.ndarray] = None
         self._trip_idx: Optional[int] = None
+        self._fit_end_idx: Optional[int] = None
         self._analysis_result: Optional[dict] = None
         self._loaded_core_id: Optional[int] = None
 
@@ -68,6 +69,7 @@ class RecoilController:
     def _connect_signals(self):
         self.deployment_panel.plot_requested.connect(self._on_plot_requested)
         self.plot_view.trip_index_changed.connect(self._on_trip_index_changed)
+        self.plot_view.fit_end_changed.connect(self._on_fit_end_changed)
 
     # ------------------------------------------------------------------
     # DB: dropdown population (called by MainWindow)
@@ -156,6 +158,12 @@ class RecoilController:
                 trip_idx = int(raw_idx) if 0 <= raw_idx < len(time_s) else 0
             self._trip_idx = trip_idx
 
+            # Default fit window: trip + 10 s (same formula used by plot_view)
+            dt = float(np.median(np.diff(time_s))) if len(time_s) > 1 else 1.0
+            self._fit_end_idx = min(
+                trip_idx + max(1, int(10.0 / dt)), len(time_s) - 1
+            )
+
             # Update GUI
             self.plot_view.clear()
             self.plot_view.plot_depth_trace(
@@ -185,6 +193,11 @@ class RecoilController:
         """User dragged the trip marker to a new position."""
         self._trip_idx = idx
         self._status(f"Trip index updated to {idx}")
+
+    def _on_fit_end_changed(self, idx: int):
+        """User dragged the fit endpoint marker to a new position."""
+        self._fit_end_idx = idx
+        self._status(f"Fit end index updated to {idx}")
 
     def _on_plot_requested(self, params: DeploymentParams):
         """Run the model or empirical fit and overlay on the plot."""
@@ -243,24 +256,35 @@ class RecoilController:
         else:  # empirical curve
             self._status("Fitting empirical curve…")
             try:
+                _CURVE_COLORS = {
+                    'exponential':       '#756bb1',
+                    'critically_damped': '#31a354',
+                    'gamma_pulse':       '#e6550d',
+                    'damped_sine':       '#de2d26',
+                }
+                color = _CURVE_COLORS.get(params.curve_type, '#756bb1')
+
                 if params.auto_fit:
-                    A, tau, depth_model = fit_empirical_curve(
-                        self._time_s, self._depth_m, self._trip_idx, params.curve_type
+                    A, tau, omega, depth_model = fit_empirical_curve(
+                        self._time_s, self._depth_m, self._trip_idx, params.curve_type,
+                        fit_end_idx=self._fit_end_idx,
                     )
-                    self.deployment_panel.set_empirical_params(A, tau)
+                    self.deployment_panel.set_empirical_params(A, tau, omega)
                 else:
-                    A, tau = params.A_m, params.tau_s
+                    A, tau, omega = params.A_m, params.tau_s, params.omega_rads
                     depth_model = evaluate_empirical_curve(
                         self._time_s, self._depth_m, self._trip_idx,
-                        params.curve_type, A, tau,
+                        params.curve_type, A, tau, omega,
                     )
 
                 self.plot_view.plot_model_overlay(
-                    self._trip_idx, depth_model, color='#756bb1'
+                    self._trip_idx, depth_model, color=color
                 )
-                self._status(
-                    f"Empirical curve plotted — A={A:.3f} m, tau={tau:.3f} s"
-                )
+                msg = f"Empirical curve plotted — A={A:.3f} m, tau={tau:.3f} s"
+                if omega is not None:
+                    msg += f", \u03c9={omega:.3f} rad/s"
+                self._status(msg)
+                self.results_panel.show_empirical_result(params.curve_type, A, tau, omega)
             except Exception as exc:
                 self._show_error("Fit Error", str(exc))
 

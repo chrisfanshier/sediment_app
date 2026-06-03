@@ -41,13 +41,16 @@ class DeploymentParams:
 
     # Empirical curve-fitting options (ignored by physics model path)
     curve_type: str = 'physics'
-    """One of 'physics', 'exponential', 'critically_damped'."""
+    """One of 'physics', 'exponential', 'critically_damped', 'gamma_pulse', 'damped_sine'."""
 
     A_m: float = 2.0
     """Asymptotic rebound magnitude (m) for empirical curves."""
 
     tau_s: float = 1.0
     """Time constant (s) for empirical curves."""
+
+    omega_rads: float = 1.0
+    """Angular frequency (rad/s) — used only by the 'damped_sine' curve type."""
 
     auto_fit: bool = True
     """When True, run curve_fit automatically; otherwise use A_m/tau_s directly."""

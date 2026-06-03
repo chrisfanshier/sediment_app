@@ -1,5 +1,6 @@
 """
-ResultsPanel — displays ModelResult fields after running the forward model.
+ResultsPanel — displays ModelResult fields after running the forward model,
+or fitted empirical parameters after an empirical curve fit.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ _PLACEHOLDER = "—"
 
 
 class ResultsPanel(QWidget):
-    """Read-only display of the most recent ModelResult."""
+    """Read-only display of the most recent ModelResult or empirical fit."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -29,7 +30,8 @@ class ResultsPanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
 
-        results_group = QGroupBox("Model Results")
+        # Physics model results
+        results_group = QGroupBox("Physics Model Results")
         form = QFormLayout(results_group)
         form.setLabelAlignment(Qt.AlignRight)
 
@@ -51,6 +53,25 @@ class ResultsPanel(QWidget):
         form.addRow("Peak time (s):", self._peak_time_lbl)
 
         root.addWidget(results_group)
+
+        # Empirical fit results
+        emp_group = QGroupBox("Empirical Fit Parameters")
+        emp_form = QFormLayout(emp_group)
+        emp_form.setLabelAlignment(Qt.AlignRight)
+
+        self._curve_type_lbl = _lbl()
+        emp_form.addRow("Curve type:", self._curve_type_lbl)
+
+        self._A_lbl = _lbl()
+        emp_form.addRow("A (m):", self._A_lbl)
+
+        self._tau_lbl = _lbl()
+        emp_form.addRow("tau (s):", self._tau_lbl)
+
+        self._omega_lbl = _lbl()
+        emp_form.addRow("ω (rad/s):", self._omega_lbl)
+
+        root.addWidget(emp_group)
         root.addStretch()
 
     # ------------------------------------------------------------------
@@ -58,14 +79,29 @@ class ResultsPanel(QWidget):
     # ------------------------------------------------------------------
 
     def show_result(self, result: ModelResult):
-        """Populate labels from a ModelResult."""
+        """Populate physics model labels from a ModelResult."""
         self._v0_lbl.setText(f"{result.v0_ms:.4f}")
         self._k_lbl.setText(f"{result.k_nm:,.1f}")
         self._peak_disp_lbl.setText(f"{result.peak_displacement_m:.3f}")
         self._peak_time_lbl.setText(f"{result.peak_time_s:.2f}")
 
+    def show_empirical_result(
+        self,
+        curve_type: str,
+        A: float,
+        tau: float,
+        omega: 'float | None' = None,
+    ):
+        """Populate empirical fit labels."""
+        self._curve_type_lbl.setText(curve_type.replace('_', ' ').title())
+        self._A_lbl.setText(f"{A:.4f}")
+        self._tau_lbl.setText(f"{tau:.4f}")
+        self._omega_lbl.setText(f"{omega:.4f}" if omega is not None else _PLACEHOLDER)
+
     def clear(self):
         """Reset all labels to placeholder."""
         for lbl in (self._v0_lbl, self._k_lbl,
-                    self._peak_disp_lbl, self._peak_time_lbl):
+                    self._peak_disp_lbl, self._peak_time_lbl,
+                    self._curve_type_lbl, self._A_lbl,
+                    self._tau_lbl, self._omega_lbl):
             lbl.setText(_PLACEHOLDER)

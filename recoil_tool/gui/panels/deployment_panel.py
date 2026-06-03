@@ -123,40 +123,60 @@ class DeploymentPanel(QWidget):
 
         curve_form = QFormLayout()
         self._curve_combo = QComboBox()
-        self._curve_combo.addItems(["Physics model", "Exponential", "Critically damped"])
+        self._curve_combo.addItems([
+            "Physics model",
+            "Exponential",
+            "Critically damped",
+            "Gamma Pulse",
+            "Damped Sine",
+        ])
         self._curve_combo.currentIndexChanged.connect(self._on_curve_type_changed)
         curve_form.addRow("Curve type:", self._curve_combo)
         curve_vlayout.addLayout(curve_form)
 
         # Empirical parameter widgets — hidden when Physics model is selected
         self._empirical_widget = QWidget()
-        emp_form = QFormLayout(self._empirical_widget)
-        emp_form.setContentsMargins(0, 0, 0, 0)
+        self._emp_form = QFormLayout(self._empirical_widget)
+        self._emp_form.setContentsMargins(0, 0, 0, 0)
 
         self._A_spin = QDoubleSpinBox()
         self._A_spin.setRange(0.0, 50.0)
         self._A_spin.setDecimals(3)
         self._A_spin.setSuffix(" m")
         self._A_spin.setValue(2.0)
-        emp_form.addRow("A:", self._A_spin)
+        self._emp_form.addRow("A:", self._A_spin)
 
         self._tau_spin = QDoubleSpinBox()
-        self._tau_spin.setRange(0.01, 60.0)
+        self._tau_spin.setRange(0.01, 100.0)
         self._tau_spin.setDecimals(3)
         self._tau_spin.setSuffix(" s")
         self._tau_spin.setValue(1.0)
-        emp_form.addRow("tau:", self._tau_spin)
+        self._emp_form.addRow("tau:", self._tau_spin)
+
+        self._omega_spin = QDoubleSpinBox()
+        self._omega_spin.setRange(0.1, 20.0)
+        self._omega_spin.setDecimals(3)
+        self._omega_spin.setSingleStep(0.1)
+        self._omega_spin.setSuffix(" rad/s")
+        self._omega_spin.setValue(1.0)
+        self._emp_form.addRow("ω:", self._omega_spin)
 
         self._autofit_check = QCheckBox("Auto-fit on plot")
         self._autofit_check.setChecked(True)
-        emp_form.addRow("", self._autofit_check)
+        self._emp_form.addRow("", self._autofit_check)
 
         curve_vlayout.addWidget(self._empirical_widget)
         self._empirical_widget.setVisible(False)
 
         root.addWidget(curve_group)
 
-        # ── Button ──
+        # ── Buttons ──
+        self._autofit_btn = QPushButton("Autofit")
+        self._autofit_btn.setMinimumHeight(32)
+        self._autofit_btn.setEnabled(False)   # enabled only for empirical curve types
+        self._autofit_btn.clicked.connect(self._on_autofit_clicked)
+        root.addWidget(self._autofit_btn)
+
         self._plot_btn = QPushButton("Plot Model")
         self._plot_btn.setMinimumHeight(32)
         self._plot_btn.clicked.connect(self._on_plot_clicked)
@@ -203,7 +223,9 @@ class DeploymentPanel(QWidget):
 
     def get_params(self) -> DeploymentParams:
         """Read current form values into a DeploymentParams."""
-        _CURVE_TYPES = ['physics', 'exponential', 'critically_damped']
+        _CURVE_TYPES = [
+            'physics', 'exponential', 'critically_damped', 'gamma_pulse', 'damped_sine',
+        ]
         curve_type = _CURVE_TYPES[self._curve_combo.currentIndex()]
         return DeploymentParams(
             depth_m=self._depth_spin.value(),
@@ -216,6 +238,7 @@ class DeploymentPanel(QWidget):
             curve_type=curve_type,
             A_m=self._A_spin.value(),
             tau_s=self._tau_spin.value(),
+            omega_rads=self._omega_spin.value(),
             auto_fit=self._autofit_check.isChecked(),
         )
 
@@ -223,14 +246,18 @@ class DeploymentPanel(QWidget):
     # Public: empirical params push-back
     # ------------------------------------------------------------------
 
-    def set_empirical_params(self, A: float, tau: float):
-        """Push fitted A and tau into the spinboxes (called by controller after auto-fit)."""
+    def set_empirical_params(self, A: float, tau: float, omega: 'float | None' = None):
+        """Push fitted A, tau (and optionally omega) into the spinboxes."""
         self._A_spin.blockSignals(True)
         self._tau_spin.blockSignals(True)
+        self._omega_spin.blockSignals(True)
         self._A_spin.setValue(round(A, 3))
         self._tau_spin.setValue(round(tau, 3))
+        if omega is not None:
+            self._omega_spin.setValue(round(omega, 3))
         self._A_spin.blockSignals(False)
         self._tau_spin.blockSignals(False)
+        self._omega_spin.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Slots
@@ -238,6 +265,15 @@ class DeploymentPanel(QWidget):
 
     def _on_curve_type_changed(self, index: int):
         self._empirical_widget.setVisible(index != 0)
+        # Omega row only applies to Damped Sine (index 4)
+        self._emp_form.setRowVisible(self._omega_spin, index == 4)
+        # Autofit only makes sense for empirical curve types
+        self._autofit_btn.setEnabled(index != 0)
+
+    def _on_autofit_clicked(self):
+        params = self.get_params()
+        params.auto_fit = True   # force regardless of checkbox state
+        self.plot_requested.emit(params)
 
     def _on_plot_clicked(self):
         self.plot_requested.emit(self.get_params())

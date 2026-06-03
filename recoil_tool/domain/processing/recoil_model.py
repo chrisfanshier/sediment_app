@@ -192,12 +192,31 @@ def _crit_damped_curve(t: np.ndarray, A: float, tau: float) -> np.ndarray:
     return A * (1.0 - (1.0 + t / tau) * np.exp(-t / tau))
 
 
+def _gamma_pulse_curve(t: np.ndarray, A: float, tau: float) -> np.ndarray:
+    """x(t) = A * (t/tau) * exp(1 - t/tau)  — peaks at t=tau with amplitude A."""
+    return A * (t / tau) * np.exp(1.0 - t / tau)
+
+
+def _damped_sine_curve(t: np.ndarray, A: float, tau: float, omega: float) -> np.ndarray:
+    """x(t) = A * exp(-t/tau) * sin(omega * t)  — oscillatory decay."""
+    return A * np.exp(-t / tau) * np.sin(omega * t)
+
+
+_CURVE_FN_MAP = {
+    'exponential':       (_exp_curve,         2),
+    'critically_damped': (_crit_damped_curve,  2),
+    'gamma_pulse':       (_gamma_pulse_curve,  2),
+    'damped_sine':       (_damped_sine_curve,  3),
+}
+
+
 def fit_empirical_curve(
     time_s: np.ndarray,
     depth_m: np.ndarray,
     trip_idx: int,
     curve_type: str,
-) -> tuple[float, float, np.ndarray]:
+    fit_end_idx: 'int | None' = None,
+) -> tuple[float, float, 'float | None', np.ndarray]:
     """
     Fit an empirical rebound curve to the observed upswing.
 
@@ -210,57 +229,100 @@ def fit_empirical_curve(
     trip_idx : int
         Index of trip in the arrays.
     curve_type : str
-        'exponential' or 'critically_damped'.
+        One of 'exponential', 'critically_damped', 'gamma_pulse', 'damped_sine'.
+    fit_end_idx : int or None
+        Explicit end index for the fit window (exclusive).  When provided the
+        segment depth_m[trip_idx:fit_end_idx] is used directly.  When None the
+        fit window is determined by auto-detecting the rebound peak within the
+        first ~30 s after trip.
 
     Returns
     -------
-    (A, tau, depth_model)
-        A           : fitted asymptotic magnitude (m)
+    (A, tau, omega, depth_model)
+        A           : fitted amplitude / asymptote (m)
         tau         : fitted time constant (s)
+        omega       : fitted angular frequency (rad/s), or None for non-sine types
         depth_model : absolute depth array over the full post-trip window
     """
     from scipy.optimize import curve_fit as _curve_fit
 
-    curve_fn = _exp_curve if curve_type == 'exponential' else _crit_damped_curve
+    if curve_type not in _CURVE_FN_MAP:
+        raise ValueError(f"Unknown curve_type: {curve_type!r}")
+
+    curve_fn, n_params = _CURVE_FN_MAP[curve_type]
 
     # Sample interval from the time array
     dt = float(np.median(np.diff(time_s)))
     if dt <= 0:
         dt = 1.0
 
-    # Peak = shallowest point after trip (minimum depth = maximum rebound)
     post_depth = depth_m[trip_idx:]
-    peak_rel = int(np.argmin(post_depth))
-    peak_idx = trip_idx + peak_rel
+    trip_depth = float(depth_m[trip_idx])
+
+    if fit_end_idx is not None:
+        # Use explicitly specified window
+        end = max(trip_idx + 1, min(int(fit_end_idx), len(depth_m)))
+        peak_rel = end - trip_idx
+        peak_idx = end
+    else:
+        # Auto-detect: shallowest point within the first ~30 s
+        search_window = min(int(30.0 / dt) + 1, len(post_depth))
+        peak_rel = int(np.argmin(post_depth[:search_window]))
+        peak_idx = trip_idx + peak_rel
 
     # Upswing window: trip to peak (inclusive)
     n_fit = peak_rel + 1
     t_fit = np.arange(n_fit) * dt
-    trip_depth = float(depth_m[trip_idx])
-    x_fit = trip_depth - depth_m[trip_idx: peak_idx + 1]  # upward displacement
+    x_fit = trip_depth - depth_m[trip_idx: peak_idx + 1]  # upward displacement (m)
 
     obs_A = float(np.max(x_fit)) if len(x_fit) > 0 else 2.0
-    est_tau = (t_fit[-1] / 3.0) if len(t_fit) > 1 else 1.0
-    p0 = [max(obs_A, 0.01), max(est_tau, 0.1)]
 
-    try:
-        popt, _ = _curve_fit(
-            curve_fn, t_fit, x_fit,
-            p0=p0,
-            bounds=([0.0, 0.01], [50.0, 60.0]),
-            maxfev=5000,
-        )
-        A_fit, tau_fit = float(popt[0]), float(popt[1])
-    except Exception:
-        # Fitting failed — fall back to initial guess
-        A_fit, tau_fit = float(p0[0]), float(p0[1])
+    if n_params == 2:
+        if curve_type == 'gamma_pulse':
+            # For gamma pulse, tau is the time of peak, so seed with observed peak time
+            t_peak = float(t_fit[int(np.argmax(x_fit))]) if len(t_fit) > 1 else 1.0
+            p0 = [max(obs_A, 0.01), max(t_peak, 0.1)]
+        else:
+            est_tau = (t_fit[-1] / 3.0) if len(t_fit) > 1 else 1.0
+            p0 = [max(obs_A, 0.01), max(est_tau, 0.1)]
 
-    # Evaluate over the full post-trip window
-    t_post = np.arange(len(post_depth)) * dt
-    x_model = curve_fn(t_post, A_fit, tau_fit)
+        try:
+            popt, _ = _curve_fit(
+                curve_fn, t_fit, x_fit,
+                p0=p0,
+                bounds=([0.0, 0.01], [50.0, 60.0]),
+                maxfev=5000,
+            )
+            A_fit, tau_fit = float(popt[0]), float(popt[1])
+        except Exception:
+            A_fit, tau_fit = float(p0[0]), float(p0[1])
+
+        omega_fit: 'float | None' = None
+        t_post = np.arange(len(post_depth)) * dt
+        x_model = curve_fn(t_post, A_fit, tau_fit)
+
+    else:  # damped_sine (n_params == 3)
+        # Seed omega from peak time: first peak of sin at omega*t_peak = pi/2
+        t_peak = float(t_fit[-1]) if len(t_fit) > 1 else 1.0
+        omega_est = np.pi / (2.0 * max(t_peak, 0.1))
+        p0 = [max(obs_A, 0.01), max(t_peak * 2.0, 0.1), omega_est]
+
+        try:
+            popt, _ = _curve_fit(
+                curve_fn, t_fit, x_fit,
+                p0=p0,
+                bounds=([0.0, 0.1, 0.1], [50.0, 100.0, 20.0]),
+                maxfev=5000,
+            )
+            A_fit, tau_fit, omega_fit = float(popt[0]), float(popt[1]), float(popt[2])
+        except Exception:
+            A_fit, tau_fit, omega_fit = float(p0[0]), float(p0[1]), float(p0[2])
+
+        t_post = np.arange(len(post_depth)) * dt
+        x_model = curve_fn(t_post, A_fit, tau_fit, omega_fit)
+
     depth_model = trip_depth - x_model
-
-    return A_fit, tau_fit, depth_model
+    return A_fit, tau_fit, omega_fit, depth_model
 
 
 def evaluate_empirical_curve(
@@ -270,16 +332,22 @@ def evaluate_empirical_curve(
     curve_type: str,
     A: float,
     tau: float,
+    omega: float = 1.0,
 ) -> np.ndarray:
     """
-    Evaluate an empirical rebound curve with user-supplied A and tau.
+    Evaluate an empirical rebound curve with user-supplied parameters.
+
+    Parameters
+    ----------
+    omega : float
+        Angular frequency (rad/s) — only used when curve_type == 'damped_sine'.
 
     Returns
     -------
     np.ndarray
         Absolute depth array over the full post-trip window.
     """
-    curve_fn = _exp_curve if curve_type == 'exponential' else _crit_damped_curve
+    curve_fn, n_params = _CURVE_FN_MAP.get(curve_type, (_exp_curve, 2))
 
     dt = float(np.median(np.diff(time_s)))
     if dt <= 0:
@@ -287,6 +355,6 @@ def evaluate_empirical_curve(
 
     post_depth = depth_m[trip_idx:]
     t_post = np.arange(len(post_depth)) * dt
-    x_model = curve_fn(t_post, A, tau)
+    x_model = curve_fn(t_post, A, tau, omega) if n_params == 3 else curve_fn(t_post, A, tau)
     trip_depth = float(depth_m[trip_idx])
     return trip_depth - x_model
