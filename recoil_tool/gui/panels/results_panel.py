@@ -4,10 +4,10 @@ or fitted empirical parameters after an empirical curve fit.
 """
 from __future__ import annotations
 
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QLabel, QGroupBox,
+    QWidget, QVBoxLayout, QFormLayout, QLabel, QGroupBox, QPushButton,
 )
-from PySide6.QtCore import Qt
 
 from ...domain.models.recoil_params import ModelResult
 
@@ -16,6 +16,9 @@ _PLACEHOLDER = "—"
 
 class ResultsPanel(QWidget):
     """Read-only display of the most recent ModelResult or empirical fit."""
+
+    save_requested = Signal()
+    """Emitted when the user clicks Save Result."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -72,6 +75,14 @@ class ResultsPanel(QWidget):
         emp_form.addRow("ω (rad/s):", self._omega_lbl)
 
         root.addWidget(emp_group)
+
+        # Save button
+        self._save_btn = QPushButton("Save Result")
+        self._save_btn.setMinimumHeight(30)
+        self._save_btn.setEnabled(False)
+        self._save_btn.clicked.connect(self.save_requested)
+        root.addWidget(self._save_btn)
+
         root.addStretch()
 
     # ------------------------------------------------------------------
@@ -84,6 +95,7 @@ class ResultsPanel(QWidget):
         self._k_lbl.setText(f"{result.k_nm:,.1f}")
         self._peak_disp_lbl.setText(f"{result.peak_displacement_m:.3f}")
         self._peak_time_lbl.setText(f"{result.peak_time_s:.2f}")
+        self._save_btn.setEnabled(True)
 
     def show_empirical_result(
         self,
@@ -97,11 +109,13 @@ class ResultsPanel(QWidget):
         self._A_lbl.setText(f"{A:.4f}")
         self._tau_lbl.setText(f"{tau:.4f}")
         self._omega_lbl.setText(f"{omega:.4f}" if omega is not None else _PLACEHOLDER)
+        self._save_btn.setEnabled(True)
 
     def clear(self):
-        """Reset all labels to placeholder."""
+        """Reset all labels to placeholder and disable Save."""
         for lbl in (self._v0_lbl, self._k_lbl,
                     self._peak_disp_lbl, self._peak_time_lbl,
                     self._curve_type_lbl, self._A_lbl,
                     self._tau_lbl, self._omega_lbl):
             lbl.setText(_PLACEHOLDER)
+        self._save_btn.setEnabled(False)

@@ -26,6 +26,9 @@ _WIRE_TYPE_MAP = {
     'steel': 'steel',
     'wire': 'steel',
 }
+_CURVE_TYPES = [
+    'physics', 'exponential', 'critically_damped', 'gamma_pulse', 'damped_sine',
+]
 
 
 def _guess_rope_type(wire_type: str) -> str:
@@ -46,7 +49,8 @@ class DeploymentPanel(QWidget):
         Emitted when user clicks "Plot Model".
     """
 
-    plot_requested = Signal(object)   # DeploymentParams
+    plot_requested    = Signal(object)   # DeploymentParams
+    curve_type_changed = Signal(str)     # emitted when user changes curve type combobox
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -223,9 +227,6 @@ class DeploymentPanel(QWidget):
 
     def get_params(self) -> DeploymentParams:
         """Read current form values into a DeploymentParams."""
-        _CURVE_TYPES = [
-            'physics', 'exponential', 'critically_damped', 'gamma_pulse', 'damped_sine',
-        ]
         curve_type = _CURVE_TYPES[self._curve_combo.currentIndex()]
         return DeploymentParams(
             depth_m=self._depth_spin.value(),
@@ -259,16 +260,47 @@ class DeploymentPanel(QWidget):
         self._tau_spin.blockSignals(False)
         self._omega_spin.blockSignals(False)
 
+    def restore_params(self, params: DeploymentParams):
+        """
+        Set all form fields from a saved DeploymentParams without emitting
+        curve_type_changed (so the controller's restore loop doesn't re-trigger).
+        """
+        idx = _CURVE_TYPES.index(params.curve_type) if params.curve_type in _CURVE_TYPES else 0
+
+        self._depth_spin.setValue(params.depth_m)
+        self._corer_spin.setValue(params.corer_lbs)
+        self._instrument_spin.setValue(params.instrument_lbs)
+        rope_idx = self._rope_combo.findText(params.rope_type)
+        if rope_idx >= 0:
+            self._rope_combo.setCurrentIndex(rope_idx)
+        self._dia_spin.setValue(params.rope_dia_mm)
+        self._E_spin.setValue(params.E_gpa)
+        self._Cd_spin.setValue(params.C_drag)
+
+        # Set curve combobox without emitting curve_type_changed
+        self._curve_combo.blockSignals(True)
+        self._curve_combo.setCurrentIndex(idx)
+        self._curve_combo.blockSignals(False)
+        self._apply_curve_type_ui(idx)   # update visibility
+
+        self._A_spin.setValue(params.A_m)
+        self._tau_spin.setValue(params.tau_s)
+        self._omega_spin.setValue(params.omega_rads)
+        self._autofit_check.setChecked(False)
+
     # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
 
-    def _on_curve_type_changed(self, index: int):
+    def _apply_curve_type_ui(self, index: int):
+        """Update widget visibility/enabled state for the given curve index."""
         self._empirical_widget.setVisible(index != 0)
-        # Omega row only applies to Damped Sine (index 4)
         self._emp_form.setRowVisible(self._omega_spin, index == 4)
-        # Autofit only makes sense for empirical curve types
         self._autofit_btn.setEnabled(index != 0)
+
+    def _on_curve_type_changed(self, index: int):
+        self._apply_curve_type_ui(index)
+        self.curve_type_changed.emit(_CURVE_TYPES[index])
 
     def _on_autofit_clicked(self):
         params = self.get_params()

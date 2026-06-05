@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+import dataclasses
+
 import numpy as np
 from PySide6.QtWidgets import QMessageBox
 
@@ -20,6 +22,7 @@ from ..domain.processing.recoil_model import (
     fit_empirical_curve, evaluate_empirical_curve,
 )
 from ..persistence.recoil_loader import RecoilLoader
+from ..persistence.recoil_results_io import upsert_result, load_results_for_core
 
 if TYPE_CHECKING:
     from ..gui.main_window import MainWindow
@@ -60,6 +63,15 @@ class RecoilController:
         self._analysis_result: Optional[dict] = None
         self._loaded_core_id: Optional[int] = None
 
+        # Last-plotted result (for Save)
+        self._last_result_type: Optional[str] = None
+        self._last_params: Optional[DeploymentParams] = None
+        self._last_model_result: Optional[ModelResult] = None
+        self._last_empirical_params: Optional[tuple] = None
+
+        # Saved results loaded from DB when a core is opened
+        self._saved_results: dict = {}
+
         self._connect_signals()
 
     # ------------------------------------------------------------------
@@ -68,8 +80,10 @@ class RecoilController:
 
     def _connect_signals(self):
         self.deployment_panel.plot_requested.connect(self._on_plot_requested)
+        self.deployment_panel.curve_type_changed.connect(self._on_curve_type_selected)
         self.plot_view.trip_index_changed.connect(self._on_trip_index_changed)
         self.plot_view.fit_end_changed.connect(self._on_fit_end_changed)
+        self.results_panel.save_requested.connect(self._on_save_requested)
 
     # ------------------------------------------------------------------
     # DB: dropdown population (called by MainWindow)
@@ -177,6 +191,11 @@ class RecoilController:
             augmented['depth_at_trip'] = float(self._depth_m[self._trip_idx])
             self.deployment_panel.pre_populate(augmented)
             self.results_panel.clear()
+
+            # Restore any previously saved results for this core (physics by default)
+            self._saved_results = load_results_for_core(core_id)
+            self._restore_saved_result('physics')
+
             self._status(
                 f"Loaded {core_info.get('core_name', core_id)} — "
                 f"{len(time_s):,} samples, trip at index {self._trip_idx}"
@@ -198,6 +217,103 @@ class RecoilController:
         """User dragged the fit endpoint marker to a new position."""
         self._fit_end_idx = idx
         self._status(f"Fit end index updated to {idx}")
+
+    def _on_curve_type_selected(self, curve_type: str):
+        """User changed the curve type combobox — restore any saved result."""
+        self._restore_saved_result(curve_type)
+
+    def _on_save_requested(self):
+        """Save the last-plotted result to recoil_analysis_results."""
+        if self._last_result_type is None:
+            self._show_warning("Nothing to save", "Run the model or fit a curve first.")
+            return
+        if self._loaded_core_id is None:
+            self._show_warning("No core loaded", "Load a core first.")
+            return
+        if self._time_s is None or self._trip_idx is None:
+            return
+
+        trip_epoch  = float(self._time_s[self._trip_idx])
+        fit_end_idx = self._fit_end_idx if self._fit_end_idx is not None else self._trip_idx
+        fit_end_epoch = float(self._time_s[min(fit_end_idx, len(self._time_s) - 1)])
+
+        dep_dict = dataclasses.asdict(self._last_params) if self._last_params else {}
+        curve_type = self._last_result_type
+
+        kwargs: dict = {}
+        if curve_type == 'physics' and self._last_model_result is not None:
+            r = self._last_model_result
+            kwargs = dict(
+                E_gpa=r.deployment.E_gpa,
+                C_drag=r.deployment.C_drag,
+                v0_ms=r.v0_ms,
+                peak_displacement_m=r.peak_displacement_m,
+                peak_time_s=r.peak_time_s,
+                k_nm=r.k_nm,
+            )
+        elif self._last_empirical_params is not None:
+            A, tau, omega = self._last_empirical_params
+            kwargs = dict(A_m=A, tau_s=tau, omega_rads=omega)
+
+        try:
+            upsert_result(
+                self._loaded_core_id, curve_type,
+                trip_epoch, fit_end_epoch, dep_dict,
+                **kwargs,
+            )
+            # Update local cache so switching curve types immediately sees it
+            self._saved_results[curve_type] = {
+                'curve_type':       curve_type,
+                'trip_time_epoch':  trip_epoch,
+                'fit_end_epoch':    fit_end_epoch,
+                'deployment_params': dep_dict,
+                **kwargs,
+            }
+            self._status(f"Saved {curve_type} result for core {self._loaded_core_id}")
+        except Exception as exc:
+            self._show_error("Save Error", str(exc))
+
+    def _restore_saved_result(self, curve_type: str):
+        """Restore a previously saved result for this core + curve_type."""
+        if not self._saved_results or self._time_s is None:
+            return
+        saved = self._saved_results.get(curve_type)
+        if saved is None:
+            return
+
+        # Restore trip position
+        if saved.get('trip_time_epoch') is not None:
+            new_trip = int(np.searchsorted(self._time_s, saved['trip_time_epoch']))
+            new_trip = min(new_trip, len(self._time_s) - 1)
+            self._trip_idx = new_trip
+            self.plot_view.update_trip_marker(new_trip)
+
+        # Restore fit-end position
+        if saved.get('fit_end_epoch') is not None:
+            new_end = int(np.searchsorted(self._time_s, saved['fit_end_epoch']))
+            new_end = min(new_end, len(self._time_s) - 1)
+            self._fit_end_idx = new_end
+            self.plot_view.update_fit_end_marker(new_end)
+
+        # Build DeploymentParams from saved columns
+        dp = saved.get('deployment_params') or {}
+        params = DeploymentParams(
+            depth_m=float(dp.get('depth_m') or 0.0),
+            corer_lbs=float(dp.get('corer_lbs') or 0.0),
+            instrument_lbs=float(dp.get('instrument_lbs') or 0.0),
+            rope_type=dp.get('rope_type') or 'hmpe',
+            rope_dia_mm=float(dp.get('rope_dia_mm') or 14.3),
+            E_gpa=float(saved.get('E_gpa') or dp.get('E_gpa') or 45.0),
+            C_drag=float(saved.get('C_drag') or dp.get('C_drag') or 0.01),
+            curve_type=curve_type,
+            A_m=float(saved.get('A_m') or dp.get('A_m') or 2.0),
+            tau_s=float(saved.get('tau_s') or dp.get('tau_s') or 1.0),
+            omega_rads=float(saved.get('omega_rads') or dp.get('omega_rads') or 1.0),
+            auto_fit=False,
+        )
+
+        self.deployment_panel.restore_params(params)
+        self._on_plot_requested(params)
 
     def _on_plot_requested(self, params: DeploymentParams):
         """Run the model or empirical fit and overlay on the plot."""
@@ -245,6 +361,10 @@ class RecoilController:
                 )
                 self.results_panel.show_result(result)
 
+                self._last_result_type = 'physics'
+                self._last_params = params
+                self._last_model_result = result
+
                 self._status(
                     f"Model plotted — E={params.E_gpa:.1f} GPa, "
                     f"k={k:,.0f} N/m, "
@@ -285,6 +405,10 @@ class RecoilController:
                     msg += f", \u03c9={omega:.3f} rad/s"
                 self._status(msg)
                 self.results_panel.show_empirical_result(params.curve_type, A, tau, omega)
+
+                self._last_result_type = params.curve_type
+                self._last_params = params
+                self._last_empirical_params = (A, tau, omega)
             except Exception as exc:
                 self._show_error("Fit Error", str(exc))
 
