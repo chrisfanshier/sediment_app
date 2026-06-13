@@ -353,57 +353,57 @@ def create_sensor_analysis_table():
     print("  ✓ sensor_analysis_results table ready")
 
 
-def create_recoil_calibration_table():
-    """Create the recoil_calibration table for the recoil fitting tool."""
-    print("\n5. Creating recoil_calibration table...")
+def create_recoil_analysis_results_table():
+    """Create the recoil_analysis_results table for the recoil fitting tool."""
+    print("\n5. Creating recoil_analysis_results table...")
 
     with get_connection() as conn:
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS recoil_calibration (
-                cal_id          SERIAL PRIMARY KEY,
-                result_id       INTEGER REFERENCES sensor_analysis_results(result_id),
-                core_id         INTEGER REFERENCES cores(core_id),
-                fitted_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CREATE TABLE IF NOT EXISTS recoil_analysis_results (
+                id                   SERIAL PRIMARY KEY,
+                core_id              INTEGER NOT NULL REFERENCES cores(core_id),
+                curve_type           VARCHAR(32) NOT NULL,
 
-                -- Deployment parameters used for this fit
-                depth_m         FLOAT,
-                corer_lbs       FLOAT,
-                instrument_lbs  FLOAT,
-                rope_type       VARCHAR(20),
-                rope_dia_mm     FLOAT,
+                deployment_params    JSONB,
 
-                -- Fit results
-                "E_eff_gpa"         FLOAT,
-                "C_drag"            FLOAT,
-                v0_ms               FLOAT,
-                rebound_magnitude_m FLOAT,
-                rebound_time_s      FLOAT,
-                rmse_m              FLOAT,
-                r_squared           FLOAT,
-                k_nm                FLOAT,
-                static_stretch_m    FLOAT,
+                trip_time_epoch      DOUBLE PRECISION,
+                fit_end_epoch        DOUBLE PRECISION,
 
-                -- User annotation
-                notes           TEXT,
+                -- Physics model tuning + outputs (NULL for empirical rows)
+                E_gpa                DOUBLE PRECISION,
+                C_drag               DOUBLE PRECISION,
+                v0_ms                DOUBLE PRECISION,
+                peak_displacement_m  DOUBLE PRECISION,
+                peak_time_s          DOUBLE PRECISION,
+                k_nm                 DOUBLE PRECISION,
+
+                -- Empirical fit parameters (NULL for physics rows)
+                A_m                  DOUBLE PRECISION,
+                tau_s                DOUBLE PRECISION,
+                omega_rads           DOUBLE PRECISION,
+
+                saved_at             TIMESTAMPTZ DEFAULT now(),
 
                 -- Sync tracking
-                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                modified_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                created_on_ship BOOLEAN DEFAULT TRUE,
-                sync_status     VARCHAR(20) DEFAULT 'pending',
-                last_synced_at  TIMESTAMP,
-                central_id      INTEGER
+                created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                modified_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_on_ship      BOOLEAN DEFAULT TRUE,
+                sync_status          VARCHAR(20) DEFAULT 'pending',
+                last_synced_at       TIMESTAMP,
+                central_id           INTEGER,
+
+                UNIQUE (core_id, curve_type)
             );
 
-            DROP TRIGGER IF EXISTS recoil_calibration_modified
-                ON recoil_calibration;
+            DROP TRIGGER IF EXISTS recoil_analysis_results_modified
+                ON recoil_analysis_results;
 
-            CREATE TRIGGER recoil_calibration_modified
-                BEFORE UPDATE ON recoil_calibration
+            CREATE TRIGGER recoil_analysis_results_modified
+                BEFORE UPDATE ON recoil_analysis_results
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
         """))
         conn.commit()
-    print("  ✓ recoil_calibration table ready")
+    print("  ✓ recoil_analysis_results table ready")
 
 
 def main():
@@ -424,7 +424,7 @@ def main():
     
     add_sync_tracking()
     create_sensor_analysis_table()
-    create_recoil_calibration_table()
+    create_recoil_analysis_results_table()
     select_cruises_to_keep()
     
     print("\n" + "=" * 70)

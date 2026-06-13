@@ -93,6 +93,14 @@ def create_table_if_not_exists() -> None:
 
                 saved_at             TIMESTAMPTZ DEFAULT now(),
 
+                -- Sync tracking
+                created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                modified_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_on_ship      BOOLEAN DEFAULT TRUE,
+                sync_status          VARCHAR(20) DEFAULT 'pending',
+                last_synced_at       TIMESTAMP,
+                central_id           INTEGER,
+
                 UNIQUE (core_id, curve_type)
             )
         """))
@@ -134,12 +142,14 @@ def upsert_result(
                 (core_id, curve_type, deployment_params,
                  trip_time_epoch, fit_end_epoch,
                  E_gpa, C_drag, v0_ms, peak_displacement_m, peak_time_s, k_nm,
-                 A_m, tau_s, omega_rads, saved_at)
+                 A_m, tau_s, omega_rads, saved_at,
+                 created_at, modified_at, created_on_ship, sync_status)
             VALUES
                 (:core_id, :curve_type, (:params_json)::jsonb,
                  :trip_time_epoch, :fit_end_epoch,
                  :E_gpa, :C_drag, :v0_ms, :peak_displacement_m, :peak_time_s, :k_nm,
-                 :A_m, :tau_s, :omega_rads, now())
+                 :A_m, :tau_s, :omega_rads, now(),
+                 now(), now(), :created_on_ship, :sync_status)
             ON CONFLICT (core_id, curve_type) DO UPDATE SET
                 deployment_params   = EXCLUDED.deployment_params,
                 trip_time_epoch     = EXCLUDED.trip_time_epoch,
@@ -153,7 +163,9 @@ def upsert_result(
                 A_m                 = EXCLUDED.A_m,
                 tau_s               = EXCLUDED.tau_s,
                 omega_rads          = EXCLUDED.omega_rads,
-                saved_at            = now()
+                saved_at            = now(),
+                sync_status         = 'pending',
+                modified_at         = now()
         """), {
             'core_id':              core_id,
             'curve_type':           curve_type,
@@ -169,6 +181,8 @@ def upsert_result(
             'A_m':                  A_m,
             'tau_s':                tau_s,
             'omega_rads':           omega_rads,
+            'created_on_ship':      True,
+            'sync_status':          'pending',
         })
         conn.commit()
 
