@@ -27,7 +27,12 @@ _WIRE_TYPE_MAP = {
     'wire': 'steel',
 }
 _CURVE_TYPES = [
-    'physics', 'exponential', 'critically_damped', 'gamma_pulse', 'damped_sine',
+    'physics',
+    'exponential',
+    'critically_damped',
+    'gamma_pulse',
+    'damped_sine',
+    'single_lobe_damped',   # new
 ]
 
 
@@ -133,6 +138,7 @@ class DeploymentPanel(QWidget):
             "Critically damped",
             "Gamma Pulse",
             "Damped Sine",
+            "Single Lobe Damped",   # new
         ])
         self._curve_combo.currentIndexChanged.connect(self._on_curve_type_changed)
         curve_form.addRow("Curve type:", self._curve_combo)
@@ -148,14 +154,16 @@ class DeploymentPanel(QWidget):
         self._A_spin.setDecimals(3)
         self._A_spin.setSuffix(" m")
         self._A_spin.setValue(2.0)
-        self._emp_form.addRow("A:", self._A_spin)
+        self._A_label = QLabel("A:")
+        self._emp_form.addRow(self._A_label, self._A_spin)
 
         self._tau_spin = QDoubleSpinBox()
         self._tau_spin.setRange(0.01, 100.0)
         self._tau_spin.setDecimals(3)
         self._tau_spin.setSuffix(" s")
         self._tau_spin.setValue(1.0)
-        self._emp_form.addRow("tau:", self._tau_spin)
+        self._tau_label = QLabel("tau:")
+        self._emp_form.addRow(self._tau_label, self._tau_spin)
 
         self._omega_spin = QDoubleSpinBox()
         self._omega_spin.setRange(0.1, 20.0)
@@ -163,7 +171,16 @@ class DeploymentPanel(QWidget):
         self._omega_spin.setSingleStep(0.1)
         self._omega_spin.setSuffix(" rad/s")
         self._omega_spin.setValue(1.0)
-        self._emp_form.addRow("ω:", self._omega_spin)
+        self._omega_label = QLabel("ω:")
+        self._emp_form.addRow(self._omega_label, self._omega_spin)
+
+        self._alpha_spin = QDoubleSpinBox()
+        self._alpha_spin.setRange(0.01, 5.0)
+        self._alpha_spin.setDecimals(3)
+        self._alpha_spin.setSingleStep(0.01)
+        self._alpha_spin.setValue(0.25)
+        self._alpha_label = QLabel("alpha:")
+        self._emp_form.addRow(self._alpha_label, self._alpha_spin)
 
         self._autofit_check = QCheckBox("Auto-fit on plot")
         self._autofit_check.setChecked(True)
@@ -228,6 +245,24 @@ class DeploymentPanel(QWidget):
     def get_params(self) -> DeploymentParams:
         """Read current form values into a DeploymentParams."""
         curve_type = _CURVE_TYPES[self._curve_combo.currentIndex()]
+        
+        if curve_type == 'single_lobe_damped':
+            return DeploymentParams(
+                depth_m=self._depth_spin.value(),
+                corer_lbs=self._corer_spin.value(),
+                instrument_lbs=self._instrument_spin.value(),
+                rope_type=self._rope_combo.currentText(),
+                rope_dia_mm=self._dia_spin.value(),
+                E_gpa=self._E_spin.value(),
+                C_drag=self._Cd_spin.value(),
+                curve_type=curve_type,
+                H_m=self._A_spin.value(),       # A_spin = H
+                t_p_s=self._tau_spin.value(),   # tau_spin = t_p
+                alpha=self._alpha_spin.value(),
+                auto_fit=self._autofit_check.isChecked(),
+            )
+            
+        # default for all other curve types
         return DeploymentParams(
             depth_m=self._depth_spin.value(),
             corer_lbs=self._corer_spin.value(),
@@ -247,18 +282,31 @@ class DeploymentPanel(QWidget):
     # Public: empirical params push-back
     # ------------------------------------------------------------------
 
-    def set_empirical_params(self, A: float, tau: float, omega: 'float | None' = None):
-        """Push fitted A, tau (and optionally omega) into the spinboxes."""
+    def set_empirical_params(
+        self,
+        A: float,
+        tau: float,
+        omega: 'float | None' = None,
+        alpha: 'float | None' = None,
+    ):
+        """Push fitted A/tau and optionally omega/alpha into the spinboxes."""
+        # For single_lobe_damped: A = H, tau = t_p
         self._A_spin.blockSignals(True)
         self._tau_spin.blockSignals(True)
         self._omega_spin.blockSignals(True)
+        self._alpha_spin.blockSignals(True)
+        
         self._A_spin.setValue(round(A, 3))
         self._tau_spin.setValue(round(tau, 3))
         if omega is not None:
             self._omega_spin.setValue(round(omega, 3))
+        if alpha is not None:
+            self._alpha_spin.setValue(round(alpha, 3))
+            
         self._A_spin.blockSignals(False)
         self._tau_spin.blockSignals(False)
         self._omega_spin.blockSignals(False)
+        self._alpha_spin.blockSignals(False)
 
     def restore_params(self, params: DeploymentParams):
         """
@@ -283,9 +331,17 @@ class DeploymentPanel(QWidget):
         self._curve_combo.blockSignals(False)
         self._apply_curve_type_ui(idx)   # update visibility
 
-        self._A_spin.setValue(params.A_m)
-        self._tau_spin.setValue(params.tau_s)
-        self._omega_spin.setValue(params.omega_rads)
+        if params.curve_type == 'single_lobe_damped':
+            self._A_spin.setValue(params.H_m or 1.0)
+            self._tau_spin.setValue(params.t_p_s or 1.0)
+            self._omega_spin.setValue(0.0)   # hidden anyway
+            self._alpha_spin.setValue(params.alpha)
+        else:
+            self._A_spin.setValue(params.A_m)
+            self._tau_spin.setValue(params.tau_s)
+            self._omega_spin.setValue(params.omega_rads)
+            self._alpha_spin.setValue(0.25)
+            
         self._autofit_check.setChecked(False)
 
     # ------------------------------------------------------------------
@@ -295,7 +351,18 @@ class DeploymentPanel(QWidget):
     def _apply_curve_type_ui(self, index: int):
         """Update widget visibility/enabled state for the given curve index."""
         self._empirical_widget.setVisible(index != 0)
+
+        curve_type = _CURVE_TYPES[index]
+        if curve_type == 'single_lobe_damped':
+            self._A_label.setText("H:")
+            self._tau_label.setText("t_p:")
+        else:
+            self._A_label.setText("A:")
+            self._tau_label.setText("tau:")
+
+        # Only damped_sine uses omega (index 4)
         self._emp_form.setRowVisible(self._omega_spin, index == 4)
+        self._emp_form.setRowVisible(self._alpha_spin, curve_type == 'single_lobe_damped')
         self._autofit_btn.setEnabled(index != 0)
 
     def _on_curve_type_changed(self, index: int):

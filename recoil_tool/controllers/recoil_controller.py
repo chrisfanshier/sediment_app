@@ -253,7 +253,11 @@ class RecoilController:
             )
         elif self._last_empirical_params is not None:
             A, tau, omega = self._last_empirical_params
-            kwargs = dict(A_m=A, tau_s=tau, omega_rads=omega)
+            if curve_type == 'single_lobe_damped':
+                # A = H, tau = t_p, omega = None
+                kwargs = dict(H_m=A, t_p_s=tau, alpha=self._last_params.alpha)
+            else:
+                kwargs = dict(A_m=A, tau_s=tau, omega_rads=omega)
 
         try:
             upsert_result(
@@ -297,6 +301,8 @@ class RecoilController:
 
         # Build DeploymentParams from saved columns
         dp = saved.get('deployment_params') or {}
+        
+        # Build base DeploymentParams (physics + shared fields)
         params = DeploymentParams(
             depth_m=float(dp.get('depth_m') or 0.0),
             corer_lbs=float(dp.get('corer_lbs') or 0.0),
@@ -306,11 +312,17 @@ class RecoilController:
             E_gpa=float(saved.get('E_gpa') or dp.get('E_gpa') or 45.0),
             C_drag=float(saved.get('C_drag') or dp.get('C_drag') or 0.01),
             curve_type=curve_type,
-            A_m=float(saved.get('A_m') or dp.get('A_m') or 2.0),
-            tau_s=float(saved.get('tau_s') or dp.get('tau_s') or 1.0),
-            omega_rads=float(saved.get('omega_rads') or dp.get('omega_rads') or 1.0),
             auto_fit=False,
         )
+        # Restore empirical parameters depending on curve type
+        if curve_type == 'single_lobe_damped':
+            params.H_m = float(saved.get('H_m') or dp.get('H_m') or 1.0)
+            params.t_p_s = float(saved.get('t_p_s') or dp.get('t_p_s') or 1.0)
+            params.alpha = float(saved.get('alpha') or dp.get('alpha') or 0.25)
+        else:
+            params.A_m = float(saved.get('A_m') or dp.get('A_m') or 2.0)
+            params.tau_s = float(saved.get('tau_s') or dp.get('tau_s') or 1.0)
+            params.omega_rads = float(saved.get('omega_rads') or dp.get('omega_rads') or 1.0)
 
         self.deployment_panel.restore_params(params)
         self._on_plot_requested(params)
@@ -381,6 +393,7 @@ class RecoilController:
                     'critically_damped': '#31a354',
                     'gamma_pulse':       '#e6550d',
                     'damped_sine':       '#de2d26',
+                    'single_lobe_damped': '#3182bd', # new
                 }
                 color = _CURVE_COLORS.get(params.curve_type, '#756bb1')
 
@@ -389,22 +402,51 @@ class RecoilController:
                         self._time_s, self._depth_m, self._trip_idx, params.curve_type,
                         fit_end_idx=self._fit_end_idx,
                     )
-                    self.deployment_panel.set_empirical_params(A, tau, omega)
+                    if params.curve_type == 'single_lobe_damped':
+                        params.alpha = float(omega) if omega is not None else params.alpha
+                        self.deployment_panel.set_empirical_params(A, tau, None, params.alpha)
+                    else:
+                        self.deployment_panel.set_empirical_params(A, tau, omega)
                 else:
-                    A, tau, omega = params.A_m, params.tau_s, params.omega_rads
-                    depth_model = evaluate_empirical_curve(
-                        self._time_s, self._depth_m, self._trip_idx,
-                        params.curve_type, A, tau, omega,
-                    )
+                    if params.curve_type == 'single_lobe_damped':
+                        A, tau, omega = params.H_m or 0.0, params.t_p_s or 1.0, None
+                        depth_model = evaluate_empirical_curve(
+                            self._time_s, self._depth_m, self._trip_idx,
+                            params.curve_type, A, tau, alpha=params.alpha,
+                        )
+                    else:
+                        A, tau, omega = params.A_m, params.tau_s, params.omega_rads
+                        depth_model = evaluate_empirical_curve(
+                            self._time_s, self._depth_m, self._trip_idx,
+                            params.curve_type, A, tau, omega,
+                        )
+
+                # Keep the params snapshot aligned with fitted/manual values for Save.
+                if params.curve_type == 'single_lobe_damped':
+                    params.H_m = A
+                    params.t_p_s = tau
+                    if omega is not None:
+                        params.alpha = float(omega)
+                else:
+                    params.A_m = A
+                    params.tau_s = tau
+                    if omega is not None:
+                        params.omega_rads = omega
 
                 self.plot_view.plot_model_overlay(
                     self._trip_idx, depth_model, color=color
                 )
-                msg = f"Empirical curve plotted — A={A:.3f} m, tau={tau:.3f} s"
-                if omega is not None:
-                    msg += f", \u03c9={omega:.3f} rad/s"
-                self._status(msg)
-                self.results_panel.show_empirical_result(params.curve_type, A, tau, omega)
+                if params.curve_type == 'single_lobe_damped':
+                    # A = H, tau = t_p
+                    msg = f"Empirical curve plotted — H={A:.3f} m, t_p={tau:.3f} s, alpha={params.alpha:.2f}"
+                    self._status(msg)
+                    self.results_panel.show_empirical_result(params.curve_type, A, tau, params.alpha)
+                else:
+                    msg = f"Empirical curve plotted — A={A:.3f} m, tau={tau:.3f} s"
+                    if omega is not None:
+                        msg += f", \u03c9={omega:.3f} rad/s"
+                    self._status(msg)
+                    self.results_panel.show_empirical_result(params.curve_type, A, tau, omega)
 
                 self._last_result_type = params.curve_type
                 self._last_params = params

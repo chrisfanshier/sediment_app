@@ -201,13 +201,38 @@ def _damped_sine_curve(t: np.ndarray, A: float, tau: float, omega: float) -> np.
     """x(t) = A * exp(-t/tau) * sin(omega * t)  — oscillatory decay."""
     return A * np.exp(-t / tau) * np.sin(omega * t)
 
+def _single_lobe_damped_curve(
+    t: np.ndarray,
+    H: float,
+    t_p: float,
+    alpha: float = 0.25,
+) -> np.ndarray:
+    """
+    Single asymmetric lobe:
+      x(t) = H * (t/t_p)^alpha * (1 - t/t_p)   for 0 <= t <= t_p
+      x(t) = 0                                  otherwise
+    """
+    t_p = max(float(t_p), 1e-6)
+    alpha = max(float(alpha), 0.0)
+
+    u = t / t_p
+    x = np.zeros_like(t, dtype=float)
+    mask = (u >= 0.0) & (u <= 1.0)
+    if np.any(mask):
+        um = u[mask]
+        x[mask] = H * np.power(um, alpha) * (1.0 - um)
+    return x
+
+
 
 _CURVE_FN_MAP = {
-    'exponential':       (_exp_curve,         2),
-    'critically_damped': (_crit_damped_curve,  2),
-    'gamma_pulse':       (_gamma_pulse_curve,  2),
-    'damped_sine':       (_damped_sine_curve,  3),
+    'exponential':        (_exp_curve,             2),
+    'critically_damped':  (_crit_damped_curve,     2),
+    'gamma_pulse':        (_gamma_pulse_curve,     2),
+    'damped_sine':        (_damped_sine_curve,     3),
+    'single_lobe_damped': (_single_lobe_damped_curve, 2),
 }
+
 
 
 def fit_empirical_curve(
@@ -238,10 +263,10 @@ def fit_empirical_curve(
 
     Returns
     -------
-    (A, tau, omega, depth_model)
-        A           : fitted amplitude / asymptote (m)
-        tau         : fitted time constant (s)
-        omega       : fitted angular frequency (rad/s), or None for non-sine types
+    (A, tau, omega_or_alpha, depth_model)
+        A               : fitted amplitude / asymptote (m), or H for single_lobe_damped
+        tau             : fitted time constant (s), or t_p for single_lobe_damped
+        omega_or_alpha  : fitted omega (damped_sine), fitted alpha (single_lobe_damped), or None
         depth_model : absolute depth array over the full post-trip window
     """
     from scipy.optimize import curve_fit as _curve_fit
@@ -277,7 +302,30 @@ def fit_empirical_curve(
 
     obs_A = float(np.max(x_fit)) if len(x_fit) > 0 else 2.0
 
-    if n_params == 2:
+    if curve_type == 'single_lobe_damped':
+        # Fit (H, t_p, alpha) explicitly.
+        t_end = float(t_fit[-1]) if len(t_fit) > 1 else 1.0
+        p0_H = max(obs_A * 1.8, 0.01)
+        p0_t_p = max(t_end, 0.1)
+        p0_alpha = 0.25
+
+        try:
+            popt, _ = _curve_fit(
+                _single_lobe_damped_curve,
+                t_fit,
+                x_fit,
+                p0=[p0_H, p0_t_p, p0_alpha],
+                bounds=([0.0, 0.01, 0.01], [50.0, 120.0, 5.0]),
+                maxfev=8000,
+            )
+            A_fit, tau_fit, omega_fit = float(popt[0]), float(popt[1]), float(popt[2])
+        except Exception:
+            A_fit, tau_fit, omega_fit = float(p0_H), float(p0_t_p), float(p0_alpha)
+
+        t_post = np.arange(len(post_depth)) * dt
+        x_model = _single_lobe_damped_curve(t_post, A_fit, tau_fit, omega_fit)
+
+    elif n_params == 2:
         if curve_type == 'gamma_pulse':
             # For gamma pulse, tau is the time of peak, so seed with observed peak time
             t_peak = float(t_fit[int(np.argmax(x_fit))]) if len(t_fit) > 1 else 1.0
@@ -300,6 +348,7 @@ def fit_empirical_curve(
         omega_fit: 'float | None' = None
         t_post = np.arange(len(post_depth)) * dt
         x_model = curve_fn(t_post, A_fit, tau_fit)
+
 
     else:  # damped_sine (n_params == 3)
         # Seed omega from peak time: first peak of sin at omega*t_peak = pi/2
@@ -333,6 +382,7 @@ def evaluate_empirical_curve(
     A: float,
     tau: float,
     omega: float = 1.0,
+    alpha: float = 0.25,
 ) -> np.ndarray:
     """
     Evaluate an empirical rebound curve with user-supplied parameters.
@@ -355,6 +405,9 @@ def evaluate_empirical_curve(
 
     post_depth = depth_m[trip_idx:]
     t_post = np.arange(len(post_depth)) * dt
-    x_model = curve_fn(t_post, A, tau, omega) if n_params == 3 else curve_fn(t_post, A, tau)
+    if curve_type == 'single_lobe_damped':
+        x_model = _single_lobe_damped_curve(t_post, A, tau, alpha)
+    else:
+        x_model = curve_fn(t_post, A, tau, omega) if n_params == 3 else curve_fn(t_post, A, tau)
     trip_depth = float(depth_m[trip_idx])
     return trip_depth - x_model

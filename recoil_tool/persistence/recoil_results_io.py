@@ -13,6 +13,7 @@ Table: recoil_analysis_results
   E_gpa, C_drag            : physics model tuning params (NULL for empirical rows)
   v0_ms … k_nm             : physics model outputs     (NULL for empirical rows)
   A_m, tau_s, omega_rads   : empirical fit params      (NULL for physics rows)
+    H_m, t_p_s, alpha        : single_lobe_damped params (NULL for other rows)
   saved_at                 : timestamp of last save
 """
 from __future__ import annotations
@@ -30,7 +31,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from db_util import get_connection   # noqa: E402
-from sqlalchemy import text           # noqa: E402
+from sqlalchemy import text          # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +91,9 @@ def create_table_if_not_exists() -> None:
                 A_m                  DOUBLE PRECISION,
                 tau_s                DOUBLE PRECISION,
                 omega_rads           DOUBLE PRECISION,
+                H_m                  DOUBLE PRECISION,
+                t_p_s                DOUBLE PRECISION,
+                alpha                DOUBLE PRECISION,
 
                 saved_at             TIMESTAMPTZ DEFAULT now(),
 
@@ -103,6 +107,20 @@ def create_table_if_not_exists() -> None:
 
                 UNIQUE (core_id, curve_type)
             )
+        """))
+
+        # Backward-compatible migration for existing databases.
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS H_m DOUBLE PRECISION
+        """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS t_p_s DOUBLE PRECISION
+        """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS alpha DOUBLE PRECISION
         """))
         conn.commit()
 
@@ -127,6 +145,9 @@ def upsert_result(
     A_m: Optional[float] = None,
     tau_s: Optional[float] = None,
     omega_rads: Optional[float] = None,
+    H_m: Optional[float] = None,
+    t_p_s: Optional[float] = None,
+    alpha: Optional[float] = None,
 ) -> None:
     """
     Insert or overwrite one recoil_analysis_results row.
@@ -142,13 +163,13 @@ def upsert_result(
                 (core_id, curve_type, deployment_params,
                  trip_time_epoch, fit_end_epoch,
                  E_gpa, C_drag, v0_ms, peak_displacement_m, peak_time_s, k_nm,
-                 A_m, tau_s, omega_rads, saved_at,
+                 A_m, tau_s, omega_rads, H_m, t_p_s, alpha, saved_at,
                  created_at, modified_at, created_on_ship, sync_status)
             VALUES
                 (:core_id, :curve_type, (:params_json)::jsonb,
                  :trip_time_epoch, :fit_end_epoch,
                  :E_gpa, :C_drag, :v0_ms, :peak_displacement_m, :peak_time_s, :k_nm,
-                 :A_m, :tau_s, :omega_rads, now(),
+                 :A_m, :tau_s, :omega_rads, :H_m, :t_p_s, :alpha, now(),
                  now(), now(), :created_on_ship, :sync_status)
             ON CONFLICT (core_id, curve_type) DO UPDATE SET
                 deployment_params   = EXCLUDED.deployment_params,
@@ -163,6 +184,9 @@ def upsert_result(
                 A_m                 = EXCLUDED.A_m,
                 tau_s               = EXCLUDED.tau_s,
                 omega_rads          = EXCLUDED.omega_rads,
+                H_m                 = EXCLUDED.H_m,
+                t_p_s               = EXCLUDED.t_p_s,
+                alpha               = EXCLUDED.alpha,
                 saved_at            = now(),
                 sync_status         = 'pending',
                 modified_at         = now()
@@ -181,6 +205,9 @@ def upsert_result(
             'A_m':                  A_m,
             'tau_s':                tau_s,
             'omega_rads':           omega_rads,
+            'H_m':                  H_m,
+            't_p_s':                t_p_s,
+            'alpha':                alpha,
             'created_on_ship':      True,
             'sync_status':          'pending',
         })
@@ -214,4 +241,3 @@ def load_results_for_core(core_id: int) -> dict[str, dict]:
             d['deployment_params'] = {}
         results[d['curve_type']] = d
     return results
-

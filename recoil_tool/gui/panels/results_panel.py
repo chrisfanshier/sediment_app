@@ -66,13 +66,16 @@ class ResultsPanel(QWidget):
         emp_form.addRow("Curve type:", self._curve_type_lbl)
 
         self._A_lbl = _lbl()
-        emp_form.addRow("A (m):", self._A_lbl)
+        self._A_row_label = QLabel("A (m):")
+        emp_form.addRow(self._A_row_label, self._A_lbl)
 
         self._tau_lbl = _lbl()
-        emp_form.addRow("tau (s):", self._tau_lbl)
+        self._tau_row_label = QLabel("tau (s):")
+        emp_form.addRow(self._tau_row_label, self._tau_lbl)
 
         self._omega_lbl = _lbl()
-        emp_form.addRow("ω (rad/s):", self._omega_lbl)
+        self._omega_row_label = QLabel("ω (rad/s):")
+        emp_form.addRow(self._omega_row_label, self._omega_lbl)
 
         root.addWidget(emp_group)
 
@@ -106,10 +109,25 @@ class ResultsPanel(QWidget):
     ):
         """Populate empirical fit labels."""
         self._curve_type_lbl.setText(curve_type.replace('_', ' ').title())
-        self._A_lbl.setText(f"{A:.4f}")
-        self._tau_lbl.setText(f"{tau:.4f}")
-        self._omega_lbl.setText(f"{omega:.4f}" if omega is not None else _PLACEHOLDER)
+
+        if curve_type == 'single_lobe_damped':
+            # A = H, tau = t_p
+            self._A_row_label.setText("H (m):")
+            self._tau_row_label.setText("t_p (s):")
+            self._omega_row_label.setText("alpha:")
+            self._A_lbl.setText(f"{A:.4f}")       # H
+            self._tau_lbl.setText(f"{tau:.4f}")   # t_p
+            self._omega_lbl.setText(f"{omega:.4f}" if omega is not None else _PLACEHOLDER)
+        else:
+            self._A_row_label.setText("A (m):")
+            self._tau_row_label.setText("tau (s):")
+            self._omega_row_label.setText("ω (rad/s):")
+            self._A_lbl.setText(f"{A:.4f}")
+            self._tau_lbl.setText(f"{tau:.4f}")
+            self._omega_lbl.setText(f"{omega:.4f}" if omega is not None else _PLACEHOLDER)
+
         self._save_btn.setEnabled(True)
+
 
     def clear(self):
         """Reset all labels to placeholder and disable Save."""

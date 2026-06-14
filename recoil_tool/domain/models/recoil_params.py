@@ -41,8 +41,17 @@ class DeploymentParams:
 
     # Empirical curve-fitting options (ignored by physics model path)
     curve_type: str = 'physics'
-    """One of 'physics', 'exponential', 'critically_damped', 'gamma_pulse', 'damped_sine'."""
+    """
+    One of:
+        'physics',
+        'exponential',
+        'critically_damped',
+        'gamma_pulse',
+        'damped_sine',
+        'single_lobe_damped'
+    """
 
+    # --- Existing empirical parameters (used by older curve types) ---
     A_m: float = 2.0
     """Asymptotic rebound magnitude (m) for empirical curves."""
 
@@ -54,6 +63,16 @@ class DeploymentParams:
 
     auto_fit: bool = True
     """When True, run curve_fit automatically; otherwise use A_m/tau_s directly."""
+
+    # --- New parameters for single_lobe_damped ---
+    H_m: Optional[float] = None
+    """Peak height (m) for the single_lobe_damped curve."""
+
+    t_p_s: Optional[float] = None
+    """Time to peak (s) for the single_lobe_damped curve."""
+
+    alpha: float = 0.25
+    """Asymmetry factor for single_lobe_damped (dimensionless)."""
 
 
 @dataclass
