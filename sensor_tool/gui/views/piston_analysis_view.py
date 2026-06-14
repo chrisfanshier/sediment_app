@@ -45,7 +45,7 @@ class PistonAnalysisView(QWidget):
         # Top subplot: depths
         self._depth_plot = self.graphics.addPlot(row=0, col=0)
         self._depth_plot.setLabel('left', 'Depth (m)')
-        self._depth_plot.setLabel('bottom', 'Core Depth (m)')
+        self._depth_plot.setLabel('bottom', 'Core Depth (m)  [0 = start-pen, negative = pre-penetration]')
         self._depth_plot.invertY(True)
         self._depth_plot.showGrid(x=True, y=True, alpha=0.3)
         self._depth_legend = self._depth_plot.addLegend()
@@ -53,7 +53,7 @@ class PistonAnalysisView(QWidget):
         # Bottom subplot: velocities
         self._vel_plot = self.graphics.addPlot(row=1, col=0)
         self._vel_plot.setLabel('left', 'Velocity (m/s)')
-        self._vel_plot.setLabel('bottom', 'Core Depth (m)')
+        self._vel_plot.setLabel('bottom', 'Core Depth (m)  [0 = start-pen, negative = pre-penetration]')
         self._vel_plot.showGrid(x=True, y=True, alpha=0.3)
         self._vel_legend = self._vel_plot.addLegend()
         self._zero_line = pg.InfiniteLine(
@@ -66,6 +66,8 @@ class PistonAnalysisView(QWidget):
         self._vel_plot.setXLink(self._depth_plot)
 
         self._seafloor_line: Optional[pg.InfiniteLine] = None
+        self._start_pen_depth_line: Optional[pg.InfiniteLine] = None
+        self._start_pen_vel_line: Optional[pg.InfiniteLine] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -85,6 +87,14 @@ class PistonAnalysisView(QWidget):
         if self._seafloor_line is not None:
             self._depth_plot.removeItem(self._seafloor_line)
             self._seafloor_line = None
+
+        # Remove previous start-pen markers if any
+        if self._start_pen_depth_line is not None:
+            self._depth_plot.removeItem(self._start_pen_depth_line)
+            self._start_pen_depth_line = None
+        if self._start_pen_vel_line is not None:
+            self._vel_plot.removeItem(self._start_pen_vel_line)
+            self._start_pen_vel_line = None
 
         x = result.core_depth
 
@@ -111,6 +121,22 @@ class PistonAnalysisView(QWidget):
             )
             self._depth_plot.addItem(self._seafloor_line)
 
+        # Start-pen marker (vertical, both subplots)
+        _start_pen_pen = pg.mkPen(color='#7f7f7f', width=1.5,
+                                  style=pg.QtCore.Qt.DashLine)
+        self._start_pen_depth_line = pg.InfiniteLine(
+            pos=result.start_pen_core_depth_m, angle=90, movable=False,
+            pen=_start_pen_pen,
+            label='Start pen',
+            labelOpts={'position': 0.95, 'color': '#555555'},
+        )
+        self._depth_plot.addItem(self._start_pen_depth_line)
+        self._start_pen_vel_line = pg.InfiniteLine(
+            pos=result.start_pen_core_depth_m, angle=90, movable=False,
+            pen=_start_pen_pen,
+        )
+        self._vel_plot.addItem(self._start_pen_vel_line)
+
         # -- Velocity subplot --
         self._vel_plot.plot(
             x, result.ws_velocity,
@@ -126,7 +152,8 @@ class PistonAnalysisView(QWidget):
         n = len(x)
         self.info_label.setText(
             f"Piston Analysis  |  {n} samples  |  "
-            f"Core depth range: {float(x[0]):.2f} – {float(x[-1]):.2f} m  |  "
+            f"Core depth: {float(x[0]):.2f} \u2013 {float(x[-1]):.2f} m  "
+            f"(0 = start-pen)  |  "
             f"SG window={result.sg_window}, order={result.sg_polyorder}"
         )
 
@@ -139,4 +166,10 @@ class PistonAnalysisView(QWidget):
         if self._seafloor_line is not None:
             self._depth_plot.removeItem(self._seafloor_line)
             self._seafloor_line = None
+        if self._start_pen_depth_line is not None:
+            self._depth_plot.removeItem(self._start_pen_depth_line)
+            self._start_pen_depth_line = None
+        if self._start_pen_vel_line is not None:
+            self._vel_plot.removeItem(self._start_pen_vel_line)
+            self._start_pen_vel_line = None
         self.info_label.setText('')

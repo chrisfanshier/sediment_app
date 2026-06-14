@@ -3172,7 +3172,7 @@ class AnalysisController:
     # ==================================================================
 
     def run_piston_analysis(self):
-        """Run piston analysis over the penetration interval and display results."""
+        """Run piston analysis over the core-opening interval and display results."""
         panel = self.piston_analysis_panel
         log = panel.log_widget if panel is not None else None
 
@@ -3209,6 +3209,23 @@ class AnalysisController:
             _err("Weight-stand column not set or not found.")
             return
 
+        # Resolve start_core_idx: prefer calc/piston-analysis mode drag value,
+        # fall back to piston-position detected value, then None (→ start_pen).
+        start_core_idx = (
+            self._calc_start_core_idx
+            if self._calc_start_core_idx is not None
+            else self._piston_start_core_idx
+        )
+
+        # Validate ordering
+        if start_core_idx is not None and start_core_idx > self._start_pen_idx:
+            _err(
+                f"start_core (index {start_core_idx}) is after start_pen "
+                f"(index {self._start_pen_idx}).  Drag start_core to a "
+                "position before or at start_pen and try again."
+            )
+            return
+
         try:
             ws_vals = (
                 self.sensor_data.df[ws_col]
@@ -3234,6 +3251,7 @@ class AnalysisController:
                 timestamps_epoch=ts,
                 start_pen_idx=self._start_pen_idx,
                 pullout_idx=self._pullout_idx,
+                start_core_idx=start_core_idx,
                 sg_window=sg_window,
                 sg_polyorder=sg_polyorder,
                 seafloor=seafloor,
@@ -3245,17 +3263,23 @@ class AnalysisController:
                 self.main_window.show_secondary_view('piston_analysis')
 
             n = len(result.core_depth)
+            x = result.core_depth
+            pre_pen_m = float(x[0]) if float(x[0]) < 0 else 0.0
             if log:
                 log.log(
                     f"Piston analysis complete — {n} samples, "
-                    f"core depth 0 – {float(result.core_depth[-1]):.2f} m, "
+                    f"core depth {float(x[0]):.2f} \u2013 {float(x[-1]):.2f} m "
+                    f"(0 = start-pen), "
                     f"SG window={result.sg_window}"
                 )
             if panel:
-                panel.update_status(
+                status = (
                     f"Analyzed {n} samples. "
-                    f"Core depth range: {float(result.core_depth[-1]):.2f} m"
+                    f"Range: {float(x[0]):.2f} – {float(x[-1]):.2f} m"
                 )
+                if pre_pen_m < 0:
+                    status += f"  ({abs(pre_pen_m):.2f} m pre-penetration)"
+                panel.update_status(status)
 
         except Exception as exc:
             _err(f"Piston analysis failed: {exc}")
