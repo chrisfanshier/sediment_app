@@ -137,6 +137,15 @@ class MainWindow(QMainWindow):
         )
         toolbar.addAction(self.save_all_action)
 
+        self.restore_action = QAction("📥 Restore Results", self)
+        self.restore_action.setToolTip(
+            "Restore previously saved analysis results for this core "
+            "(depth/time corrections, trip, piston, calculations).\n"
+            "Only available when a core is loaded from the database."
+        )
+        self.restore_action.setEnabled(False)
+        toolbar.addAction(self.restore_action)
+
     def _build_central(self):
         # -- Control panels (left) --
         self.panel_stack = QStackedWidget()
@@ -233,6 +242,11 @@ class MainWindow(QMainWindow):
         self.panel_stack.setCurrentIndex(idx)
         self.controller.on_mode_changed(mode_name)
         self.statusBar().showMessage(f"Mode: {mode_name}")
+
+    def set_mode(self, mode_name: str) -> None:
+        """Switch to *mode_name* programmatically (same as user picking from combo)."""
+        if mode_name in MODES:
+            self.mode_combo.setCurrentText(mode_name)
 
     def get_current_mode(self) -> str:
         return self.mode_combo.currentText()

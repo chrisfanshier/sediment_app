@@ -261,6 +261,10 @@ class PistonPositionPanel(BaseModePanel):
     def get_offset_constant(self) -> float:
         return self.offset_spin.value()
 
+    def set_offset_constant(self, value: float) -> None:
+        """Set the offset-constant spinbox value."""
+        self.offset_spin.setValue(float(value))
+
     def update_start_core_info(self, index: int, timestamp_str: str = ''):
         """Update the start-core info label."""
         text = f"Index: {index}"

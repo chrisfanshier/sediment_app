@@ -197,6 +197,7 @@ class AnalysisController:
         # Save All to DB — single toolbar action
         if self.main_window is not None:
             self.main_window.save_all_action.triggered.connect(self.save_all_to_db)
+            self.main_window.restore_action.triggered.connect(self._on_restore_results)
 
         # Calculate panel
         self.calculate_panel.load_file_requested.connect(self.load_export_csv)
@@ -286,6 +287,9 @@ class AnalysisController:
                     f"{self.sensor_data.row_count:,} rows, "
                     f"{self.sensor_data.num_sensors} sensors"
                 )
+            # Enable restore button (we'll check for saved results on click)
+            if self.main_window is not None:
+                self.main_window.restore_action.setEnabled(True)
         except Exception as e:
             self._show_error("Database Load Error", str(e))
             self._log_active(f"DB ERROR: {e}")
@@ -303,6 +307,9 @@ class AnalysisController:
         self._last_calc_inputs = None
         self._manual_seafloor = None
         self._current_db_result_id = None  # new analysis session
+        # Restore button requires a DB core with saved results
+        if self.main_window is not None:
+            self.main_window.restore_action.setEnabled(False)
 
     def load_calibration(self, file_path: str):
         """Load a JSON calibration file and set up mapping UI."""
@@ -3283,6 +3290,364 @@ class AnalysisController:
 
         except Exception as exc:
             _err(f"Piston analysis failed: {exc}")
+
+    # ==================================================================
+    # Restore from Database
+    # ==================================================================
+
+    def _on_restore_results(self) -> None:
+        """Handle the 'Restore Results' toolbar action."""
+        from ..persistence.analysis_results_io import fetch_results_for_core
+        from ..gui.dialogs.restore_results_dialog import RestoreResultsDialog
+        from PySide6.QtWidgets import QDialog
+
+        if self._loaded_core_id is None:
+            self._show_warning(
+                "No database core loaded.\n"
+                "Load a core via the database selector first."
+            )
+            return
+
+        try:
+            results = fetch_results_for_core(self._loaded_core_id)
+        except Exception as e:
+            self._show_error("Restore Error", f"Could not query saved results:\n{e}")
+            return
+
+        if not results:
+            self._show_warning("No saved analysis results found for this core.")
+            return
+
+        if len(results) == 1:
+            result_id = results[0]['result_id']
+        else:
+            dialog = RestoreResultsDialog(results, parent=self.main_window)
+            if dialog.exec() != QDialog.Accepted:
+                return
+            result_id = dialog.selected_result_id()
+            if result_id is None:
+                return
+
+        self.restore_from_db(result_id)
+
+    def restore_from_db(self, result_id: int) -> None:
+        """Re-apply all analysis steps stored in sensor_analysis_results row *result_id*.
+
+        Stages applied in order: depth corrections → time corrections → trip →
+        piston position → calculations.  Each stage is independent and skipped
+        gracefully if its data was not saved or fails to apply.
+        """
+        from ..persistence.analysis_results_io import fetch_result_by_id
+
+        row = fetch_result_by_id(result_id)
+        if row is None:
+            self._show_error(
+                "Restore Error", f"Result #{result_id} not found in database."
+            )
+            return
+
+        params = row.get('params') or {}
+        restored: list[str] = []
+        skipped: list[str] = []
+
+        def log(msg: str):
+            self._log_active(msg)
+
+        log(f"Restoring analysis result #{result_id}…")
+
+        # ── 1. Depth corrections ──────────────────────────────────────
+        if 'depth_offset' in params:
+            try:
+                ok = self._restore_depth_corrections(params['depth_offset'], log)
+                (restored if ok else skipped).append(
+                    "depth corrections" if ok else "depth corrections (no-op)"
+                )
+            except Exception as e:
+                log(f"  ERROR depth corrections: {e}")
+                skipped.append(f"depth corrections ({e})")
+        else:
+            skipped.append("depth corrections (not saved)")
+
+        # ── 2. Time corrections ───────────────────────────────────────
+        if 'time_offset' in params:
+            try:
+                ok = self._restore_time_corrections(params['time_offset'], log)
+                (restored if ok else skipped).append(
+                    "time corrections" if ok else "time corrections (no-op)"
+                )
+            except Exception as e:
+                log(f"  ERROR time corrections: {e}")
+                skipped.append(f"time corrections ({e})")
+        else:
+            skipped.append("time corrections (not saved)")
+
+        # ── 3. Trip ───────────────────────────────────────────────────
+        trip_index = row.get('trip_index')
+        trip_datetime = row.get('trip_datetime')
+        if trip_index is not None and trip_datetime is not None:
+            try:
+                ok = self._restore_trip(int(trip_index), trip_datetime, log)
+                (restored if ok else skipped).append("trip")
+            except Exception as e:
+                log(f"  ERROR trip restore: {e}")
+                skipped.append(f"trip ({e})")
+        else:
+            skipped.append("trip (not saved)")
+
+        # ── 4. Piston position ────────────────────────────────────────
+        start_core_index = row.get('start_core_index')
+        if 'piston' in params and start_core_index is not None:
+            try:
+                ok = self._restore_piston(
+                    params['piston'], int(start_core_index), log
+                )
+                (restored if ok else skipped).append("piston position")
+            except Exception as e:
+                log(f"  ERROR piston restore: {e}")
+                skipped.append(f"piston position ({e})")
+        else:
+            skipped.append("piston position (not saved)")
+
+        # ── 5. Calculations ───────────────────────────────────────────
+        if 'calc_inputs' in params:
+            try:
+                ok = self._restore_calculate(params['calc_inputs'], log)
+                (restored if ok else skipped).append("calculations")
+            except Exception as e:
+                log(f"  ERROR calculations restore: {e}")
+                skipped.append(f"calculations ({e})")
+        else:
+            skipped.append("calculations (not saved)")
+
+        # Switch to Calculate mode to show the restored state
+        if self.main_window is not None and restored:
+            self.main_window.set_mode('Calculate')
+
+        parts = []
+        if restored:
+            parts.append(f"Restored: {', '.join(restored)}")
+        if skipped:
+            parts.append(f"Skipped: {', '.join(skipped)}")
+        summary = "Restore complete — " + " | ".join(parts)
+        log(summary)
+        if self.main_window:
+            self.main_window.statusBar().showMessage(summary, 8000)
+
+    # ------------------------------------------------------------------
+    # Restore helpers (one per analysis stage)
+    # ------------------------------------------------------------------
+
+    def _restore_depth_corrections(self, depth_params: dict, log) -> bool:
+        """Re-apply depth calibration and manual offsets from saved params."""
+        if self.sensor_data is None or self.original_data is None:
+            return False
+
+        from ..domain.models.calibration import DepthCalibration
+
+        calib_json = depth_params.get('calib_json')
+        label_mapping = depth_params.get('label_mapping') or {}
+        ref_sensor = depth_params.get('reference_sensor') or ''
+        manual_offsets = depth_params.get('manual_offsets') or {}
+
+        working = self.original_data.copy()
+        applied_any = False
+
+        # Reconstruct calibration and apply regression corrections
+        if calib_json:
+            try:
+                self.calibration = DepthCalibration.from_dict(calib_json)
+            except Exception as e:
+                log(f"  Warning: could not reconstruct calibration: {e}")
+                self.calibration = None
+
+        if self.calibration is not None and label_mapping and ref_sensor:
+            ref_col = label_mapping.get(ref_sensor)
+            if ref_col and ref_col in working.df.columns:
+                # All mapped labels except the reference are enabled targets
+                enabled = [
+                    lbl for lbl in label_mapping
+                    if lbl != ref_sensor and label_mapping[lbl] in working.df.columns
+                ]
+                DepthCorrectionProcessor.apply_calibration(
+                    working, self.calibration, ref_col, label_mapping, enabled
+                )
+                log(f"  Depth regression corrections applied ({len(enabled)} sensors)")
+                applied_any = True
+
+        if manual_offsets:
+            applied = DepthCorrectionProcessor.apply_manual_offsets(working, manual_offsets)
+            if applied:
+                log(f"  Manual depth offsets applied: {len(applied)} sensors")
+                applied_any = True
+
+        self.sensor_data = working
+        self.main_plot.set_sensor_data(self.sensor_data)
+        self.main_plot.plot_depths(self.sensor_data, title=self.sensor_data.core_title or '')
+
+        # Update panel UI to reflect restored state (best effort)
+        if self.depth_panel is not None:
+            if self.calibration is not None and label_mapping:
+                self.depth_panel.setup_calibration_mapping(
+                    list(label_mapping.keys()), self.sensor_data.depth_columns
+                )
+                self.depth_panel.set_calibration_mapping(label_mapping)
+                if ref_sensor:
+                    self.depth_panel.set_ref_sensor(ref_sensor)
+            if manual_offsets:
+                self.depth_panel.setup_manual_offsets(self.sensor_data.depth_columns)
+                self.depth_panel.set_manual_offsets(manual_offsets)
+
+        return applied_any
+
+    def _restore_time_corrections(self, time_params: dict, log) -> bool:
+        """Re-apply time corrections from saved params."""
+        if self.sensor_data is None:
+            return False
+
+        offsets_data = time_params.get('offsets') or []
+        manual_offsets = time_params.get('manual_offsets') or {}
+        ref_col = time_params.get('reference_col')
+
+        # Update panel UI
+        if self.time_panel is not None:
+            if ref_col:
+                self.time_panel.set_ref_col(ref_col)
+
+        if offsets_data:
+            # Reconstruct TimeOffsetResult objects and apply via existing method
+            from ..domain.models.analysis_result import TimeOffsetResult
+            self.time_offset_results = [
+                TimeOffsetResult(
+                    sensor_column=item['sensor_col'],
+                    offset_seconds=float(item['offset_seconds'] or 0),
+                    rms_value=float(item.get('rms_value') or 0),
+                    is_reference=bool(item.get('is_reference', False)),
+                )
+                for item in offsets_data
+            ]
+            self.apply_time_corrections()
+            log(f"  Time corrections applied ({len(offsets_data)} sensors)")
+            return True
+
+        if any(v != 0 for v in manual_offsets.values()):
+            if self.time_panel is not None:
+                self.time_panel.set_manual_offsets(manual_offsets)
+            self.apply_manual_time_corrections()
+            log("  Manual time corrections applied")
+            return True
+
+        return False
+
+    def _restore_trip(self, trip_index: int, trip_datetime, log) -> bool:
+        """Restore trip detection state from saved flat columns."""
+        if self.sensor_data is None:
+            return False
+
+        import numpy as np
+        from ..domain.processing.trip_detection import TripDetectionResult
+
+        ts = pd.Timestamp(trip_datetime)
+        n = self.sensor_data.row_count
+        depth_cols = self.sensor_data.depth_columns
+
+        self.trip_detection_result = TripDetectionResult(
+            trip_index=trip_index,
+            trip_datetime=ts,
+            confidence=1.0,
+            derivative_order=1,
+            derivative_label='Restored from DB',
+            threshold=0.0,
+            derivative_profiles={col: np.zeros(n) for col in depth_cols},
+            divergence=np.zeros(n),
+            depth_columns=depth_cols,
+        )
+
+        ts_str = str(ts)
+        if self.piston_panel is not None:
+            self.piston_panel.set_trip_time(ts_str, source='DB restore')
+        if self.calculate_panel is not None:
+            self.calculate_panel.set_trip_time(ts_str, source='DB restore')
+
+        self.main_plot.add_trip_line(trip_index)
+        log(f"  Trip restored: index {trip_index}, time {ts.strftime('%Y-%m-%d %H:%M:%S')}")
+        return True
+
+    def _restore_piston(self, piston_params: dict, start_core_index: int, log) -> bool:
+        """Restore piston position state and re-compute the piston trace."""
+        if self.sensor_data is None:
+            return False
+
+        ws_col = piston_params.get('weight_stand_col')
+        rel_col = piston_params.get('release_col')
+        scope_ft = float(piston_params.get('scope_ft') or 0)
+        core_ft = float(piston_params.get('core_length_ft') or 0)
+        offset_constant = float(piston_params.get('offset_constant_m') or 1.25)
+
+        if not ws_col or not rel_col or scope_ft <= 0 or core_ft <= 0:
+            log("  Piston position: skipped (missing parameters)")
+            return False
+
+        if (ws_col not in self.sensor_data.df.columns
+                or rel_col not in self.sensor_data.df.columns):
+            log("  Piston position: skipped (saved columns not found in data)")
+            return False
+
+        # Update panel UI
+        if self.piston_panel is not None:
+            self.piston_panel.set_parameters_from_metadata(
+                {'scope': scope_ft, 'core_length': core_ft}
+            )
+            self.piston_panel.set_offset_constant(offset_constant)
+
+        self._piston_start_core_idx = start_core_index
+        ws_vals = (
+            self.sensor_data.df[ws_col].interpolate().ffill().bfill().values
+        )
+        rel_vals = (
+            self.sensor_data.df[rel_col].interpolate().ffill().bfill().values
+        )
+        self._plot_piston(ws_vals, rel_vals, scope_ft, core_ft,
+                          start_core_index, offset_constant)
+        log(f"  Piston position restored: start_core index {start_core_index}")
+        return True
+
+    def _restore_calculate(self, calc_params: dict, log) -> bool:
+        """Restore calculate-mode state (indices, seafloor) and re-run calculations."""
+        if self.sensor_data is None:
+            return False
+
+        # Restore scalar state
+        end_pen = calc_params.get('end_pen_idx')
+        pullout = calc_params.get('pullout_idx')
+        sc = calc_params.get('start_core_idx')
+        sf = calc_params.get('seafloor_manual')
+
+        if end_pen is not None:
+            self._end_pen_idx = int(end_pen)
+        if pullout is not None:
+            self._pullout_idx = int(pullout)
+        if sc is not None:
+            self._calc_start_core_idx = int(sc)
+        if sf is not None:
+            self._manual_seafloor = float(sf)
+
+        # Restore panel numeric params
+        if self.calculate_panel is not None:
+            trigger_pen = calc_params.get('trigger_pen_m')
+            sg_w = calc_params.get('sg_window')
+            sg_p = calc_params.get('sg_poly')
+            if trigger_pen is not None:
+                self.calculate_panel.set_trigger_pen(float(trigger_pen))
+            if sg_w is not None and sg_p is not None:
+                self.calculate_panel.set_sg_params(int(sg_w), int(sg_p))
+
+        try:
+            self.run_calculations()
+            log("  Calculations re-run successfully")
+        except Exception as e:
+            log(f"  Warning: calculations re-run failed: {e}")
+
+        return True
 
     # ==================================================================
     # Helpers

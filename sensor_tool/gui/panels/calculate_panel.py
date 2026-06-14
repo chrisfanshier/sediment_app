@@ -430,6 +430,10 @@ class CalculatePanel(BaseModePanel):
     def get_trigger_pen(self) -> float:
         return self.trigger_pen_spin.value()
 
+    def set_trigger_pen(self, value: float) -> None:
+        """Set the trigger-penetration spinbox value."""
+        self.trigger_pen_spin.setValue(float(value))
+
     def get_smoothing_enabled(self) -> bool:
         return self.smooth_check.isChecked()
 
@@ -440,6 +444,11 @@ class CalculatePanel(BaseModePanel):
         if win % 2 == 0:
             win += 1
         return win, self.sg_poly_spin.value()
+
+    def set_sg_params(self, window: int, polyorder: int) -> None:
+        """Set Savitzky-Golay window length and polynomial order spinboxes."""
+        self.sg_window_spin.setValue(int(window))
+        self.sg_poly_spin.setValue(int(polyorder))
 
     # ------------------------------------------------------------------
     # Seafloor override helpers

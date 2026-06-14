@@ -228,6 +228,23 @@ class TimeOffsetPanel(BaseModePanel):
         """Return manual offsets: depth_column -> offset_seconds."""
         return {col: spin.value() for col, spin in self.manual_offset_spinboxes.items()}
 
+    def set_manual_offsets(self, offsets: dict[str, float]) -> None:
+        """Set manual time-offset spinbox values from *offsets* (column -> seconds).
+
+        Only spinboxes already created by ``setup_manual_offsets`` are updated.
+        """
+        for col, value in offsets.items():
+            spin = self.manual_offset_spinboxes.get(col)
+            if spin is not None:
+                spin.setValue(float(value))
+
+    def set_ref_col(self, col: str) -> None:
+        """Select the reference sensor whose column name equals *col*."""
+        for i in range(self.ref_sensor_combo.count()):
+            if self.ref_sensor_combo.itemData(i) == col:
+                self.ref_sensor_combo.setCurrentIndex(i)
+                return
+
     def get_filter_params(self) -> tuple[float, float, int]:
         return (
             self.low_freq_spin.value(),

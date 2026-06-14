@@ -288,6 +288,38 @@ class DepthOffsetPanel(BaseModePanel):
         """Return the selected reference calibration label."""
         return self.ref_sensor_combo.currentText()
 
+    def set_ref_sensor(self, label: str) -> None:
+        """Select *label* in the reference sensor combo (no-op if not found)."""
+        for i in range(self.ref_sensor_combo.count()):
+            if self.ref_sensor_combo.itemText(i) == label:
+                self.ref_sensor_combo.setCurrentIndex(i)
+                return
+
+    def set_calibration_mapping(self, mapping: dict[str, str]) -> None:
+        """Set combo selections to match *mapping* (cal_label -> depth_column).
+
+        Only updates combos that already exist (populated by
+        ``setup_calibration_mapping``); silently skips unknown labels.
+        """
+        for cal_label, col in mapping.items():
+            combo = self.mapping_combos.get(cal_label)
+            if combo is None:
+                continue
+            for i in range(combo.count()):
+                if combo.itemData(i) == col:
+                    combo.setCurrentIndex(i)
+                    break
+
+    def set_manual_offsets(self, offsets: dict[str, float]) -> None:
+        """Set manual-offset spinbox values from *offsets* (column -> metres).
+
+        Only spinboxes already created by ``setup_manual_offsets`` are updated.
+        """
+        for col, value in offsets.items():
+            spin = self.manual_offset_spinboxes.get(col)
+            if spin is not None:
+                spin.setValue(float(value))
+
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------

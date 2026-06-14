@@ -142,3 +142,52 @@ def update_result(result_id: int,
     with get_connection() as conn:
         conn.execute(text(sql), data)
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Read
+# ---------------------------------------------------------------------------
+
+def fetch_results_for_core(core_id: int) -> list[dict]:
+    """Return summary rows for all saved analysis results for *core_id*, newest first.
+
+    Each dict contains ``result_id``, ``analyzed_at``, ``trip_index``,
+    ``start_core_index``, ``result_recoil_max``, and ``params``
+    (the JSONB blob decoded to a Python dict).
+    """
+    with get_connection() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT result_id, analyzed_at, trip_index, start_core_index,
+                       result_recoil_max, params
+                FROM sensor_analysis_results
+                WHERE core_id = :cid
+                ORDER BY analyzed_at DESC NULLS LAST
+            """),
+            {'cid': core_id},
+        ).fetchall()
+    results = []
+    for row in rows:
+        d = dict(row._mapping)
+        if d.get('params') is not None and isinstance(d['params'], str):
+            d['params'] = json.loads(d['params'])
+        results.append(d)
+    return results
+
+
+def fetch_result_by_id(result_id: int) -> dict | None:
+    """Return a full analysis result row by primary key, or ``None`` if not found.
+
+    The ``params`` JSONB column is decoded to a Python dict.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            text("SELECT * FROM sensor_analysis_results WHERE result_id = :rid"),
+            {'rid': result_id},
+        ).fetchone()
+    if row is None:
+        return None
+    d = dict(row._mapping)
+    if d.get('params') is not None and isinstance(d['params'], str):
+        d['params'] = json.loads(d['params'])
+    return d
