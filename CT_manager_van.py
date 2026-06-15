@@ -77,9 +77,9 @@ def parse_ct_xml(xml_path):
                                       or get_sibling_text("Section-Number", "section-number")
 
                         del sibling_tree
-                        print(f"ℹ️ Used sibling XML for core-id: {sibling_name} → {core_name}")
+                        print(f"[INFO] Used sibling XML for core-id: {sibling_name} -> {core_name}")
                     except Exception as e:
-                        print(f"Warning: could not parse sibling XML {sibling_path}: {e}")
+                        print(f"[WARN] Could not parse sibling XML {sibling_path}: {e}")
 
         total_scanned_length = get_text("Total-Scanned-Length", "total-scanned-length")
 
@@ -98,7 +98,7 @@ def parse_ct_xml(xml_path):
         del tree
         return data
     except Exception as e:
-        print(f"Error parsing {xml_path}: {e}")
+        print(f"[ERROR] Error parsing {xml_path}: {e}")
         return None
 
 
@@ -115,7 +115,7 @@ class CTFileManager:
 
         try:
             if not os.path.exists(full_path):
-                print(f"File not found: {full_path}")
+                print(f"[ERROR] File not found: {full_path}")
                 return False
 
             tree = ET.parse(full_path)
@@ -148,15 +148,15 @@ class CTFileManager:
                 del tree
                 time.sleep(0.05)
                 shutil.move(temp_path, full_path)
-                print(f"Updated {updated_tag}: '{old_value}' → '{new_value}' in {os.path.basename(full_path)}")
+                print(f"[INFO] Updated {updated_tag}: '{old_value}' -> '{new_value}' in {os.path.basename(full_path)}")
                 return True
             else:
                 del tree
-                print(f"Field '{field_name}' (tried variants: {', '.join(possible_tags)}) not found in {os.path.basename(full_path)}")
+                print(f"[WARN] Field '{field_name}' (tried variants: {', '.join(possible_tags)}) not found in {os.path.basename(full_path)}")
                 return False
 
         except Exception as e:
-            print(f"Error editing XML {full_path}: {e}")
+            print(f"[ERROR] Error editing XML {full_path}: {e}")
             temp_path = full_path + ".tmp"
             if os.path.exists(temp_path):
                 try:
@@ -183,7 +183,7 @@ def resolve_tif_filename(xml_path, meta_tif_filename):
     """
     Derive the TIF filename for a geotek-image record.
 
-    Primary method: swap the XML file's extension to .tif — this works for
+    Primary method: swap the XML file's extension to .tif -- this works for
     both corrected XMLs (which have no <filename> tag) and non-corrected ones
     (where the <filename> tag value is always just the XML name anyway).
 
@@ -203,24 +203,24 @@ def resolve_tif_info(meta, xml_path, folder):
 
     Rules:
       geotek-image (any image_type):
-        → always 1 XML : 1 TIF
-        → tif_filename derived from XML filename (swap extension to .tif)
-        → fallback to <filename> tag if derived path doesn't exist
-        → logs a warning if neither path exists on disk
+        -> always 1 XML : 1 TIF
+        -> tif_filename derived from XML filename (swap extension to .tif)
+        -> fallback to <filename> tag if derived path doesn't exist
+        -> logs a warning if neither path exists on disk
 
       geotek-xray-scan-recipe:
-        → no TIF at all → both None
+        -> no TIF at all -> both None
 
       geotek-ct-stack / geotek-ct-recon, Acquired:
-        → directory of raw projections, 1 XML for the whole folder
-        → tif_filename None, size = total folder size
+        -> directory of raw projections, 1 XML for the whole folder
+        -> tif_filename None, size = total folder size
 
       geotek-ct-stack / geotek-ct-recon, Recon/Reconstructed:
-        → check how many XMLs are in the folder:
-          - multiple XMLs → 1 XML per image (orthogonals/sliceslabs)
-            → tif_filename derived from XML filename
-          - single XML → full slice stack
-            → tif_filename None, size = total folder size
+        -> check how many XMLs are in the folder:
+          - multiple XMLs -> 1 XML per image (orthogonals/sliceslabs)
+            -> tif_filename derived from XML filename
+          - single XML -> full slice stack
+            -> tif_filename None, size = total folder size
     """
     root_tag = meta.get("xml_root_tag", "")
     processing_stage = (meta.get("processing_stage") or "").lower()
@@ -244,8 +244,8 @@ def resolve_tif_info(meta, xml_path, folder):
                     return tag_name, os.path.getsize(tag_path)
                 except OSError:
                     return tag_name, None
-        # Neither found — store the derived name anyway so export can warn
-        print(f"WARNING: TIF not found on disk: {tif_path}")
+        # Neither found -- store the derived name anyway so export can warn
+        print(f"[WARN] TIF not found on disk: {tif_path}")
         return filename, None
 
     if root_tag == "geotek-image":
@@ -274,11 +274,11 @@ def resolve_tif_info(meta, xml_path, folder):
                 if f.lower().endswith(".xml")
             )
             if xml_count > 1:
-                # Multiple XMLs → 1 XML per image (orthogonals / sliceslabs)
+                # Multiple XMLs -> 1 XML per image (orthogonals / sliceslabs)
                 derived = resolve_tif_filename(xml_path, meta.get("tif_filename"))
                 tif_filename, tif_filesize_bytes = get_tif_size(derived)
             else:
-                # Single XML → full slice stack
+                # Single XML -> full slice stack
                 tif_filename = None
                 tif_filesize_bytes = get_folder_size(folder)
 
@@ -372,7 +372,7 @@ def get_validation_summary(validated_records):
                 "Core": record["core_name"],
                 "Section": record["section_number"],
                 "XML Count": 0,
-                "Status": "✅ Valid" if val["status"] == "valid" else "❌ Invalid",
+                "Status": "[OK] Valid" if val["status"] == "valid" else "[FAIL] Invalid",
                 "Issues": "; ".join(val["issues"]) if val["issues"] else "",
                 "records": []
             }
@@ -381,7 +381,7 @@ def get_validation_summary(validated_records):
         summary_data[key]["records"].append(val)
 
         if val["status"] == "invalid":
-            summary_data[key]["Status"] = "❌ Invalid"
+            summary_data[key]["Status"] = "[FAIL] Invalid"
             if val["issues"]:
                 current_issues = set(summary_data[key]["Issues"].split("; ")) if summary_data[key]["Issues"] else set()
                 current_issues.update(val["issues"])
@@ -451,7 +451,7 @@ def import_to_database(validated_records):
             )
 
             if fingerprint in existing_fingerprints:
-                print(f"WARNING: Skipping duplicate fingerprint: {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {os.path.basename(record['xml_path'])}")
+                print(f"[WARN] Skipping duplicate fingerprint: {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {os.path.basename(record['xml_path'])}")
                 skipped_by_fingerprint += 1
                 continue
 
@@ -502,13 +502,13 @@ def import_to_database(validated_records):
                 saved_count += 1
 
             except Exception as e:
-                print(f"❌ Error importing {record['xml_path']}: {e}")
+                print(f"[ERROR] Error importing {record['xml_path']}: {e}")
                 failed_count += 1
 
     if skipped_by_path > 0:
-        print(f"ℹ️ Skipped {skipped_by_path} records (path already exists)")
+        print(f"[INFO] Skipped {skipped_by_path} records (path already exists)")
     if skipped_by_fingerprint > 0:
-        print(f"ℹ️ Skipped {skipped_by_fingerprint} records (fingerprint already exists - use Tab 3 to update paths)")
+        print(f"[INFO] Skipped {skipped_by_fingerprint} records (fingerprint already exists - use Tab 3 to update paths)")
 
     return saved_count, skipped_by_path, skipped_by_fingerprint, failed_count
 
@@ -653,7 +653,7 @@ def find_moved_files(ct_root, missing_records):
         fp_string = fingerprint_to_string(fp)
         missing_fingerprints[fp_string] = record
 
-    st.write(f"🔍 Scanning {ct_root} for XML files...")
+    st.write(f"Scanning {ct_root} for XML files...")
     disk_records = scan_ct_folders(ct_root)
 
     matches = []
@@ -700,7 +700,7 @@ def update_xml_paths(updates):
             }).fetchone()
 
             if existing:
-                print(f"WARNING: Skipping update for ID {update['id']}: target path already exists (ID {existing[0]})")
+                print(f"[WARN] Skipping update for ID {update['id']}: target path already exists (ID {existing[0]})")
                 skipped_count += 1
                 continue
 
@@ -717,7 +717,7 @@ def update_xml_paths(updates):
                 })
                 updated_count += 1
             except Exception as e:
-                print(f"❌ Error updating ID {update['id']}: {e}")
+                print(f"[ERROR] Error updating ID {update['id']}: {e}")
                 skipped_count += 1
 
     return updated_count, skipped_count
@@ -811,7 +811,7 @@ def is_recon_stack(row):
     Criteria:
       - xml_root_tag is geotek-ct-stack or geotek-ct-recon
       - processing_stage contains 'recon' or 'reconstructed' (case-insensitive)
-      - xml filename is index.xml (case-insensitive) — confirms it's a stack index,
+      - xml filename is index.xml (case-insensitive) -- confirms it's a stack index,
         not a per-image XML
     """
     root_tag = (row.get("xml_root_tag") or "").lower()
@@ -862,9 +862,6 @@ def find_slices_dirs(tiff_folder):
     return matches
 
 
-
-
-
 def collect_export_manifest(selected_cores, selected_section_numbers,
                              export_xray, export_ct_ortho, export_slices,
                              xray_corrected_only=True,
@@ -906,7 +903,7 @@ def collect_export_manifest(selected_cores, selected_section_numbers,
     def resolve_tif_for_export(row, image_list, fallback_finder, corrected_only=False):
         """
         Resolve TIF path for a single ct_xml row and append to image_list.
-        Uses tif_filename from DB → derives from xml_path → folder walk fallback.
+        Uses tif_filename from DB -> derives from xml_path -> folder walk fallback.
         Applies rename logic so every exported file is identifiable by name alone.
         corrected_only: if True, skip files without 'corrected' in the filename.
         """
@@ -1021,16 +1018,16 @@ def render_export_preview(manifest):
         st.metric("Total Size", format_size(manifest.get("total_size_bytes", 0)))
 
     if manifest.get("renamed_count", 0) > 0:
-        st.info(f"✏️ {manifest['renamed_count']} CT Orthogonal file(s) will be renamed on export "
+        st.info(f"{manifest['renamed_count']} CT Orthogonal file(s) will be renamed on export "
                 f"(prepend core + section) to ensure traceability outside their source folder.")
 
     if manifest["missing_folders"]:
-        with st.expander(f"⚠️ {len(manifest['missing_folders'])} tiff_folder(s) not found on disk"):
+        with st.expander(f"{len(manifest['missing_folders'])} tiff_folder(s) not found on disk"):
             for p in manifest["missing_folders"]:
                 st.text(p)
 
     if manifest["xray_files"]:
-        with st.expander(f"🖼️ XRay TIFs ({len(manifest['xray_files'])} files)"):
+        with st.expander(f"XRay TIFs ({len(manifest['xray_files'])} files)"):
             df = pd.DataFrame(manifest["xray_files"],
                               columns=["Source Path", "Destination Filename", "Core", "Section"])
             st.dataframe(df, use_container_width=True)
@@ -1038,7 +1035,7 @@ def render_export_preview(manifest):
     if manifest["ct_ortho_files"]:
         renamed = [(s, d, c, sec) for s, d, c, sec in manifest["ct_ortho_files"]
                    if os.path.basename(s) != d]
-        label = f"🔬 CT Orthogonal TIFs ({len(manifest['ct_ortho_files'])} files"
+        label = f"CT Orthogonal TIFs ({len(manifest['ct_ortho_files'])} files"
         if renamed:
             label += f", {len(renamed)} renamed"
         label += ")"
@@ -1049,7 +1046,7 @@ def render_export_preview(manifest):
 
     if manifest["slices_dirs"]:
         with st.expander(
-            f"📂 Slices Directories ({len(manifest['slices_dirs'])} dirs, {manifest['slices_file_count']:,} files)"
+            f"Slices Directories ({len(manifest['slices_dirs'])} dirs, {manifest['slices_file_count']:,} files)"
         ):
             st.dataframe(
                 pd.DataFrame(manifest["slices_dirs"], columns=["Source Directory", "Core"]),
@@ -1057,7 +1054,7 @@ def render_export_preview(manifest):
             )
 
     if manifest.get("missing_tifs"):
-        with st.expander(f"⚠️ {len(manifest['missing_tifs'])} TIF file(s) expected but not found on disk"):
+        with st.expander(f"{len(manifest['missing_tifs'])} TIF file(s) expected but not found on disk"):
             st.warning("These files are in the database but the TIF was not found at the expected path. They will be skipped in the export.")
             for p in manifest["missing_tifs"]:
                 st.text(p)
@@ -1068,17 +1065,17 @@ def generate_robocopy_script(manifest, export_dir):
     Generate a Windows .bat file of robocopy commands for the export.
 
     Why robocopy instead of copying through the app:
-    - Transfers can be many GB — robocopy runs natively and doesn't tie up the browser
+    - Transfers can be many GB -- robocopy runs natively and doesn't tie up the browser
     - Resumable: re-running the script skips already-copied files (/XO flag)
     - Shows real transfer progress in the terminal
     - Handles network paths and large file counts reliably
 
     Output structure:
         export_dir/
-        ├── xray_images/        ← corrected XRay TIFs (individual files)
-        ├── ct_orthogonal/      ← corrected CT Orthogonal TIFs (individual files)
-        └── CoreName-slices/
-            └── slices/         ← full slices dirs, merged flat per core
+        +-- xray_images/        <- corrected XRay TIFs (individual files)
+        +-- ct_orthogonal/      <- corrected CT Orthogonal TIFs (individual files)
+        +-- CoreName-slices/
+            +-- slices/         <- full slices dirs, merged flat per core
     """
     xray_dst     = os.path.join(export_dir, "xray_images")
     ct_ortho_dst = os.path.join(export_dir, "ct_orthogonal")
@@ -1086,11 +1083,11 @@ def generate_robocopy_script(manifest, export_dir):
     lines = [
         "@echo off",
         "REM ============================================================",
-        "REM  CT Data Export Script — generated by CT Data Manager",
+        "REM  CT Data Export Script -- generated by CT Data Manager",
         f"REM  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"REM  Destination root: {export_dir}",
         "REM",
-        "REM  Re-running this script is safe — robocopy skips files that",
+        "REM  Re-running this script is safe -- robocopy skips files that",
         "REM  already exist at the destination (/XO = exclude older/same).",
         "REM ============================================================",
         "",
@@ -1128,7 +1125,6 @@ def generate_robocopy_script(manifest, export_dir):
             lines.append("REM  -- renamed files --")
             for src, dst_fn, core, section in renamed:
                 dst_path = os.path.join(dst_dir, dst_fn)
-                # Build the PowerShell command using string concatenation to avoid quote escaping issues
                 ps_cmd = (
                     'powershell -Command "if (-not (Test-Path \'' + dst_path + '\')) '
                     '{ Copy-Item \'' + src + '\' \'' + dst_path + '\' }"'
@@ -1166,18 +1162,18 @@ def generate_robocopy_script(manifest, export_dir):
 # === Streamlit App ===
 def main():
     st.set_page_config(page_title="CT Data Manager", layout="wide")
-    st.title("🔬 CT Scan Data Manager")
+    st.title("CT Scan Data Manager")
 
     with st.sidebar:
-        st.header("⚙️ Settings")
+        st.header("Settings")
         ct_root = st.text_input(
             "CT Root Folder",
-            value="C:\\Users\\chris\\Documents\\steen_tessin2025\\CT_Drive",
+            value="C:\\GeotekData",
             help="Path to CT data directory"
         )
 
     tab1, tab2, tab3, tab4 = st.tabs(
-        ["1️⃣ Import Scans", "2️⃣ Database View", "3️⃣ Path Maintenance", "4️⃣ Export Data"]
+        ["1 - Import Scans", "2 - Database View", "3 - Path Maintenance", "4 - Export Data"]
     )
 
     # === TAB 1: Import Scans ===
@@ -1191,7 +1187,7 @@ def main():
         4. Import directly to database
         """)
 
-        if st.button("🔍 Scan Directory", use_container_width=True, type="primary"):
+        if st.button("Scan Directory", use_container_width=True, type="primary"):
             with st.spinner("Scanning and validating..."):
                 records = scan_ct_folders(ct_root)
                 validated = validate_against_database(records)
@@ -1203,8 +1199,8 @@ def main():
 
             if not summary_df.empty:
                 total = len(summary_df)
-                valid = len(summary_df[summary_df["Status"] == "✅ Valid"])
-                invalid = len(summary_df[summary_df["Status"] == "❌ Invalid"])
+                valid = len(summary_df[summary_df["Status"] == "[OK] Valid"])
+                invalid = len(summary_df[summary_df["Status"] == "[FAIL] Invalid"])
 
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -1218,10 +1214,10 @@ def main():
 
                 if invalid > 0:
                     st.markdown("---")
-                    st.subheader("🔧 Fix Invalid Records")
-                    st.warning(f"⚠️ Fix {invalid} core/section combinations before importing")
+                    st.subheader("Fix Invalid Records")
+                    st.warning(f"Fix {invalid} core/section combinations before importing")
 
-                    invalid_df = summary_df[summary_df["Status"] == "❌ Invalid"]
+                    invalid_df = summary_df[summary_df["Status"] == "[FAIL] Invalid"]
                     edit_data = {}
 
                     for idx, row in invalid_df.iterrows():
@@ -1230,7 +1226,7 @@ def main():
                         issues = row["Issues"]
                         xml_count = row["XML Count"]
 
-                        with st.expander(f"🔧 {core} - Section {section} ({xml_count} XMLs) - {issues}"):
+                        with st.expander(f"{core} - Section {section} ({xml_count} XMLs) - {issues}"):
                             col1, col2 = st.columns(2)
                             with col1:
                                 new_core = st.text_input("New Core-ID", key=f"fix_core_{core}_{section}", placeholder=core)
@@ -1241,7 +1237,7 @@ def main():
 
                     if edit_data:
                         st.markdown("---")
-                        if st.button("💾 Apply Fixes to Invalid XMLs", use_container_width=True, type="primary", key="fix_invalid_btn"):
+                        if st.button("Apply Fixes to Invalid XMLs", use_container_width=True, type="primary", key="fix_invalid_btn"):
                             fm = CTFileManager(ct_root)
                             total_files = sum(len(summary_data[(core, section)]["records"]) for (core, section) in edit_data.keys())
                             progress_bar = st.progress(0)
@@ -1277,14 +1273,14 @@ def main():
                             status_text.empty()
 
                             if total_failed > 0:
-                                st.warning(f"⚠️ Updated {total_updated} XML files, {total_failed} failed")
+                                st.warning(f"Updated {total_updated} XML files, {total_failed} failed")
                             else:
-                                st.success(f"✅ Successfully updated {total_updated} XML files")
+                                st.success(f"Successfully updated {total_updated} XML files")
 
                             time.sleep(1.5)
                             if "validated_records" in st.session_state:
                                 del st.session_state.validated_records
-                            st.info("🔄 Re-scanning to verify fixes...")
+                            st.info("Re-scanning to verify fixes...")
                             time.sleep(0.5)
                             records = scan_ct_folders(ct_root)
                             validated = validate_against_database(records)
@@ -1293,10 +1289,10 @@ def main():
 
                 if valid > 0:
                     st.markdown("---")
-                    st.subheader("✏️ Edit Valid Records (Optional)")
+                    st.subheader("Edit Valid Records (Optional)")
                     st.info("These records passed validation but you can still edit them if needed")
 
-                    valid_df = summary_df[summary_df["Status"] == "✅ Valid"]
+                    valid_df = summary_df[summary_df["Status"] == "[OK] Valid"]
                     valid_edit_data = {}
 
                     for idx, row in valid_df.iterrows():
@@ -1304,7 +1300,7 @@ def main():
                         section = row["Section"]
                         xml_count = row["XML Count"]
 
-                        with st.expander(f"✏️ {core} - Section {section} ({xml_count} XMLs)"):
+                        with st.expander(f"{core} - Section {section} ({xml_count} XMLs)"):
                             col1, col2 = st.columns(2)
                             with col1:
                                 new_core = st.text_input("New Core-ID", key=f"edit_core_{core}_{section}", placeholder=core)
@@ -1315,7 +1311,7 @@ def main():
 
                     if valid_edit_data:
                         st.markdown("---")
-                        if st.button("💾 Apply Edits to Valid XMLs", use_container_width=True, type="secondary", key="edit_valid_btn"):
+                        if st.button("Apply Edits to Valid XMLs", use_container_width=True, type="secondary", key="edit_valid_btn"):
                             validation_failed = False
                             validation_errors = []
 
@@ -1351,9 +1347,9 @@ def main():
                                                 validation_errors.append(f"Invalid section number format: '{changes['new_section']}'")
 
                             if validation_failed:
-                                st.error("❌ Cannot apply edits - new names are invalid:")
+                                st.error("Cannot apply edits - new names are invalid:")
                                 for error in validation_errors:
-                                    st.error(f"  • {error}")
+                                    st.error(f"  - {error}")
                                 st.warning("Please correct these issues before applying edits.")
                             else:
                                 fm = CTFileManager(ct_root)
@@ -1375,12 +1371,12 @@ def main():
                                         skipped_already_imported += len(summary_data[key]["records"]) - len(unimported)
 
                                 if skipped_already_imported > 0:
-                                    st.info(f"ℹ️ Skipping {skipped_already_imported} XML(s) already in database (edits not needed)")
+                                    st.info(f"Skipping {skipped_already_imported} XML(s) already in database (edits not needed)")
 
                                 total_files = sum(len(recs) for recs in filtered_records.values())
 
                                 if total_files == 0:
-                                    st.warning("⚠️ All XMLs for the selected sections are already in the database. Nothing to edit.")
+                                    st.warning("All XMLs for the selected sections are already in the database. Nothing to edit.")
                                 else:
                                     progress_bar = st.progress(0)
                                     status_text = st.empty()
@@ -1415,14 +1411,14 @@ def main():
                                     status_text.empty()
 
                                     if total_failed > 0:
-                                        st.warning(f"⚠️ Updated {total_updated} XML files, {total_failed} failed")
+                                        st.warning(f"Updated {total_updated} XML files, {total_failed} failed")
                                     else:
-                                        st.success(f"✅ Successfully updated {total_updated} XML files")
+                                        st.success(f"Successfully updated {total_updated} XML files")
 
                                 time.sleep(1.5)
                                 if "validated_records" in st.session_state:
                                     del st.session_state.validated_records
-                                st.info("🔄 Re-scanning to verify edits...")
+                                st.info("Re-scanning to verify edits...")
                                 time.sleep(0.5)
                                 records = scan_ct_folders(ct_root)
                                 validated = validate_against_database(records)
@@ -1431,30 +1427,30 @@ def main():
 
                 if invalid == 0:
                     st.markdown("---")
-                    st.success("✅ All records validated! Ready to import.")
+                    st.success("All records validated! Ready to import.")
 
-                    if st.button("📥 Import to Database", use_container_width=True, type="primary"):
+                    if st.button("Import to Database", use_container_width=True, type="primary"):
                         with st.spinner("Importing to database..."):
                             saved, skipped_path, skipped_fp, failed = import_to_database(validated)
 
                         if saved > 0:
-                            st.success(f"✅ Imported {saved} new XML files to database")
+                            st.success(f"Imported {saved} new XML files to database")
                         if skipped_path > 0:
-                            st.info(f"ℹ️ Skipped {skipped_path} files (already in database at same path)")
+                            st.info(f"Skipped {skipped_path} files (already in database at same path)")
                         if skipped_fp > 0:
-                            st.warning(f"⚠️ Skipped {skipped_fp} files (same scan exists at different path)")
+                            st.warning(f"Skipped {skipped_fp} files (same scan exists at different path)")
                             st.write("These files may have been moved. Use **Tab 3: Path Maintenance** to update their locations.")
                         if failed > 0:
-                            st.error(f"❌ {failed} files failed to import (check console for details)")
+                            st.error(f"{failed} files failed to import (check console for details)")
 
                         if "validated_records" in st.session_state:
                             del st.session_state.validated_records
                         time.sleep(2)
                         st.rerun()
             else:
-                st.warning("⚠️ No valid records found after validation")
+                st.warning("No valid records found after validation")
         else:
-            st.info("👆 Click 'Scan Directory' to begin")
+            st.info("Click 'Scan Directory' to begin")
 
     # === TAB 2: Database View ===
     with tab2:
@@ -1465,26 +1461,26 @@ def main():
         - **Image Types**: Shows image types from geotek-image XMLs
         """)
 
-        if st.button("🔄 Refresh", use_container_width=True):
+        if st.button("Refresh", use_container_width=True):
             st.rerun()
 
         ct_xml_df = get_ct_xml_summary()
 
         if not ct_xml_df.empty:
-            st.subheader("📊 CT Scans in Database")
+            st.subheader("CT Scans in Database")
             st.dataframe(ct_xml_df, use_container_width=True)
             st.info(f"Total: {len(ct_xml_df)} core/section combinations in database")
 
             csv_data = ct_xml_df.to_csv(index=False)
             st.download_button(
-                label="📥 Download CSV",
+                label="Download CSV",
                 data=csv_data,
                 file_name="ct_xml_summary.csv",
                 mime="text/csv",
                 use_container_width=True
             )
 
-            with st.expander("📋 View Detailed Records"):
+            with st.expander("View Detailed Records"):
                 with get_connection() as conn:
                     result = conn.execute(text("""
                         SELECT
@@ -1511,10 +1507,10 @@ def main():
         2. Search filesystem to find where files moved to
         3. Update database with new paths
 
-        ⚠️ You shouldn't need this during normal scanning - only when reorganizing existing data.
+        Note: You should not need this during normal scanning - only when reorganizing existing data.
         """)
 
-        if st.button("🔍 Check for Missing Files", use_container_width=True, type="primary"):
+        if st.button("Check for Missing Files", use_container_width=True, type="primary"):
             with st.spinner("Verifying paths..."):
                 verification = verify_xml_paths(ct_root)
                 st.session_state.path_verification = verification
@@ -1526,25 +1522,25 @@ def main():
             with col1:
                 st.metric("Total Records", verify["total"])
             with col2:
-                st.metric("✅ Found", len(verify["exists"]))
+                st.metric("Found", len(verify["exists"]))
             with col3:
-                st.metric("❌ Missing", len(verify["missing"]))
+                st.metric("Missing", len(verify["missing"]))
 
             if verify["missing"]:
                 st.markdown("---")
-                st.warning(f"⚠️ {len(verify['missing'])} XML files not found at recorded paths")
+                st.warning(f"{len(verify['missing'])} XML files not found at recorded paths")
 
-                with st.expander("📋 View Missing Files"):
+                with st.expander("View Missing Files"):
                     missing_df = pd.DataFrame(verify["missing"])
                     if not missing_df.empty:
                         display_cols = ["core_name", "section_number", "xml_root_tag", "image_type", "xml_path"]
                         st.dataframe(missing_df[display_cols], use_container_width=True)
 
                 st.markdown("---")
-                st.subheader("🔍 Search for Moved Files")
+                st.subheader("Search for Moved Files")
                 st.info("This will scan the filesystem to find where these files moved to")
 
-                if st.button("🔎 Search for Moved Files", use_container_width=True, type="primary"):
+                if st.button("Search for Moved Files", use_container_width=True, type="primary"):
                     with st.spinner(f"Searching {ct_root} for {len(verify['missing'])} missing files..."):
                         search_results = find_moved_files(ct_root, verify["missing"])
                         st.session_state.path_search_results = search_results
@@ -1554,14 +1550,14 @@ def main():
 
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.metric("✅ Found", len(results["matches"]))
+                        st.metric("Found", len(results["matches"]))
                     with col2:
-                        st.metric("❌ Not Found", len(results["not_found"]))
+                        st.metric("Not Found", len(results["not_found"]))
 
                     if results["matches"]:
-                        st.success(f"🎉 Found {len(results['matches'])} moved files!")
+                        st.success(f"Found {len(results['matches'])} moved files!")
 
-                        with st.expander("📋 View Path Changes", expanded=True):
+                        with st.expander("View Path Changes", expanded=True):
                             for match in results["matches"][:10]:
                                 st.write(f"**{match['core_name']} - Section {match['section_number']} - {match['xml_root_tag']}**")
                                 st.text(f"  Old: {match['old_xml_path']}")
@@ -1571,13 +1567,13 @@ def main():
                                 st.info(f"... and {len(results['matches']) - 10} more")
 
                         st.markdown("---")
-                        if st.button("💾 Update Database Paths", use_container_width=True, type="primary"):
+                        if st.button("Update Database Paths", use_container_width=True, type="primary"):
                             with st.spinner("Updating paths..."):
                                 updated, skipped = update_xml_paths(results["matches"])
                             if skipped > 0:
-                                st.warning(f"⚠️ Updated {updated} records, skipped {skipped} (see console for conflicts)")
+                                st.warning(f"Updated {updated} records, skipped {skipped} (see console for conflicts)")
                             else:
-                                st.success(f"✅ Updated {updated} records in database")
+                                st.success(f"Updated {updated} records in database")
 
                             if "path_verification" in st.session_state:
                                 del st.session_state.path_verification
@@ -1586,17 +1582,17 @@ def main():
                             st.rerun()
 
                     if results["not_found"]:
-                        st.error(f"❌ Could not find {len(results['not_found'])} files")
+                        st.error(f"Could not find {len(results['not_found'])} files")
                         st.write("These files may have been deleted or have different metadata")
-                        with st.expander("📋 View Files Not Found"):
+                        with st.expander("View Files Not Found"):
                             not_found_df = pd.DataFrame(results["not_found"])
                             if not not_found_df.empty:
                                 display_cols = ["core_name", "section_number", "xml_root_tag", "xml_path"]
                                 st.dataframe(not_found_df[display_cols], use_container_width=True)
             else:
-                st.success("✅ All XML files found at their recorded paths!")
+                st.success("All XML files found at their recorded paths!")
         else:
-            st.info("👆 Click 'Check for Missing Files' to begin")
+            st.info("Click 'Check for Missing Files' to begin")
 
     # === TAB 4: Export Data ===
     with tab4:
@@ -1615,7 +1611,7 @@ def main():
 
             if select_all_cores:
                 selected_cores = all_cores
-                st.info(f"✅ All {len(all_cores)} cores selected")
+                st.info(f"All {len(all_cores)} cores selected")
             else:
                 selected_cores = st.multiselect(
                     "Select Core(s)",
@@ -1624,7 +1620,7 @@ def main():
                 )
 
             if not selected_cores:
-                st.info("👆 Select at least one core to see available sections.")
+                st.info("Select at least one core to see available sections.")
             else:
                 # 2. Per-core section selectors in expanders
                 st.markdown("---")
@@ -1649,7 +1645,7 @@ def main():
                         if not sections:
                             continue
 
-                        with st.expander(f"📦 {core} — {len(sections)} section(s)", expanded=False):
+                        with st.expander(f"{core} -- {len(sections)} section(s)", expanded=False):
                             select_all_secs = st.checkbox(
                                 "Select all sections",
                                 value=True,
@@ -1687,8 +1683,8 @@ def main():
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             export_xray = st.checkbox(
-                                "🖼️ XRay Images", value=True,
-                                help="TIF files from giXRayImage folders → export_dir/xray_images/"
+                                "XRay Images", value=True,
+                                help="TIF files from giXRayImage folders -> export_dir/xray_images/"
                             )
                             if export_xray:
                                 xray_corrected_only = st.radio(
@@ -1702,8 +1698,8 @@ def main():
                                 xray_corrected_only = True
                         with col2:
                             export_ct_ortho = st.checkbox(
-                                "🔬 CT Orthogonal Views", value=True,
-                                help="TIF files from giCTOrthogonalView folders → export_dir/ct_orthogonal/"
+                                "CT Orthogonal Views", value=True,
+                                help="TIF files from giCTOrthogonalView folders -> export_dir/ct_orthogonal/"
                             )
                             if export_ct_ortho:
                                 ct_ortho_corrected_only = st.radio(
@@ -1717,8 +1713,8 @@ def main():
                                 ct_ortho_corrected_only = False
                         with col3:
                             export_slices = st.checkbox(
-                                "📂 Slices Directories", value=True,
-                                help="Directories named 'slices' → export_dir/CoreName-slices/ (flat per core)"
+                                "Slices Directories", value=True,
+                                help="Directories named 'slices' -> export_dir/CoreName-slices/ (flat per core)"
                             )
 
                         # 4. Output directory
@@ -1731,7 +1727,7 @@ def main():
 
                         # 5. Preview
                         st.markdown("---")
-                        if st.button("🔍 Preview Export", use_container_width=True):
+                        if st.button("Preview Export", use_container_width=True):
                             if not any([export_xray, export_ct_ortho, export_slices]):
                                 st.warning("Select at least one export type.")
                             else:
@@ -1756,19 +1752,19 @@ def main():
                             )
 
                             if total_files == 0:
-                                st.warning("⚠️ No files matched the selection. Nothing to export.")
+                                st.warning("No files matched the selection. Nothing to export.")
                             else:
                                 st.markdown("---")
                                 st.info(
-                                    "📋 Because exports can be many GB, the app generates a **robocopy batch script** "
+                                    "Because exports can be many GB, the app generates a **robocopy batch script** "
                                     "for you to run directly on your machine. This is faster, resumable, and "
-                                    "logs progress to `export_log.txt` in the export folder."
+                                    "logs progress to export_log.txt in the export folder."
                                 )
                                 script_content = generate_robocopy_script(
                                     preview, st.session_state.export_dir
                                 )
                                 st.download_button(
-                                    label=f"📥 Download Export Script ({total_files:,} files)",
+                                    label=f"Download Export Script ({total_files:,} files)",
                                     data=script_content,
                                     file_name="ct_export.bat",
                                     mime="text/plain",
@@ -1779,14 +1775,14 @@ def main():
                                 st.write("**Output structure:**")
                                 st.code(
                                     f"{st.session_state.export_dir}/\n"
-                                    f"├── xray_images/      ← corrected XRay TIFs\n"
-                                    f"├── ct_orthogonal/    ← all CT Orthogonal TIFs\n"
-                                    f"├── CoreName-slices/\n"
-                                    f"│   └── slices/       ← slices dirs merged flat per core\n"
-                                    f"└── export_log.txt    ← robocopy log",
+                                    f"+-- xray_images/      <- corrected XRay TIFs\n"
+                                    f"+-- ct_orthogonal/    <- all CT Orthogonal TIFs\n"
+                                    f"+-- CoreName-slices/\n"
+                                    f"|   +-- slices/       <- slices dirs merged flat per core\n"
+                                    f"+-- export_log.txt    <- robocopy log",
                                     language="text"
                                 )
-                                with st.expander("👀 Preview script contents"):
+                                with st.expander("Preview script contents"):
                                     st.code(script_content, language="bat")
 
 
