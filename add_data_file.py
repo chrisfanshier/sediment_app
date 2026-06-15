@@ -161,7 +161,7 @@ if file_category == "MSCL Data":
     st.subheader("📊 MSCL Data File")
     
     file_type = "MSCL Data"
-    uploaded_file = st.file_uploader("Upload MSCL Data File", type=["out", "csv", "txt"], key="mscl_uploader")
+    uploaded_file = st.file_uploader("Upload MSCL Data File", key="mscl_uploader")
     remarks = st.text_area("MSCL Remarks", placeholder="Enter MSCL-specific remarks...")
     
     if uploaded_file is not None:

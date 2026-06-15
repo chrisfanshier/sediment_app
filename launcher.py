@@ -51,7 +51,9 @@ def main():
         process = subprocess.Popen(
             [sys.executable, "-m", "streamlit", "run", app["script"],
              "--server.port", str(app["port"]),
-             "--server.headless", "true"],
+             "--server.headless", "true",
+             "--server.enableXsrfProtection", "false",
+             "--server.enableCORS", "false"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
