@@ -27,14 +27,30 @@ else:
         st.subheader(f"Edit Sections for {selected_core_name}")
         st.write(f"**Cruise:** {selected_cruise_name}")
         
-        # Initialize session state for section lengths
-        if "section_lengths" not in st.session_state or st.session_state.get("current_core_id") != selected_core_id:
+        # Initialize session state for section lengths/splits
+        if (
+            "section_lengths" not in st.session_state
+            or "section_splits" not in st.session_state
+            or st.session_state.get("current_core_id") != selected_core_id
+        ):
             st.session_state.section_lengths = []
+            st.session_state.section_splits = []
             st.session_state.current_core_id = selected_core_id
-            # Load existing section lengths
+            # get_sections_for_core returns:
+            # section_id, section_number, section_length, split, top_cum_length, bottom_cum_length
             for section in existing_sections:
-                section_id, section_number, section_length, *_ = section
+                section_id, section_number, section_length, split, *_ = section
                 st.session_state.section_lengths.append(float(section_length or 0))
+                st.session_state.section_splits.append(bool(split))
+
+        # Safety: keep both lists index-synchronized if state was partially edited.
+        if len(st.session_state.section_splits) != len(st.session_state.section_lengths):
+            if len(st.session_state.section_splits) < len(st.session_state.section_lengths):
+                st.session_state.section_splits.extend(
+                    [False] * (len(st.session_state.section_lengths) - len(st.session_state.section_splits))
+                )
+            else:
+                st.session_state.section_splits = st.session_state.section_splits[:len(st.session_state.section_lengths)]
         
         st.write("**Edit section lengths (in cm). Section numbers will auto-renumber.**")
         
@@ -43,7 +59,7 @@ else:
         total_length = 0
         
         for i, length in enumerate(st.session_state.section_lengths):
-            col1, col2, col3, col4, col5 = st.columns([1, 2, 2, 1, 1])
+            col1, col2, col3, col_split, col4, col5 = st.columns([1, 2, 2, 1.3, 1, 1])
             
             with col1:
                 st.write(f"**{i+1}**")  # Auto-numbered sections
@@ -72,14 +88,24 @@ else:
                 sections_data.append({
                     "section_number": i + 1,
                     "length": new_length,
+                    "split": st.session_state.section_splits[i],
                     "top_cum": top_cum,
                     "bottom_cum": bottom_cum
                 })
+
+            with col_split:
+                st.session_state.section_splits[i] = st.checkbox(
+                    "Split?",
+                    value=st.session_state.section_splits[i],
+                    key=f"split_{i}",
+                )
+                sections_data[-1]["split"] = st.session_state.section_splits[i]
             
             with col4:
                 # Insert button - adds a new section after this one
                 if st.button("➕", key=f"insert_{i}", help=f"Insert section after {i+1}"):
                     st.session_state.section_lengths.insert(i + 1, 50.0)  # Default 50cm
+                    st.session_state.section_splits.insert(i + 1, False)
                     st.rerun()
             
             with col5:
@@ -87,6 +113,7 @@ else:
                 if len(st.session_state.section_lengths) > 1:  # Don't allow deleting the last section
                     if st.button("❌", key=f"delete_{i}", help=f"Delete section {i+1}"):
                         st.session_state.section_lengths.pop(i)
+                        st.session_state.section_splits.pop(i)
                         st.rerun()
         
         # Add section at the end
@@ -97,6 +124,7 @@ else:
         with col2:
             if st.button("➕ Add Section", key="add_end"):
                 st.session_state.section_lengths.append(50.0)  # Default 50cm
+                st.session_state.section_splits.append(False)
                 st.rerun()
         
         # Summary
@@ -119,6 +147,7 @@ else:
                 {
                     "Section": data["section_number"],
                     "Length (cm)": f"{data['length']:.1f}",
+                    "Split": data["split"],
                     "Top Cumulative (cm)": f"{data['top_cum']:.1f}",
                     "Bottom Cumulative (cm)": f"{data['bottom_cum']:.1f}"
                 }
@@ -138,6 +167,7 @@ else:
                     {
                         "section_number": i + 1,
                         "length": length,
+                        "split": st.session_state.section_splits[i],
                         "top_cum": sum(st.session_state.section_lengths[:i]),
                         "bottom_cum": sum(st.session_state.section_lengths[:i+1])
                     }
@@ -154,7 +184,8 @@ else:
                             section_id,
                             section["length"],
                             section["top_cum"],
-                            section["bottom_cum"]
+                            section["bottom_cum"],
+                            section["split"],
                         )
                     else:
                         # Insert new section
@@ -163,7 +194,8 @@ else:
                             section["section_number"],
                             section["length"],
                             section["top_cum"],
-                            section["bottom_cum"]
+                            section["bottom_cum"],
+                            section["split"],
                         )
 
                 # Delete extra sections if any

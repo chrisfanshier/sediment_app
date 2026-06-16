@@ -46,10 +46,11 @@ else:
                 
                 # Create input fields for each section
                 section_lengths = {}
+                section_splits = {}
                 total_length = 0
                 
                 for i in range(1, num_sections + 1):
-                    col1, col2, col3 = st.columns([1, 2, 2])
+                    col1, col2, col3, col4 = st.columns([1, 2, 2, 1])
                     
                     with col1:
                         st.write(f"**Section {i}:**")
@@ -75,6 +76,10 @@ else:
                         
                         # Update total for next section
                         total_length = bottom_cum_length
+
+                    with col4:
+                        split_key = f"section_{i}_split"
+                        section_splits[i] = st.checkbox("Split?", key=split_key)
                 
                 # Show summary
                 if any(length > 0 for length in section_lengths.values()):
@@ -96,6 +101,7 @@ else:
                             preview_data.append({
                                 "Section": i,
                                 "Length (cm)": f"{length:.1f}",
+                                "Split": section_splits[i],
                                 "Top Cumulative (cm)": f"{top:.1f}",
                                 "Bottom Cumulative (cm)": f"{bottom:.1f}"
                             })
@@ -122,6 +128,7 @@ else:
                                                 'core_id': selected_core_id,
                                                 'section_number': i,
                                                 'section_length': length,
+                                                'split': section_splits[i],
                                                 'top_cum_length': top_cum,
                                                 'bottom_cum_length': bottom_cum
                                             }
@@ -131,11 +138,11 @@ else:
                                             
                                             query = text("""
                                                 INSERT INTO sections (
-                                                    core_id, section_number, section_length, 
+                                                    core_id, section_number, section_length, split,
                                                     top_cum_length, bottom_cum_length,
                                                     created_on_ship, sync_status
                                                 ) VALUES (
-                                                    :core_id, :section_number, :section_length,
+                                                    :core_id, :section_number, :section_length, :split,
                                                     :top_cum_length, :bottom_cum_length,
                                                     :created_on_ship, :sync_status
                                                 )

@@ -1,9 +1,13 @@
 import streamlit as st
 import os
 import pandas as pd
-from db_util import get_connection
+import io
+from db_util import get_connection, get_mgr_export_data
 from datetime import date
 from sqlalchemy import text
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.worksheet.datavalidation import DataValidation
 import re
 
 def view_cruises():
@@ -187,3 +191,107 @@ def view_cruises():
             st.write(f"**Winch Data Records:** {winch_count}")
         else:
             st.info("No winch data records found for this cruise.")
+
+# --- MGR Excel Export ---
+    st.divider()
+    st.subheader("📥 Export MGR Metadata")
+
+    if st.button("Generate OSU-MGR Excel Export"):
+        rows = get_mgr_export_data(cruise_data.cruise_name)
+
+        if not rows:
+            st.warning("No section data found for this cruise. Add sections before exporting.")
+        else:
+            wb = Workbook()
+
+            # --- Sheet 2: Dropdown Menus (must exist before sheet1 DVs reference it) ---
+            ws2 = wb.create_sheet("Dropdown Menus")
+            core_types = [
+                ("Box Core", "BC"), ("Gravity Core", "GC"), ("Jumbo Piston Core", "JC"),
+                ("Kasten Core", "KC"), ("Multicore", "MC"), ("Piston Core", "PC"),
+                ("Trigger Core", "TC"), ("Vibracore", "VC"),
+            ]
+            working_archive = ["Working", "Archive", "Round"]
+            for i, (name, abbr) in enumerate(core_types, 1):
+                ws2.cell(row=i, column=1, value=name)
+                ws2.cell(row=i, column=2, value=abbr)
+            for i, val in enumerate(working_archive, 1):
+                ws2.cell(row=i, column=3, value=val)
+
+            # --- Sheet 1: For PI ---
+            ws1 = wb.active
+            ws1.title = "For PI"
+
+            # Header block rows 1-5
+            first = rows[0]
+            ws1["A1"], ws1["B1"] = "Cruise Name", first[0]
+            ws1["A2"], ws1["B2"] = "RV Name", first[1]
+            ws1["A3"], ws1["B3"] = "PI Scientist", first[2]
+            ws1["A5"] = None  # spacer row
+
+            # Column headers row 6
+            headers = [
+                "Core Number", "Recovery Method", "Core Abbreviation",
+                "Date Collected", "Time collected (UTC)", "Decimal Latitude",
+                "Decimal Longitude", "Water Depth (m)", "Section Number",
+                "Working/Archive", "Section Name", "Alternate Section Name or Ship Station",
+                "Section Length (cm)", "Top of section interval (cm)",
+                "Bottom of section interval (cm)", "Core Diameter (cm)",
+                "Core Tube Material", "Notes"
+            ]
+            for col, header in enumerate(headers, 1):
+                cell = ws1.cell(row=6, column=col, value=header)
+                cell.font = Font(bold=True)
+
+            # Data rows starting at row 7 (columns 4 onward in query = index 3+)
+            for row_idx, row in enumerate(rows, 7):
+                data = [
+                    row[3],   # core_name          A
+                    row[4],   # recovery_method     B
+                    row[5],   # core_abbreviation   C
+                    row[6],   # date_collected      D
+                    row[7],   # time_collected_utc  E
+                    row[8],   # latitude            F
+                    row[9],   # longitude           G
+                    row[10],  # water_depth_m       H
+                    row[11],  # section_number      I
+                    row[12],  # working_archive     J
+                    row[13],  # section_name        K
+                    row[14],  # alternate_name      L
+                    row[15],  # section_length      M
+                    row[16],  # top_cum_length      N
+                    row[17],  # bottom_cum_length   O
+                    row[18],  # core_diameter       P
+                    row[19],  # core_tube_material  Q
+                    row[20],  # remarks             R
+                ]
+                for col_idx, val in enumerate(data, 1):
+                    ws1.cell(row=row_idx, column=col_idx, value=val)
+
+            # Data validation dropdowns
+            dv_recovery = DataValidation(
+                type="list",
+                formula1="'Dropdown Menus'!$A$1:$A$8",
+                allow_blank=True, showInputMessage=True, showErrorMessage=True
+            )
+            dv_working_archive = DataValidation(
+                type="list",
+                formula1="'Dropdown Menus'!$C$1:$C$3",
+                allow_blank=True, showInputMessage=True, showErrorMessage=True
+            )
+            ws1.add_data_validation(dv_recovery)
+            ws1.add_data_validation(dv_working_archive)
+            dv_recovery.sqref = "B7:B1048576"
+            dv_working_archive.sqref = "J7:J1048576"
+
+            # Serialize to bytes and offer download
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+
+            st.download_button(
+                label="⬇️ Download Excel",
+                data=buf,
+                file_name=f"OSU-MGR_Marine_Sediment_Data-{cruise_data.cruise_name}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
