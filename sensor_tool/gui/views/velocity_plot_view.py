@@ -122,7 +122,7 @@ class HeavePlotView(QWidget):
             plot_x = x[:len(heave)] if len(heave) <= len(x) else x
             self.plot_widget.plot(
                 plot_x, heave[:len(plot_x)], pen=pen, name=name,
-                connect='finite', skipFiniteCheck=True,
+                connect='finite',
             )
 
         if len(x) > 0:
@@ -173,7 +173,7 @@ class HeavePlotView(QWidget):
             self.plot_widget.plot(
                 plot_x, ref_h[:len(plot_x)], pen=pen,
                 name=f'Ref ({short})',
-                connect='finite', skipFiniteCheck=True,
+                connect='finite',
             )
 
         color_idx = 0
@@ -187,7 +187,7 @@ class HeavePlotView(QWidget):
             self.plot_widget.plot(
                 plot_x, heave[:len(plot_x)], pen=pen,
                 name=f'{short} (aligned {offset_str})',
-                connect='finite', skipFiniteCheck=True,
+                connect='finite',
             )
 
             if col in heaves_original:
@@ -200,7 +200,7 @@ class HeavePlotView(QWidget):
                 self.plot_widget.plot(
                     plot_x2, orig_h[:len(plot_x2)], pen=pen_orig,
                     name=f'{short} (original)',
-                    connect='finite', skipFiniteCheck=True,
+                    connect='finite',
                 )
             color_idx += 1
 
