@@ -123,6 +123,40 @@ class SensorPlotView(QWidget):
     def set_sensor_data(self, sensor_data: SensorData | None):
         self._sensor_data = sensor_data
 
+    def _get_trace_xy_for_column(
+        self,
+        sensor_data: SensorData,
+        col: str,
+        values_override: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
+        """Build per-column x/y arrays from rows where the column has data."""
+        if col not in sensor_data.df.columns:
+            return None, None
+
+        dt_col = sensor_data.datetime_col
+        if dt_col not in sensor_data.df.columns:
+            return None, None
+
+        # Keep only rows where this sensor column is present to avoid plotting
+        # merge-artifact NaN rows from other sensors.
+        sub = sensor_data.df[[dt_col, col]].dropna(subset=[dt_col, col])
+        if sub.empty:
+            return None, None
+
+        x = sub[dt_col].to_numpy(dtype='datetime64[ns]').astype(np.int64) / 1e9
+        if values_override is None:
+            y = sub[col].to_numpy()
+            return x, y
+
+        mask = (sensor_data.df[col].notna() & sensor_data.df[dt_col].notna()).to_numpy()
+        y_full = np.asarray(values_override)
+        if len(y_full) != len(mask):
+            return None, None
+        y = y_full[mask]
+        if len(y) == 0:
+            return None, None
+        return x, y
+
     def plot_depths(self, sensor_data: SensorData | None = None, title: str = ''):
         """Plot depth traces for all sensors."""
         if sensor_data is not None:
@@ -138,19 +172,15 @@ class SensorPlotView(QWidget):
             self.plot_widget.setTitle(title)
         self.plot_widget.setLabel('left', 'Depth (m)')
 
-        x = self._sensor_data.get_timestamps_epoch()
-
         for i, col in enumerate(self._sensor_data.depth_columns):
-            if col not in self._sensor_data.df.columns:
-                continue
-            data = self._sensor_data.df[col].values
-            if np.sum(~np.isnan(data)) == 0:
+            x, data = self._get_trace_xy_for_column(self._sensor_data, col)
+            if x is None or data is None:
                 continue
             pen = pg.mkPen(color=SENSOR_COLORS[i % len(SENSOR_COLORS)], width=2)
             display_name = SensorData.get_location_name(col)
             self.plot_widget.plot(
                 x, data, pen=pen, name=display_name,
-                connect='finite', skipFiniteCheck=True,
+                connect='finite',
             )
 
         self._ensure_y_inverted(True)
@@ -176,19 +206,17 @@ class SensorPlotView(QWidget):
             self.plot_widget.setTitle(title)
         self.plot_widget.setLabel('left', 'Depth (m)')
 
-        x = sensor_data.get_timestamps_epoch()
-
         for i, col in enumerate(sensor_data.depth_columns):
-            if col not in sensor_data.df.columns:
+            x, data = self._get_trace_xy_for_column(sensor_data, col)
+            if x is None or data is None:
                 continue
-            data = sensor_data.df[col].values
             suffix = (label_suffix or {}).get(col, '')
             display_name = SensorData.get_location_name(col)
             name = f'{display_name}{suffix}'
             pen = pg.mkPen(color=SENSOR_COLORS[i % len(SENSOR_COLORS)], width=2)
             self.plot_widget.plot(
                 x, data, pen=pen, name=name,
-                connect='finite', skipFiniteCheck=True,
+                connect='finite',
             )
 
         self._ensure_y_inverted(True)
@@ -219,7 +247,7 @@ class SensorPlotView(QWidget):
             self.plot_widget.plot(
                 x, series.values, pen=pen,
                 name=f'{name_j} - {name_i}',
-                connect='finite', skipFiniteCheck=True,
+                connect='finite',
             )
 
         pen_zero = pg.mkPen('k', width=1, style=Qt.DashLine)
@@ -290,7 +318,7 @@ class SensorPlotView(QWidget):
         pen = pg.mkPen(color='#e41a1c', width=2, style=Qt.DashDotLine)
         self._piston_plot_item = self.plot_widget.plot(
             x, piston_depths, pen=pen, name='Piston',
-            connect='finite', skipFiniteCheck=True,
+            connect='finite',
         )
 
     # ------------------------------------------------------------------
@@ -313,8 +341,7 @@ class SensorPlotView(QWidget):
         """
         self.remove_smoothed_traces()
 
-        x = self._sensor_data.get_timestamps_epoch() if self._sensor_data else None
-        if x is None:
+        if self._sensor_data is None:
             return
 
         # Fade existing raw traces (make them transparent)
@@ -327,13 +354,20 @@ class SensorPlotView(QWidget):
 
         # Add prominent smoothed traces
         for col, smoothed in smoothed_data.items():
+            x, y = self._get_trace_xy_for_column(
+                self._sensor_data,
+                col,
+                values_override=np.asarray(smoothed),
+            )
+            if x is None or y is None:
+                continue
             idx = column_order.index(col) if col in column_order else 0
             base_color = SENSOR_COLORS[idx % len(SENSOR_COLORS)]
             pen = pg.mkPen(color=base_color, width=3)
             display_name = SensorData.get_location_name(col) + ' (smooth)'
             item = self.plot_widget.plot(
-                x, smoothed, pen=pen, name=display_name,
-                connect='finite', skipFiniteCheck=True,
+                x, y, pen=pen, name=display_name,
+                connect='finite',
             )
             self._smoothed_plot_items.append(item)
 

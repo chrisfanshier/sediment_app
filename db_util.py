@@ -180,7 +180,7 @@ def get_sections_for_core(core_id):
     """Get all sections for a specific core"""
     with get_connection() as conn:
         query = text("""
-            SELECT section_id, section_number, section_length, top_cum_length, bottom_cum_length 
+            SELECT section_id, section_number, section_length, split, top_cum_length, bottom_cum_length 
             FROM sections 
             WHERE core_id = :core_id 
             ORDER BY section_number
@@ -188,29 +188,31 @@ def get_sections_for_core(core_id):
         result = conn.execute(query, {"core_id": core_id})
         return result.fetchall()
 
-def insert_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length):
+def insert_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length, split=False):
     """Insert a new section into the database"""
     with get_connection() as conn:
         query = text("""
-            INSERT INTO sections (core_id, section_number, section_length, top_cum_length, bottom_cum_length)
-            VALUES (:core_id, :section_number, :section_length, :top_cum_length, :bottom_cum_length)
+            INSERT INTO sections (core_id, section_number, section_length, split, top_cum_length, bottom_cum_length)
+            VALUES (:core_id, :section_number, :section_length, :split, :top_cum_length, :bottom_cum_length)
         """)
         conn.execute(query, {
             "core_id": core_id,
             "section_number": section_number,
             "section_length": section_length,
+            "split": split,
             "top_cum_length": top_cum_length,
             "bottom_cum_length": bottom_cum_length
         })
         conn.commit()
 
-def update_section(section_id, section_length, top_cum_length, bottom_cum_length):
+def update_section(section_id, section_length, top_cum_length, bottom_cum_length, split):
     """Update an existing section"""
     with get_connection() as conn:
         values = {
             'section_length': section_length,
             'top_cum_length': top_cum_length,
             'bottom_cum_length': bottom_cum_length,
+            'split': split,
             'section_id': section_id
         }
         
@@ -220,6 +222,7 @@ def update_section(section_id, section_length, top_cum_length, bottom_cum_length
         query = text("""
             UPDATE sections 
             SET section_length = :section_length,
+                split = :split,
                 top_cum_length = :top_cum_length,
                 bottom_cum_length = :bottom_cum_length,
                 sync_status = :sync_status
@@ -235,9 +238,9 @@ def delete_section(section_id):
         conn.execute(query, {"section_id": section_id})
         conn.commit()
 
-def add_new_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length):
+def add_new_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length, split=False):
     """Add a new section to existing core (alias for insert_section for clarity)"""
-    insert_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length)
+    insert_section(core_id, section_number, section_length, top_cum_length, bottom_cum_length, split=split)
 
 def delete_all_sections_for_core(core_id):
     """Delete all sections for a specific core"""
@@ -414,3 +417,48 @@ def fetch_core_media_registered(scan_dir_relative):
             }
             for row in result
         }
+
+
+def get_mgr_export_data(cruise_name: str) -> list:
+    """Returns rows for MGR metadata export for a given cruise."""
+    query = text("""
+        WITH split_expand AS (
+            SELECT
+                s.core_id, s.section_number, s.section_length,
+                s.top_cum_length, s.bottom_cum_length, s.remarks,
+                wa.working_archive, wa.wa_suffix, wa.sort_order
+            FROM sections s
+            CROSS JOIN LATERAL (
+                SELECT 'Round' AS working_archive, 'R' AS wa_suffix, 1 AS sort_order WHERE s.split = FALSE
+                UNION ALL
+                SELECT 'Working', 'W', 1 WHERE s.split = TRUE
+                UNION ALL
+                SELECT 'Archive', 'A', 2 WHERE s.split = TRUE
+            ) wa
+        )
+        SELECT
+            cr.cruise_name, v.vessel_name, cr.chief_scientist,
+            c.core_name,
+            ct.core_type_name AS recovery_method,
+            regexp_replace(c.core_name, '^[A-Z0-9]+-([A-Z]+)\\d+.*$', '\\1') AS core_abbreviation,
+            c.date AS date_collected,
+            c.time_launched AS time_collected_utc,
+            c.latitude, c.longitude, c.water_depth_m,
+            se.section_number, se.working_archive,
+            c.core_name || '-' || se.section_number || se.wa_suffix AS section_name,
+            NULL::text AS alternate_section_name,
+            se.section_length, se.top_cum_length, se.bottom_cum_length,
+            NULL::numeric AS core_diameter_cm,
+            NULL::text AS core_tube_material,
+            se.remarks
+        FROM split_expand se
+        JOIN cores c         ON se.core_id     = c.core_id
+        JOIN cruises cr      ON c.cruise_id    = cr.cruise_id
+        JOIN vessels v       ON cr.vessel_id   = v.vessel_id
+        LEFT JOIN core_types ct ON c.core_type_id = ct.core_type_id
+        WHERE cr.cruise_name = :cruise_name
+          AND c.core_dredge  = 'core'
+        ORDER BY c.core_name, se.section_number, se.sort_order
+    """)
+    with get_connection() as conn:
+        return conn.execute(query, {"cruise_name": cruise_name}).fetchall()

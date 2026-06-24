@@ -128,7 +128,7 @@ class TripPlotView(QWidget):
             x, result.divergence,
             pen=pg.mkPen('#7b3294', width=2),
             name='Divergence (Std Dev)',
-            connect='finite', skipFiniteCheck=True,
+            connect='finite',
         )
 
         threshold_line = pg.InfiniteLine(
@@ -163,7 +163,7 @@ class TripPlotView(QWidget):
                 x, profile,
                 pen=pg.mkPen(color, width=2),
                 name=f'{display_name} {result.derivative_label}',
-                connect='finite', skipFiniteCheck=True,
+                connect='finite',
             )
 
         zero_line = pg.InfiniteLine(
