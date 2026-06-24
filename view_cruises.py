@@ -129,7 +129,15 @@ def view_cruises():
                 COUNT(DISTINCT sf.file_id) as sensor_files,
                 COUNT(DISTINCT mf.file_id) as mscl_files,
                 CASE WHEN COUNT(DISTINCT sf.file_id) > 0 THEN '✅' ELSE '❌' END as has_sensor,
-                CASE WHEN COUNT(DISTINCT mf.file_id) > 0 THEN '✅' ELSE '❌' END as has_mscl
+                CASE WHEN COUNT(DISTINCT mf.file_id) > 0 THEN '✅' ELSE '❌' END as has_mscl,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM ct_xml x
+                        LEFT JOIN sections s ON x.section_id = s.section_id
+                        WHERE x.core_id = c.core_id OR s.core_id = c.core_id
+                    ) THEN '✅' ELSE '❌'
+                END as has_ct
             FROM cores c
             LEFT JOIN sensor_files sf ON c.core_id = sf.core_id
             LEFT JOIN mscl_files mf ON c.core_id = mf.core_id
@@ -148,7 +156,7 @@ def view_cruises():
             
             # Create enhanced dataframe
             cores_df = pd.DataFrame(related_cores, columns=[
-                'Core Name', 'Date', 'Station', 'Sensor Files', 'MSCL Files', 'Sensor Data', 'MSCL Data'
+                'Core Name', 'Date', 'Station', 'Sensor Files', 'MSCL Files', 'Sensor Data', 'MSCL Data', 'CT Data'
             ])
             
             # Display the enhanced table
@@ -163,6 +171,7 @@ def view_cruises():
                     "MSCL Files": st.column_config.NumberColumn("# MSCL Files", width="small"),
                     "Sensor Data": st.column_config.TextColumn("Sensor", width="small"),
                     "MSCL Data": st.column_config.TextColumn("MSCL", width="small"),
+                    "CT Data": st.column_config.TextColumn("CT", width="small"),
                 }
             )
             
@@ -171,9 +180,10 @@ def view_cruises():
             total_mscl_files = sum(row[4] for row in related_cores)
             cores_with_sensor = sum(1 for row in related_cores if row[3] > 0)
             cores_with_mscl = sum(1 for row in related_cores if row[4] > 0)
+            cores_with_ct = sum(1 for row in related_cores if row[7] == '✅')
             
             st.markdown("#### 📈 Data Summary")
-            summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
+            summary_col1, summary_col2, summary_col3, summary_col4, summary_col5 = st.columns(5)
             
             with summary_col1:
                 st.metric("Total Sensor Files", total_sensor_files)
@@ -183,6 +193,8 @@ def view_cruises():
                 st.metric("Cores with Sensor Data", f"{cores_with_sensor}/{len(related_cores)}")
             with summary_col4:
                 st.metric("Cores with MSCL Data", f"{cores_with_mscl}/{len(related_cores)}")
+            with summary_col5:
+                st.metric("Cores with CT Data", f"{cores_with_ct}/{len(related_cores)}")
                 
         else:
             st.info("No cores found for this cruise.")
