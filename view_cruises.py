@@ -10,6 +10,147 @@ from openpyxl.styles import Font
 from openpyxl.worksheet.datavalidation import DataValidation
 import re
 
+
+def _write_table_sheet(workbook, sheet_name, headers, rows):
+    """Add a simple tabular worksheet with bold headers."""
+    ws = workbook.create_sheet(sheet_name)
+
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = Font(bold=True)
+
+    for row_idx, row in enumerate(rows, 2):
+        for col_idx, value in enumerate(row, 1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+
+    for col_idx, header in enumerate(headers, 1):
+        max_length = len(str(header))
+        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx, min_row=2):
+            value = row[0].value
+            if value is not None:
+                max_length = max(max_length, len(str(value)))
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_length + 2, 60)
+
+    return ws
+
+
+def _get_ct_export_rows(cruise_id):
+    """Return the CT Manager Database View summary filtered to one cruise."""
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT DISTINCT
+                x.core_name,
+                x.section_number,
+                x.xml_root_tag,
+                x.image_type,
+                x.processing_stage
+            FROM ct_xml x
+            LEFT JOIN sections s ON x.section_id = s.section_id
+            JOIN cores c ON x.core_id = c.core_id
+                OR s.core_id = c.core_id
+                OR x.core_name = c.core_name
+            WHERE c.cruise_id = :cruise_id
+            ORDER BY x.core_name, x.section_number
+        """), {"cruise_id": cruise_id})
+        rows = [dict(row._mapping) for row in result.fetchall()]
+
+    if not rows:
+        return []
+
+    df = pd.DataFrame(rows)
+    directory_types = ["CT-Volume", "Helical", "Laminography"]
+    image_types = ["giXRayImage", "giCTOrthogonalView"]
+    summary_rows = []
+
+    all_pairs = df[["core_name", "section_number"]].drop_duplicates()
+    for _, row in all_pairs.iterrows():
+        core = row["core_name"]
+        section = row["section_number"]
+        subdf = df[(df["core_name"] == core) & (df["section_number"] == section)]
+        xml_count = len(subdf)
+
+        ct_scan_records = subdf[subdf["xml_root_tag"].isin(["geotek-ct-stack", "geotek-ct-recon"])]
+        directories = []
+        for dtype in directory_types:
+            stages = ct_scan_records.loc[
+                ct_scan_records["image_type"] == dtype,
+                "processing_stage"
+            ].dropna().unique()
+            if len(stages) > 0:
+                directories.append(f"{dtype} ({', '.join(sorted(stages))})")
+
+        image_records = subdf[subdf["xml_root_tag"] == "geotek-image"]
+        images = [itype for itype in image_types if (image_records["image_type"] == itype).any()]
+
+        summary_rows.append((
+            core,
+            section,
+            xml_count,
+            "; ".join(directories) if directories else "",
+            ", ".join(images) if images else "",
+        ))
+
+    return sorted(summary_rows, key=lambda item: (str(item[0]), str(item[1])))
+
+
+def _get_mscl_export_rows(cruise_id):
+    """Return one row per core with MSCL file names comma-space concatenated."""
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT
+                c.core_name,
+                COALESCE(
+                    string_agg(mf.file_name, ', ' ORDER BY mf.file_name)
+                    FILTER (WHERE mf.file_id IS NOT NULL),
+                    ''
+                ) AS file_name
+            FROM cores c
+            LEFT JOIN mscl_files mf ON mf.core_id = c.core_id
+            WHERE c.cruise_id = :cruise_id
+            GROUP BY c.core_id, c.core_name
+            ORDER BY c.core_name
+        """), {"cruise_id": cruise_id})
+        return [(row.core_name, row.file_name) for row in result.fetchall()]
+
+
+def _get_core_media_export_rows(cruise_id):
+    """Return one row per core with selected core_media fields concatenated."""
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT
+                c.core_name,
+                COALESCE(
+                    string_agg(cm.file_name, ', ' ORDER BY cm.file_name)
+                    FILTER (WHERE cm.media_id IS NOT NULL),
+                    ''
+                ) AS file_name,
+                COALESCE(
+                    string_agg(CAST(cm.file_size_bytes AS TEXT), ', ' ORDER BY cm.file_name)
+                    FILTER (WHERE cm.file_size_bytes IS NOT NULL),
+                    ''
+                ) AS file_size_bytes,
+                COALESCE(
+                    string_agg(cm.remarks, ', ' ORDER BY cm.file_name)
+                    FILTER (WHERE cm.remarks IS NOT NULL AND cm.remarks <> ''),
+                    ''
+                ) AS remarks,
+                COALESCE(
+                    string_agg(cm.media_type, ', ' ORDER BY cm.file_name)
+                    FILTER (WHERE cm.media_type IS NOT NULL),
+                    ''
+                ) AS media_type
+            FROM cores c
+            LEFT JOIN core_media cm ON cm.core_id = c.core_id
+            WHERE c.cruise_id = :cruise_id
+            GROUP BY c.core_id, c.core_name
+            ORDER BY c.core_name
+        """), {"cruise_id": cruise_id})
+        return [
+            (row.core_name, row.file_name, row.file_size_bytes, row.remarks, row.media_type)
+            for row in result.fetchall()
+        ]
+
+
 def view_cruises():
     """Main function to display cruise overview page with cruise selection"""
     
@@ -295,6 +436,25 @@ def view_cruises():
             ws1.add_data_validation(dv_working_archive)
             dv_recovery.sqref = "B7:B1048576"
             dv_working_archive.sqref = "J7:J1048576"
+
+            _write_table_sheet(
+                wb,
+                "CT_Data",
+                ["Core", "Section", "Total XMLs", "CT/Scan Types", "Image Types"],
+                _get_ct_export_rows(selected_cruise_id)
+            )
+            _write_table_sheet(
+                wb,
+                "MSCL_Data",
+                ["core_name", "file_name"],
+                _get_mscl_export_rows(selected_cruise_id)
+            )
+            _write_table_sheet(
+                wb,
+                "core_media",
+                ["core_name", "file_name", "file_size_bytes", "remarks", "media_type"],
+                _get_core_media_export_rows(selected_cruise_id)
+            )
 
             # Serialize to bytes and offer download
             buf = io.BytesIO()
