@@ -2,13 +2,43 @@ import streamlit as st
 import os
 import pandas as pd
 import io
-from db_util import get_connection, get_mgr_export_data
+from db_util import (
+    get_connection,
+    get_core_media_export_rows,
+    get_ct_export_rows,
+    get_mgr_export_data,
+    get_mscl_export_rows,
+)
 from datetime import date
 from sqlalchemy import text
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.worksheet.datavalidation import DataValidation
 import re
+
+
+def _write_table_sheet(workbook, sheet_name, headers, rows):
+    """Add a simple tabular worksheet with bold headers."""
+    ws = workbook.create_sheet(sheet_name)
+
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = Font(bold=True)
+
+    for row_idx, row in enumerate(rows, 2):
+        for col_idx, value in enumerate(row, 1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+
+    for col_idx, header in enumerate(headers, 1):
+        max_length = len(str(header))
+        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx, min_row=2):
+            value = row[0].value
+            if value is not None:
+                max_length = max(max_length, len(str(value)))
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = min(max_length + 2, 60)
+
+    return ws
+
 
 def view_cruises():
     """Main function to display cruise overview page with cruise selection"""
@@ -295,6 +325,25 @@ def view_cruises():
             ws1.add_data_validation(dv_working_archive)
             dv_recovery.sqref = "B7:B1048576"
             dv_working_archive.sqref = "J7:J1048576"
+
+            _write_table_sheet(
+                wb,
+                "CT_Data",
+                ["Core", "Section", "Total XMLs", "CT/Scan Types", "Image Types"],
+                get_ct_export_rows(selected_cruise_id)
+            )
+            _write_table_sheet(
+                wb,
+                "MSCL_Data",
+                ["core_name", "file_name"],
+                get_mscl_export_rows(selected_cruise_id)
+            )
+            _write_table_sheet(
+                wb,
+                "core_media",
+                ["core_name", "file_name", "file_size_bytes", "remarks", "media_type"],
+                get_core_media_export_rows(selected_cruise_id)
+            )
 
             # Serialize to bytes and offer download
             buf = io.BytesIO()
