@@ -56,6 +56,23 @@ def fetch_dropdown_values():
 
     return vessels, core_types
 
+
+def fetch_liner_configs(core_type_id):
+    """Fetch liner configurations for a given core type. Excludes NULL placeholder rows."""
+    try:
+        with get_connection() as conn:
+            result = conn.execute(text("""
+                SELECT liner_config_id, barrel_od, barrel_id, liner_od, liner_id, liner_material, notes
+                FROM liner_configs
+                WHERE core_type_id = :core_type_id
+                AND liner_id IS NOT NULL
+                ORDER BY liner_config_id
+            """), {"core_type_id": core_type_id}).fetchall()
+        return result
+    except Exception as e:
+        print(f"Error fetching liner configurations: {e}")
+        return []
+
 def get_dynamic_fields_metadata(core_type_id):
     """
     Fetch dynamic fields for the selected core type from the database.

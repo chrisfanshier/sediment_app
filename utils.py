@@ -140,14 +140,13 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
         'trigger_line_length': 'feet',
         'trigger_core_length': 'feet',
         'scope': 'feet',
-        'barrel_diameter': 'inches',
-        'liner_diameter': 'inches',
         'pig_weights': 'quantity',
         'vibracorer_model': None  # No units for model names
     }
     
     # Fetch dynamic fields metadata
     dynamic_fields = get_dynamic_fields_metadata(core_type_id) or []  # Ensure it's a list, even if None is returned
+    dynamic_fields = [f for f in dynamic_fields if f not in {"barrel_diameter", "liner_diameter"}]
 
     dynamic_field_values = {}
     
@@ -240,6 +239,39 @@ def custom_time_input(label, default=""):
     else:
         st.warning(f"Invalid time format for '{label}'. Please use HH:MM (e.g., 14:30).")
         return None
+
+
+def get_wall_description(barrel_od, barrel_id):
+    """Derive wall thickness description from OD and ID (both in mm)."""
+    if barrel_od is None or barrel_id is None:
+        return ""
+    wall_inches = (float(barrel_od) - float(barrel_id)) / 25.4
+    if abs(wall_inches - 0.125) < 0.02:
+        return "1/8\" wall"
+    if abs(wall_inches - 0.25) < 0.03:
+        return "1/4\" wall"
+    return f"~{wall_inches:.2f}\" wall"
+
+
+def generate_liner_label(row):
+    """Generate a human-readable label for a liner_configs row, converting mm to inches."""
+    def to_inches(mm):
+        if mm is None:
+            return None
+        return f'{float(mm) / 25.4:.3g}"'
+
+    if row.liner_id is None:
+        return "No liner / not applicable"
+
+    if row.barrel_od is not None:
+        wall_desc = get_wall_description(row.barrel_od, row.barrel_id)
+        barrel_str = f'{to_inches(row.barrel_od)} OD / {to_inches(row.barrel_id)} ID barrel ({wall_desc})' if wall_desc else f'{to_inches(row.barrel_od)} OD / {to_inches(row.barrel_id)} ID barrel'
+        liner_material = row.liner_material or "Unknown"
+        liner_str = f'{to_inches(row.liner_id)} ID / {to_inches(row.liner_od)} OD {liner_material} liner'
+        return f'{barrel_str} / {liner_str}'
+
+    liner_material = row.liner_material or "Unknown"
+    return f'{to_inches(row.liner_od)} OD / {to_inches(row.liner_id)} ID {liner_material} liner'
     
 def parse_staroddi_dat(file_path):
     """Parse Star Oddi .dat file and return DataFrame compatible with RBR plotting functions"""
