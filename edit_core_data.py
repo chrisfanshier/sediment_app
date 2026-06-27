@@ -4,7 +4,9 @@ import pandas as pd
 from db_util import get_connection, add_sync_tracking
 from db_util import fetch_dropdown_values
 from db_util import fetch_cruise_options  # Add this import
+from db_util import fetch_liner_configs
 from utils import render_dynamic_fields_from_metadata
+from utils import generate_liner_label
 from datetime import date, time
 from sqlalchemy import text
 import re
@@ -225,6 +227,37 @@ core_type_choice = st.selectbox(
     index=current_core_type_index
 )
 
+# --- Liner Configuration ---
+liner_config_id = None
+liner_configs = []
+if core_type_choice != "Select Core Type":
+    core_type_id = core_type_options[core_type_choice][0]
+    liner_configs = fetch_liner_configs(core_type_id)
+
+    if len(liner_configs) == 0:
+        liner_config_id = None
+
+    elif len(liner_configs) == 1:
+        liner_config_id = liner_configs[0].liner_config_id
+        st.caption(f"Liner: {generate_liner_label(liner_configs[0])}")
+
+    else:
+        liner_options = {generate_liner_label(row): row.liner_config_id for row in liner_configs}
+
+        # Pre-select existing value
+        current_liner_label = None
+        if core_data.liner_config_id:
+            for label, config_id in liner_options.items():
+                if config_id == core_data.liner_config_id:
+                    current_liner_label = label
+                    break
+
+        default_index = list(liner_options.keys()).index(current_liner_label) if current_liner_label else 0
+        liner_choice = st.selectbox("Liner Configuration*", list(liner_options.keys()), index=default_index)
+        liner_config_id = liner_options[liner_choice]
+else:
+    core_type_id = None
+
 # Replace lines 189-202:
 
 # Wire Type Selection - Get from database dynamically  
@@ -281,8 +314,6 @@ if core_name != core_data.core_name:
 
 # --- Dynamic Fields ---
 if core_type_choice != "Select Core Type":
-    core_type_id = core_type_options[core_type_choice][0]
-    
     # Get existing dynamic field values from the cores table
     from utils import get_dynamic_fields_metadata
     
@@ -438,7 +469,7 @@ if st.session_state.show_confirmation:
                             core_name = :core_name, vessel_id = :vessel_id, cruise_id = :cruise_id, leg = :leg, 
                             date = :date, station = :station, water_depth_m = :water_depth_m, 
                             latitude = :latitude, longitude = :longitude, observer = :observer, 
-                            core_type_id = :core_type_id, time_launched = :time_launched, 
+                            core_type_id = :core_type_id, liner_config_id = :liner_config_id, time_launched = :time_launched, 
                             time_on_bottom = :time_on_bottom, time_recovered = :time_recovered,
                             wire_out_on_bottom = :wire_out_on_bottom, max_wire_out = :max_wire_out,
                             impact_speed = :impact_speed, tension_at_surface = :tension_at_surface,
@@ -459,6 +490,7 @@ if st.session_state.show_confirmation:
                         "longitude": longitude,
                         "observer": observer or None,
                         "core_type_id": core_type_id,
+                        "liner_config_id": liner_config_id,
                         "time_launched": time_launched,
                         "time_on_bottom": time_on_bottom,
                         "time_recovered": time_recovered,

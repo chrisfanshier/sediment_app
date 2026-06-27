@@ -136,14 +136,13 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
         'trigger_line_length': 'feet',
         'trigger_core_length': 'feet',
         'scope': 'feet',
-        'barrel_diameter': 'inches',
-        'liner_diameter': 'inches',
         'pig_weights': 'quantity',
         'vibracorer_model': None  # No units for model names
     }
     
     # Fetch dynamic fields metadata
     dynamic_fields = get_dynamic_fields_metadata(core_type_id) or []  # Ensure it's a list, even if None is returned
+    dynamic_fields = [f for f in dynamic_fields if f not in {"barrel_diameter", "liner_diameter"}]
 
     dynamic_field_values = {}
     
@@ -223,6 +222,42 @@ def render_dynamic_fields_from_metadata(core_type_id, existing_values=None):
             dynamic_field_values[field] = st.text_input(field_name, value=default_value)
 
     return dynamic_field_values
+
+
+def get_wall_description(barrel_od, barrel_id):
+    """Derive wall thickness description from OD and ID (both in mm)."""
+    if barrel_od is None or barrel_id is None:
+        return ""
+    try:
+        wall_inches = (float(barrel_od) - float(barrel_id)) / 25.4
+    except (TypeError, ValueError):
+        return ""
+    if abs(wall_inches - 0.125) < 0.02:
+        return "1/8\" wall"
+    if abs(wall_inches - 0.25) < 0.03:
+        return "1/4\" wall"
+    return f"~{wall_inches:.2f}\" wall"
+
+
+def generate_liner_label(row):
+    """Generate a human-readable label for a liner_configs row, converting mm to inches."""
+    def to_inches(mm):
+        if mm is None:
+            return None
+        return f'{float(mm) / 25.4:.3g}"'
+
+    if row.liner_id is None:
+        return "No liner / not applicable"
+
+    if row.barrel_od is not None:
+        # Separate barrel exists — show barrel OD/ID + wall, then liner OD/ID + material
+        wall_desc = get_wall_description(row.barrel_od, row.barrel_id)
+        barrel_str = f'{to_inches(row.barrel_od)} OD / {to_inches(row.barrel_id)} ID barrel ({wall_desc})' if wall_desc else f'{to_inches(row.barrel_od)} OD / {to_inches(row.barrel_id)} ID barrel'
+        liner_str = f'{to_inches(row.liner_id)} ID / {to_inches(row.liner_od)} OD {row.liner_material} liner'
+        return f'{barrel_str} / {liner_str}'
+    else:
+        # No separate barrel — liner contacts sediment directly, show liner OD/ID + material
+        return f'{to_inches(row.liner_od)} OD / {to_inches(row.liner_id)} ID {row.liner_material} liner'
 
 # Custom Time Input Function
 def custom_time_input(label, default=""):
