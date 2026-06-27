@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QFormLayout, QDoubleSpinBox, QComboBox,
-    QPushButton, QGroupBox, QLabel, QSizePolicy, QCheckBox,
+    QWidget, QVBoxLayout, QFormLayout, QDoubleSpinBox, QSpinBox, QComboBox,
+    QPushButton, QGroupBox, QLabel, QSizePolicy, QCheckBox, QHBoxLayout,
 )
 
 from ...domain.models.recoil_params import DeploymentParams
@@ -56,6 +56,8 @@ class DeploymentPanel(QWidget):
 
     plot_requested    = Signal(object)   # DeploymentParams
     curve_type_changed = Signal(str)     # emitted when user changes curve type combobox
+    smoothing_requested = Signal(int, int)  # window_length, poly_order
+    smoothing_cleared   = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -202,6 +204,36 @@ class DeploymentPanel(QWidget):
         self._plot_btn.setMinimumHeight(32)
         self._plot_btn.clicked.connect(self._on_plot_clicked)
         root.addWidget(self._plot_btn)
+
+        # ── Smoothing Filter group ──
+        smooth_group = QGroupBox("Smoothing Filter")
+        smooth_form = QFormLayout(smooth_group)
+        smooth_form.setLabelAlignment(Qt.AlignRight)
+
+        self._window_spin = QSpinBox()
+        self._window_spin.setRange(5, 501)
+        self._window_spin.setValue(11)
+        self._window_spin.setSingleStep(2)
+        self._window_spin.setToolTip("Must be odd and greater than poly order")
+        smooth_form.addRow("Window length:", self._window_spin)
+
+        self._poly_spin = QSpinBox()
+        self._poly_spin.setRange(1, 10)
+        self._poly_spin.setValue(3)
+        smooth_form.addRow("Poly order:", self._poly_spin)
+
+        smooth_btn_row = QHBoxLayout()
+        self._smooth_apply_btn = QPushButton("Apply")
+        self._smooth_apply_btn.setMinimumHeight(28)
+        self._smooth_apply_btn.clicked.connect(self._on_smooth_apply_clicked)
+        self._smooth_clear_btn = QPushButton("Clear")
+        self._smooth_clear_btn.setMinimumHeight(28)
+        self._smooth_clear_btn.clicked.connect(self.smoothing_cleared)
+        smooth_btn_row.addWidget(self._smooth_apply_btn)
+        smooth_btn_row.addWidget(self._smooth_clear_btn)
+        smooth_form.addRow(smooth_btn_row)
+
+        root.addWidget(smooth_group)
 
         root.addStretch()
 
@@ -365,6 +397,15 @@ class DeploymentPanel(QWidget):
         self._emp_form.setRowVisible(self._alpha_spin, curve_type == 'single_lobe_damped')
         self._autofit_btn.setEnabled(index != 0)
 
+    def restore_smooth_params(self, window_length: int, poly_order: int):
+        """Repopulate the smoothing spinboxes from a previously saved result."""
+        self._window_spin.blockSignals(True)
+        self._poly_spin.blockSignals(True)
+        self._window_spin.setValue(window_length)
+        self._poly_spin.setValue(poly_order)
+        self._window_spin.blockSignals(False)
+        self._poly_spin.blockSignals(False)
+
     def _on_curve_type_changed(self, index: int):
         self._apply_curve_type_ui(index)
         self.curve_type_changed.emit(_CURVE_TYPES[index])
@@ -376,3 +417,9 @@ class DeploymentPanel(QWidget):
 
     def _on_plot_clicked(self):
         self.plot_requested.emit(self.get_params())
+
+    def _on_smooth_apply_clicked(self):
+        self.smoothing_requested.emit(
+            self._window_spin.value(),
+            self._poly_spin.value(),
+        )

@@ -79,6 +79,19 @@ class ResultsPanel(QWidget):
 
         root.addWidget(emp_group)
 
+        # Smoothing results
+        smooth_group = QGroupBox("Smoothing Results")
+        smooth_form = QFormLayout(smooth_group)
+        smooth_form.setLabelAlignment(Qt.AlignRight)
+
+        self._smooth_max_height_lbl = _lbl()
+        smooth_form.addRow("Max recoil (m):", self._smooth_max_height_lbl)
+
+        self._smooth_elapsed_lbl = _lbl()
+        smooth_form.addRow("Time since trip (s):", self._smooth_elapsed_lbl)
+
+        root.addWidget(smooth_group)
+
         # Save button
         self._save_btn = QPushButton("Save Result")
         self._save_btn.setMinimumHeight(30)
@@ -129,6 +142,16 @@ class ResultsPanel(QWidget):
         self._save_btn.setEnabled(True)
 
 
+    def show_smooth_result(self, max_recoil_m: float, elapsed_s: float):
+        """Display smoothing filter stats: recoil height (depth_at_trip - min_depth) and elapsed time."""
+        self._smooth_max_height_lbl.setText(f"{max_recoil_m:.3f} m")
+        self._smooth_elapsed_lbl.setText(f"{elapsed_s:.2f} s")
+
+    def clear_smooth_result(self):
+        """Reset smoothing result labels to placeholder."""
+        self._smooth_max_height_lbl.setText(_PLACEHOLDER)
+        self._smooth_elapsed_lbl.setText(_PLACEHOLDER)
+
     def clear(self):
         """Reset all labels to placeholder and disable Save."""
         for lbl in (self._v0_lbl, self._k_lbl,
@@ -136,4 +159,5 @@ class ResultsPanel(QWidget):
                     self._curve_type_lbl, self._A_lbl,
                     self._tau_lbl, self._omega_lbl):
             lbl.setText(_PLACEHOLDER)
+        self.clear_smooth_result()
         self._save_btn.setEnabled(False)

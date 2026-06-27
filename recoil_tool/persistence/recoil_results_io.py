@@ -122,6 +122,14 @@ def create_table_if_not_exists() -> None:
             ALTER TABLE recoil_analysis_results
             ADD COLUMN IF NOT EXISTS alpha DOUBLE PRECISION
         """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS smooth_peak_displacement_m DOUBLE PRECISION
+        """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS smooth_peak_time_s DOUBLE PRECISION
+        """))
         conn.commit()
 
 
@@ -148,6 +156,8 @@ def upsert_result(
     H_m: Optional[float] = None,
     t_p_s: Optional[float] = None,
     alpha: Optional[float] = None,
+    smooth_peak_displacement_m: Optional[float] = None,
+    smooth_peak_time_s: Optional[float] = None,
 ) -> None:
     """
     Insert or overwrite one recoil_analysis_results row.
@@ -163,53 +173,59 @@ def upsert_result(
                 (core_id, curve_type, deployment_params,
                  trip_time_epoch, fit_end_epoch,
                  E_gpa, C_drag, v0_ms, peak_displacement_m, peak_time_s, k_nm,
-                 A_m, tau_s, omega_rads, H_m, t_p_s, alpha, saved_at,
-                 created_at, modified_at, created_on_ship, sync_status)
+                 A_m, tau_s, omega_rads, H_m, t_p_s, alpha,
+                 smooth_peak_displacement_m, smooth_peak_time_s,
+                 saved_at, created_at, modified_at, created_on_ship, sync_status)
             VALUES
                 (:core_id, :curve_type, (:params_json)::jsonb,
                  :trip_time_epoch, :fit_end_epoch,
                  :E_gpa, :C_drag, :v0_ms, :peak_displacement_m, :peak_time_s, :k_nm,
-                 :A_m, :tau_s, :omega_rads, :H_m, :t_p_s, :alpha, now(),
-                 now(), now(), :created_on_ship, :sync_status)
+                 :A_m, :tau_s, :omega_rads, :H_m, :t_p_s, :alpha,
+                 :smooth_peak_displacement_m, :smooth_peak_time_s,
+                 now(), now(), now(), :created_on_ship, :sync_status)
             ON CONFLICT (core_id, curve_type) DO UPDATE SET
-                deployment_params   = EXCLUDED.deployment_params,
-                trip_time_epoch     = EXCLUDED.trip_time_epoch,
-                fit_end_epoch       = EXCLUDED.fit_end_epoch,
-                E_gpa               = EXCLUDED.E_gpa,
-                C_drag              = EXCLUDED.C_drag,
-                v0_ms               = EXCLUDED.v0_ms,
-                peak_displacement_m = EXCLUDED.peak_displacement_m,
-                peak_time_s         = EXCLUDED.peak_time_s,
-                k_nm                = EXCLUDED.k_nm,
-                A_m                 = EXCLUDED.A_m,
-                tau_s               = EXCLUDED.tau_s,
-                omega_rads          = EXCLUDED.omega_rads,
-                H_m                 = EXCLUDED.H_m,
-                t_p_s               = EXCLUDED.t_p_s,
-                alpha               = EXCLUDED.alpha,
-                saved_at            = now(),
-                sync_status         = 'pending',
-                modified_at         = now()
+                deployment_params          = EXCLUDED.deployment_params,
+                trip_time_epoch            = EXCLUDED.trip_time_epoch,
+                fit_end_epoch              = EXCLUDED.fit_end_epoch,
+                E_gpa                      = EXCLUDED.E_gpa,
+                C_drag                     = EXCLUDED.C_drag,
+                v0_ms                      = EXCLUDED.v0_ms,
+                peak_displacement_m        = EXCLUDED.peak_displacement_m,
+                peak_time_s                = EXCLUDED.peak_time_s,
+                k_nm                       = EXCLUDED.k_nm,
+                A_m                        = EXCLUDED.A_m,
+                tau_s                      = EXCLUDED.tau_s,
+                omega_rads                 = EXCLUDED.omega_rads,
+                H_m                        = EXCLUDED.H_m,
+                t_p_s                      = EXCLUDED.t_p_s,
+                alpha                      = EXCLUDED.alpha,
+                smooth_peak_displacement_m = EXCLUDED.smooth_peak_displacement_m,
+                smooth_peak_time_s         = EXCLUDED.smooth_peak_time_s,
+                saved_at                   = now(),
+                sync_status                = 'pending',
+                modified_at                = now()
         """), {
-            'core_id':              core_id,
-            'curve_type':           curve_type,
-            'params_json':          params_json,
-            'trip_time_epoch':      float(trip_time_epoch),
-            'fit_end_epoch':        float(fit_end_epoch),
-            'E_gpa':                E_gpa,
-            'C_drag':               C_drag,
-            'v0_ms':                v0_ms,
-            'peak_displacement_m':  peak_displacement_m,
-            'peak_time_s':          peak_time_s,
-            'k_nm':                 k_nm,
-            'A_m':                  A_m,
-            'tau_s':                tau_s,
-            'omega_rads':           omega_rads,
-            'H_m':                  H_m,
-            't_p_s':                t_p_s,
-            'alpha':                alpha,
-            'created_on_ship':      True,
-            'sync_status':          'pending',
+            'core_id':                      core_id,
+            'curve_type':                   curve_type,
+            'params_json':                  params_json,
+            'trip_time_epoch':              float(trip_time_epoch),
+            'fit_end_epoch':                float(fit_end_epoch),
+            'E_gpa':                        E_gpa,
+            'C_drag':                       C_drag,
+            'v0_ms':                        v0_ms,
+            'peak_displacement_m':          peak_displacement_m,
+            'peak_time_s':                  peak_time_s,
+            'k_nm':                         k_nm,
+            'A_m':                          A_m,
+            'tau_s':                        tau_s,
+            'omega_rads':                   omega_rads,
+            'H_m':                          H_m,
+            't_p_s':                        t_p_s,
+            'alpha':                        alpha,
+            'smooth_peak_displacement_m':   smooth_peak_displacement_m,
+            'smooth_peak_time_s':           smooth_peak_time_s,
+            'created_on_ship':              True,
+            'sync_status':                  'pending',
         })
         conn.commit()
 

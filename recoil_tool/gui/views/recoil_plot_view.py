@@ -17,6 +17,7 @@ pg.setConfigOptions(antialias=True, useOpenGL=True)
 
 _DEPTH_COLOR   = '#6baed6'
 _MODEL_COLOR   = '#e6550d'
+_SMOOTH_COLOR  = '#17becf'
 _TRIP_PEN      = pg.mkPen(color='#888888', width=2, style=Qt.DashLine)
 _FIT_END_PEN   = pg.mkPen(color='#2ca02c', width=2, style=Qt.SolidLine)
 
@@ -43,6 +44,7 @@ class RecoilPlotView(QWidget):
         self._trip_line: pg.InfiniteLine | None = None
         self._fit_end_line: pg.InfiniteLine | None = None
         self._model_curve = None
+        self._smooth_curve = None
 
         self._setup_ui()
 
@@ -97,6 +99,7 @@ class RecoilPlotView(QWidget):
         self._depth_m = depth_m
         self._depth_plot.clear()
         self._model_curve = None
+        self._smooth_curve = None
         self._trip_line = None
 
         if core_name:
@@ -164,6 +167,21 @@ class RecoilPlotView(QWidget):
             self._depth_plot.removeItem(self._model_curve)
             self._model_curve = None
 
+    def plot_smooth_overlay(self, depth_smooth: np.ndarray, color: str = _SMOOTH_COLOR):
+        """Plot the full-trace Savitzky-Golay smoothed depth as a dotted overlay."""
+        self.clear_smooth_overlay()
+        x = np.arange(len(depth_smooth))
+        self._smooth_curve = self._depth_plot.plot(
+            x, depth_smooth,
+            pen=pg.mkPen(color=color, width=1.5, style=Qt.DotLine),
+        )
+
+    def clear_smooth_overlay(self):
+        """Remove the smoothed trace overlay if present."""
+        if self._smooth_curve is not None:
+            self._depth_plot.removeItem(self._smooth_curve)
+            self._smooth_curve = None
+
     # ------------------------------------------------------------------
     # Public: clear all
     # ------------------------------------------------------------------
@@ -174,6 +192,7 @@ class RecoilPlotView(QWidget):
         self._trip_line = None
         self._fit_end_line = None
         self._model_curve = None
+        self._smooth_curve = None
         self._time_s = None
         self._depth_m = None
 

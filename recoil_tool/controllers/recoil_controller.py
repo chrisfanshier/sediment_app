@@ -69,6 +69,12 @@ class RecoilController:
         self._last_model_result: Optional[ModelResult] = None
         self._last_empirical_params: Optional[tuple] = None
 
+        # Last smoothing result (for Save) — None until user applies the filter
+        self._last_smooth_peak_m: Optional[float] = None
+        self._last_smooth_elapsed_s: Optional[float] = None
+        self._last_smooth_window: Optional[int] = None
+        self._last_smooth_poly: Optional[int] = None
+
         # Saved results loaded from DB when a core is opened
         self._saved_results: dict = {}
 
@@ -81,6 +87,8 @@ class RecoilController:
     def _connect_signals(self):
         self.deployment_panel.plot_requested.connect(self._on_plot_requested)
         self.deployment_panel.curve_type_changed.connect(self._on_curve_type_selected)
+        self.deployment_panel.smoothing_requested.connect(self._on_smoothing_requested)
+        self.deployment_panel.smoothing_cleared.connect(self._on_smoothing_cleared)
         self.plot_view.trip_index_changed.connect(self._on_trip_index_changed)
         self.plot_view.fit_end_changed.connect(self._on_fit_end_changed)
         self.results_panel.save_requested.connect(self._on_save_requested)
@@ -131,6 +139,10 @@ class RecoilController:
             self._time_s = time_s
             self._depth_m = depth_m
             self._last_fit = None
+            self._last_smooth_peak_m = None
+            self._last_smooth_elapsed_s = None
+            self._last_smooth_window = None
+            self._last_smooth_poly = None
 
             # Resolve trip index from the stored trip_datetime (preferred) so
             # that the index is correct for the Release Device RSK alone.
@@ -238,6 +250,14 @@ class RecoilController:
         fit_end_epoch = float(self._time_s[min(fit_end_idx, len(self._time_s) - 1)])
 
         dep_dict = dataclasses.asdict(self._last_params) if self._last_params else {}
+
+        # Pack savgol parameters into the JSONB snapshot when a filter has been applied
+        if self._last_smooth_window is not None:
+            dep_dict['smoothing'] = {
+                'window_length': self._last_smooth_window,
+                'poly_order':    self._last_smooth_poly,
+            }
+
         curve_type = self._last_result_type
 
         kwargs: dict = {}
@@ -263,14 +283,18 @@ class RecoilController:
             upsert_result(
                 self._loaded_core_id, curve_type,
                 trip_epoch, fit_end_epoch, dep_dict,
+                smooth_peak_displacement_m=self._last_smooth_peak_m,
+                smooth_peak_time_s=self._last_smooth_elapsed_s,
                 **kwargs,
             )
             # Update local cache so switching curve types immediately sees it
             self._saved_results[curve_type] = {
-                'curve_type':       curve_type,
-                'trip_time_epoch':  trip_epoch,
-                'fit_end_epoch':    fit_end_epoch,
-                'deployment_params': dep_dict,
+                'curve_type':                  curve_type,
+                'trip_time_epoch':             trip_epoch,
+                'fit_end_epoch':               fit_end_epoch,
+                'deployment_params':           dep_dict,
+                'smooth_peak_displacement_m':  self._last_smooth_peak_m,
+                'smooth_peak_time_s':          self._last_smooth_elapsed_s,
                 **kwargs,
             }
             self._status(f"Saved {curve_type} result for core {self._loaded_core_id}")
@@ -326,6 +350,23 @@ class RecoilController:
 
         self.deployment_panel.restore_params(params)
         self._on_plot_requested(params)
+
+        # Restore smoothing results if they were saved with this result
+        smooth_peak = saved.get('smooth_peak_displacement_m')
+        smooth_time = saved.get('smooth_peak_time_s')
+        if smooth_peak is not None and smooth_time is not None:
+            self._last_smooth_peak_m = float(smooth_peak)
+            self._last_smooth_elapsed_s = float(smooth_time)
+            self.results_panel.show_smooth_result(self._last_smooth_peak_m, self._last_smooth_elapsed_s)
+
+            # Restore savgol spinboxes from the JSONB smoothing sub-dict
+            smoothing_cfg = (saved.get('deployment_params') or {}).get('smoothing') or {}
+            win = smoothing_cfg.get('window_length')
+            poly = smoothing_cfg.get('poly_order')
+            if win is not None and poly is not None:
+                self._last_smooth_window = int(win)
+                self._last_smooth_poly = int(poly)
+                self.deployment_panel.restore_smooth_params(int(win), int(poly))
 
     def _on_plot_requested(self, params: DeploymentParams):
         """Run the model or empirical fit and overlay on the plot."""
@@ -453,6 +494,67 @@ class RecoilController:
                 self._last_empirical_params = (A, tau, omega)
             except Exception as exc:
                 self._show_error("Fit Error", str(exc))
+
+    def _on_smoothing_requested(self, window_length: int, poly_order: int):
+        """Apply a Savitzky-Golay filter to the full depth trace and display the overlay."""
+        if self._time_s is None or self._depth_m is None:
+            self._show_warning("No data loaded", "Load a core first.")
+            return
+        if self._trip_idx is None:
+            self._show_warning("No trip index", "Place a trip marker first.")
+            return
+
+        from scipy.signal import savgol_filter
+
+        # Enforce odd window length (scipy requirement)
+        if window_length % 2 == 0:
+            window_length += 1
+
+        if window_length <= poly_order:
+            self._show_warning(
+                "Invalid smoothing params",
+                f"Window length ({window_length}) must be greater than poly order ({poly_order}).",
+            )
+            return
+
+        try:
+            depth_smooth = savgol_filter(self._depth_m, window_length, poly_order)
+            self.plot_view.plot_smooth_overlay(depth_smooth)
+
+            # Max recoil = depth_at_trip - min_depth in [trip_idx, fit_end_idx]
+            # (positive upward displacement, since depth is positive downward)
+            end = self._fit_end_idx if self._fit_end_idx is not None else len(self._depth_m) - 1
+            end = min(end, len(depth_smooth) - 1)
+            depth_at_trip = float(depth_smooth[self._trip_idx])
+            segment = depth_smooth[self._trip_idx : end + 1]
+            local_idx = int(np.argmin(segment))
+            min_depth = float(segment[local_idx])
+            max_recoil = abs(depth_at_trip - min_depth)
+            elapsed_s = float(
+                self._time_s[self._trip_idx + local_idx] - self._time_s[self._trip_idx]
+            )
+
+            self._last_smooth_peak_m = max_recoil
+            self._last_smooth_elapsed_s = elapsed_s
+            self._last_smooth_window = window_length
+            self._last_smooth_poly = poly_order
+
+            self.results_panel.show_smooth_result(max_recoil, elapsed_s)
+            self._status(
+                f"Smoothed (win={window_length}, poly={poly_order}) — "
+                f"max recoil: {max_recoil:.3f} m at {elapsed_s:.2f} s after trip"
+            )
+        except Exception as exc:
+            self._show_error("Smoothing Error", str(exc))
+
+    def _on_smoothing_cleared(self):
+        """Remove the smoothed trace overlay and reset smoothing result labels."""
+        self.plot_view.clear_smooth_overlay()
+        self.results_panel.clear_smooth_result()
+        self._last_smooth_peak_m = None
+        self._last_smooth_elapsed_s = None
+        self._last_smooth_window = None
+        self._last_smooth_poly = None
 
     # ------------------------------------------------------------------
     # Helpers
