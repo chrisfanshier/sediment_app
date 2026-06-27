@@ -268,6 +268,19 @@ def fetch_cruise_options(only_created_on_ship=False):
     except Exception as e:
         print(f"Error fetching cruise options: {e}")
         return []
+
+
+def fetch_liner_configs(core_type_id):
+    """Fetch liner configurations for a given core type."""
+    with get_connection() as conn:
+        result = conn.execute(text("""
+            SELECT liner_config_id, barrel_od, barrel_id, liner_od, liner_id, liner_material, notes
+            FROM liner_configs
+            WHERE core_type_id = :core_type_id
+            AND liner_id IS NOT NULL
+            ORDER BY liner_config_id
+        """), {"core_type_id": core_type_id}).fetchall()
+    return result
     
 def add_sync_tracking(values_dict, created_on_ship=True, is_update=False):
     """
@@ -448,14 +461,15 @@ def get_mgr_export_data(cruise_name: str) -> list:
             c.core_name || '-' || se.section_number || se.wa_suffix AS section_name,
             NULL::text AS alternate_section_name,
             se.section_length, se.top_cum_length, se.bottom_cum_length,
-            NULL::numeric AS core_diameter_cm,
-            NULL::text AS core_tube_material,
+                        ROUND(lc.liner_id / 10.0, 2) AS core_diameter_cm,
+                        lc.liner_material AS core_tube_material,
             se.remarks
         FROM split_expand se
         JOIN cores c         ON se.core_id     = c.core_id
         JOIN cruises cr      ON c.cruise_id    = cr.cruise_id
         JOIN vessels v       ON cr.vessel_id   = v.vessel_id
         LEFT JOIN core_types ct ON c.core_type_id = ct.core_type_id
+                LEFT JOIN liner_configs lc ON c.liner_config_id = lc.liner_config_id
         WHERE cr.cruise_name = :cruise_name
           AND c.core_dredge  = 'core'
         ORDER BY c.core_name, se.section_number, se.sort_order

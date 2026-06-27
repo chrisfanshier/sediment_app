@@ -5,7 +5,9 @@ from db_util import get_connection, add_sync_tracking
 from db_util import fetch_dropdown_values
 from db_util import fetch_last_record
 from db_util import fetch_cruise_options  # Add this import
+from db_util import fetch_liner_configs
 from utils import render_dynamic_fields_from_metadata
+from utils import generate_liner_label
 from datetime import date, time
 from sqlalchemy import text
 import re
@@ -220,10 +222,29 @@ else:
 core_type_options = {ct[1]: (ct[0], ct[2]) for ct in core_types}  # Map core type names to IDs and required fields
 core_type_choice = st.selectbox("Select Core Type", ["Select Core Type"] + list(core_type_options.keys()))
 
+# --- Liner Configuration ---
+liner_config_id = None
+liner_configs = []
+selected_core_type_id = None
+
 # Check if this is a Jumbo Piston Core (core_type_id = 1) and offer TC option
 create_trigger_core = False
 if core_type_choice != "Select Core Type":
     selected_core_type_id = core_type_options[core_type_choice][0]  # Get the core_type_id
+    liner_configs = fetch_liner_configs(selected_core_type_id)
+
+    if len(liner_configs) == 0:
+        liner_config_id = None
+
+    elif len(liner_configs) == 1:
+        liner_config_id = liner_configs[0].liner_config_id
+        st.caption(f"Liner: {generate_liner_label(liner_configs[0])}")
+
+    else:
+        liner_options = {generate_liner_label(row): row.liner_config_id for row in liner_configs}
+        liner_choice = st.selectbox("Liner Configuration*", ["Select Liner Configuration"] + list(liner_options.keys()))
+        liner_config_id = liner_options.get(liner_choice)
+
     if selected_core_type_id == 1:  # Jumbo Piston (4") - JC
         create_trigger_core = st.checkbox(
             "Also create Trigger Core (TC) record", 
@@ -362,6 +383,9 @@ if st.button("Save Core"):
     if core_type_choice == "Select Core Type":
         missing_fields.append("Core Type")
 
+    if core_type_id in [6, 7, 12] and liner_config_id is None:
+        missing_fields.append("Liner Configuration")
+
     # Check if date is missing
     if not date_field:
         missing_fields.append("Date")
@@ -409,6 +433,8 @@ if st.session_state.show_confirmation:
     if pullout_tension is None: null_values.append("Pullout Tension")
     if not notes or not notes.strip(): null_values.append("Notes")
     if not data_entry_remarks or not data_entry_remarks.strip(): null_values.append("Data Entry Remarks")
+    if liner_config_id is None and core_type_id is not None and len(liner_configs) == 0:
+        null_values.append("Liner Configuration")
 
     # Check dynamic fields for NULLs
     for field, value in dynamic_field_values.items():
@@ -463,7 +489,7 @@ if st.session_state.show_confirmation:
                         # === CREATE JC CORE (original logic) ===
                         base_query = """
                             INSERT INTO cores (
-                                core_name, vessel_id, cruise_id, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, core_dredge,
+                                core_name, vessel_id, cruise_id, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, liner_config_id, core_dredge,
                                 time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id, data_entry_remarks,
                                 created_on_ship, sync_status
@@ -471,7 +497,7 @@ if st.session_state.show_confirmation:
 
                         base_values = [
                             core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
-                            water_depth, latitude, longitude, observer or None, core_type_id, 'core', time_launched, time_on_bottom, 
+                            water_depth, latitude, longitude, observer or None, core_type_id, liner_config_id, 'core', time_launched, time_on_bottom, 
                             time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
                             tension_at_bottom, pullout_tension, notes or None, wire_type_id, data_entry_remarks or None,
                             True, 'pending'
@@ -505,7 +531,7 @@ if st.session_state.show_confirmation:
                             # TC core values (same as JC but with different name, core_type, and NULL tensions)
                             tc_base_values = [
                                 tc_core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
-                                water_depth, latitude, longitude, observer or None, tc_core_type_id, 'core', time_launched, time_on_bottom, 
+                                water_depth, latitude, longitude, observer or None, tc_core_type_id, liner_config_id, 'core', time_launched, time_on_bottom, 
                                 time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
                                 None, None, notes or None, wire_type_id, data_entry_remarks or None,
                                 True, 'pending'
