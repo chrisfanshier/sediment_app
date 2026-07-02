@@ -184,11 +184,10 @@ class WinchPanel(BaseModePanel):
 
     def get_selected_winch_file_ids(self) -> list[int]:
         ids: list[int] = []
-        for idx in range(self.winch_file_list.count()):
-            item = self.winch_file_list.item(idx)
-            if item is not None and item.isSelected():
-                if 0 <= idx < len(self._winch_files):
-                    ids.append(self._winch_files[idx]['winch_file_id'])
+        for item in self.winch_file_list.selectedItems():
+            row = self.winch_file_list.row(item)
+            if 0 <= row < len(self._winch_files):
+                ids.append(self._winch_files[row]['winch_file_id'])
         return ids
 
     def get_column_1(self) -> Optional[str]:

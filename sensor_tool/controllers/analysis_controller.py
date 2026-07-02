@@ -89,6 +89,7 @@ class AnalysisController:
         # Winch mode state
         self._winch_df: Optional[pd.DataFrame] = None
         self._winch_file_names: list[str] = []
+        self._winch_list_cruise_id: Optional[int] = None
 
         # Panels
         self.view_panel = None
@@ -1857,6 +1858,7 @@ class AnalysisController:
         if cruise_id is None:
             self.winch_panel.set_auto_status([], False)
             self.winch_panel.set_cruise_winch_files([])
+            self._winch_list_cruise_id = None
             self._winch_df = None
             self._winch_file_names = []
             self.winch_panel.set_parameters([])
@@ -1864,12 +1866,15 @@ class AnalysisController:
             log.log('Select a cruise to load winch files.')
             return
 
-        try:
-            cruise_files = WinchLoader.fetch_winch_files_for_cruise(cruise_id)
-            self.winch_panel.set_cruise_winch_files(cruise_files)
-        except Exception as exc:
-            log.log(f'ERROR fetching winch file list: {exc}')
-            cruise_files = []
+        if self._winch_list_cruise_id != cruise_id:
+            try:
+                cruise_files = WinchLoader.fetch_winch_files_for_cruise(cruise_id)
+                self.winch_panel.set_cruise_winch_files(cruise_files)
+                self._winch_list_cruise_id = cruise_id
+            except Exception as exc:
+                log.log(f'ERROR fetching winch file list: {exc}')
+                self.winch_panel.set_cruise_winch_files([])
+                self._winch_list_cruise_id = None
 
         core_name = ''
         if self.sensor_data is not None:
