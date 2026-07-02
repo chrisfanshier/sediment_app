@@ -40,6 +40,7 @@ from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
 from ..persistence.database_loader import DatabaseLoader
+from ..persistence.winch_loader import WinchLoader, get_winch_parameters
 from ..persistence.analysis_results_io import insert_result, update_result
 
 
@@ -57,6 +58,7 @@ class AnalysisController:
         self.original_data: Optional[SensorData] = None     # Backup for reset
         self._loaded_file_path: Optional[str] = None        # Full path to loaded file
         self._loaded_core_id: Optional[int] = None           # core_id when loaded from DB
+        self._loaded_cruise_id: Optional[int] = None         # cruise_id when loaded from DB
         self._current_db_result_id: Optional[int] = None     # active sensor_analysis_results row
         self.calibration: Optional[DepthCalibration] = None
         self.generated_calibration: Optional[DepthCalibration] = None
@@ -81,6 +83,12 @@ class AnalysisController:
         self.calculation_plot = None
         self.calibration_plot = None
         self.piston_analysis_view = None
+        self.winch_panel = None
+        self.winch_plot_view = None
+
+        # Winch mode state
+        self._winch_df: Optional[pd.DataFrame] = None
+        self._winch_file_names: list[str] = []
 
         # Panels
         self.view_panel = None
@@ -92,6 +100,7 @@ class AnalysisController:
         self.calculate_panel = None
         self.alter_panel = None
         self.piston_analysis_panel = None
+        self.winch_panel = None
 
         # Alter mode state
         self._alter_core_info: Optional[dict] = None
@@ -231,6 +240,13 @@ class AnalysisController:
                 self.run_piston_analysis
             )
 
+        # Winch panel
+        if self.winch_panel is not None:
+            self.winch_panel.reload_requested.connect(self.reload_winch_data)
+            self.winch_panel.plot_settings_changed.connect(
+                self._update_winch_plot
+            )
+
     # ==================================================================
     # Data Loading
     # ==================================================================
@@ -245,6 +261,7 @@ class AnalysisController:
             self.original_data = self.sensor_data.copy()
             self._loaded_file_path = file_path
             self._loaded_core_id = None  # CSV has no DB context
+            self._loaded_cruise_id = None
 
             self._reset_analysis_state()
             self._update_all_panels_file_info()
@@ -259,7 +276,7 @@ class AnalysisController:
             self._show_error("Load Error", str(e))
             self._log_active(f"ERROR: {e}")
 
-    def load_from_database(self, core_id: int, core_info: dict):
+    def load_from_database(self, core_id: int, core_info: dict, cruise_id: Optional[int] = None):
         """Load sensor data for a core directly from the database."""
         try:
             self.main_plot.clear_selection()
@@ -270,8 +287,11 @@ class AnalysisController:
             self.original_data = self.sensor_data.copy()
             self._loaded_file_path = None  # no CSV on disk
             self._loaded_core_id = core_id
+            self._loaded_cruise_id = cruise_id
 
             self._reset_analysis_state()
+            self._winch_df = None
+            self._winch_file_names = []
             self._update_all_panels_file_info()
             self.main_plot.set_sensor_data(self.sensor_data)
             self.plot_depths()
@@ -1791,6 +1811,145 @@ class AnalysisController:
             x = self.sensor_data.get_timestamps_epoch()
             self.main_plot.add_piston_trace(x, self._piston_values)
 
+    def _plot_winch_mode(self):
+        """Plot sensor depths with any already-computed overlays (no auto-init)."""
+        if self.sensor_data is None:
+            return
+
+        self.plot_depths()
+
+        trip_idx = self._resolve_calc_trip_index()
+        if trip_idx is not None:
+            self.main_plot.add_trip_line(trip_idx)
+
+        start_core_idx = self._calc_start_core_idx
+        if start_core_idx is None:
+            start_core_idx = self._piston_start_core_idx
+        if start_core_idx is not None:
+            x = self.sensor_data.get_timestamps_epoch()
+            if 0 <= start_core_idx < len(x):
+                self.main_plot.add_start_core_line(float(x[start_core_idx]))
+
+        x = self.sensor_data.get_timestamps_epoch()
+        if self._start_pen_idx is not None and 0 <= self._start_pen_idx < len(x):
+            self.main_plot.add_start_pen_line(float(x[self._start_pen_idx]))
+        if self._end_pen_idx is not None and 0 <= self._end_pen_idx < len(x):
+            self.main_plot.add_end_pen_line(float(x[self._end_pen_idx]))
+        if self._pullout_idx is not None and 0 <= self._pullout_idx < len(x):
+            self.main_plot.add_pullout_line(float(x[self._pullout_idx]))
+
+        if self._manual_seafloor is not None:
+            self.main_plot.add_seafloor_line(self._manual_seafloor, movable=True)
+
+        if self._piston_values is not None:
+            self.main_plot.add_piston_trace(x, self._piston_values)
+
+    def reload_winch_data(self):
+        """Load winch data (auto or manual) and refresh the winch plot."""
+        if self.winch_panel is None:
+            return
+
+        log = self.winch_panel.log_widget
+        cruise_id = self._loaded_cruise_id
+        if cruise_id is None and self.main_window is not None:
+            cruise_id = self.main_window.get_selected_cruise_id()
+
+        if cruise_id is None:
+            self.winch_panel.set_auto_status([], False)
+            self.winch_panel.set_cruise_winch_files([])
+            self._winch_df = None
+            self._winch_file_names = []
+            self.winch_panel.set_parameters([])
+            self._update_winch_plot()
+            log.log('Select a cruise to load winch files.')
+            return
+
+        try:
+            cruise_files = WinchLoader.fetch_winch_files_for_cruise(cruise_id)
+            self.winch_panel.set_cruise_winch_files(cruise_files)
+        except Exception as exc:
+            log.log(f'ERROR fetching winch file list: {exc}')
+            cruise_files = []
+
+        core_name = ''
+        if self.sensor_data is not None:
+            core_name = self.sensor_data.core_title or ''
+
+        auto_df = None
+        auto_names: list[str] = []
+        if self._loaded_core_id is not None:
+            try:
+                auto_df, auto_names = WinchLoader.load_core_winch_data(
+                    self._loaded_core_id, cruise_id,
+                )
+            except Exception as exc:
+                log.log(f'ERROR in auto winch load: {exc}')
+
+        self.winch_panel.set_auto_status(
+            auto_names, auto_df is not None, core_name=core_name,
+        )
+
+        if self.winch_panel.uses_manual_selection():
+            file_ids = self.winch_panel.get_selected_winch_file_ids()
+            if not file_ids:
+                self._winch_df = None
+                self._winch_file_names = []
+                log.log('Manual mode: select one or more winch files.')
+            else:
+                try:
+                    self._winch_df, self._winch_file_names = (
+                        WinchLoader.load_winch_files_concat(file_ids)
+                    )
+                    if self._winch_df is not None:
+                        log.log(
+                            f'Manual load: {len(self._winch_file_names)} file(s), '
+                            f'{len(self._winch_df):,} samples.'
+                        )
+                    else:
+                        log.log('Manual load: could not parse selected files.')
+                except Exception as exc:
+                    self._winch_df = None
+                    self._winch_file_names = []
+                    log.log(f'ERROR loading manual winch files: {exc}')
+        else:
+            self._winch_df = auto_df
+            self._winch_file_names = auto_names
+            if auto_df is not None:
+                log.log(
+                    f'Auto load: {len(auto_names)} file(s), '
+                    f'{len(auto_df):,} samples.'
+                )
+            elif self._loaded_core_id is not None:
+                log.log('Auto load: no overlapping winch data for this core.')
+
+        params = get_winch_parameters(self._winch_df)
+        self.winch_panel.set_parameters(params)
+        self._update_winch_plot()
+
+    def _update_winch_plot(self):
+        """Refresh winch secondary plots from current panel settings."""
+        if self.winch_plot_view is None or self.winch_panel is None:
+            return
+
+        col1 = self.winch_panel.get_column_1()
+        col2 = self.winch_panel.get_column_2()
+        show_second = self.winch_panel.show_second_window()
+
+        if self._winch_file_names:
+            source = f"Source: {', '.join(self._winch_file_names)}"
+        elif self.winch_panel.uses_manual_selection():
+            source = 'Manual: no files selected'
+        else:
+            source = 'Auto: no overlapping winch data'
+
+        self.winch_plot_view.plot(
+            self._winch_df,
+            column_1=col1,
+            column_2=col2,
+            show_second=show_second,
+            source_label=source,
+        )
+
     def _update_start_pen_line(
         self,
         trip_idx: Optional[int] = None,
@@ -2902,11 +3061,18 @@ class AnalysisController:
                 self.main_window.hide_secondary_view()
         elif mode_name == 'Piston Analysis':
             self.main_window.show_secondary_view('piston_analysis')
+        elif mode_name == 'Winch':
+            self.main_window.show_secondary_view('winch')
+            if self.winch_plot_view is not None and self.main_plot is not None:
+                self.winch_plot_view.set_x_link(self.main_plot.plot_item)
+            self.reload_winch_data()
         else:
             self.main_window.hide_secondary_view()
 
-        # Clean up piston overlays when leaving Piston Position / Calculate / Alter / Piston Analysis modes
-        if mode_name not in ('Piston Position', 'Calculate', 'Alter', 'Piston Analysis'):
+        # Clean up piston overlays when leaving overlay-preserving modes
+        if mode_name not in (
+            'Piston Position', 'Calculate', 'Alter', 'Piston Analysis', 'Winch',
+        ):
             self.main_plot.remove_piston_trace()
             self.main_plot.remove_start_core_line()
             self.main_plot.remove_end_pen_line()
@@ -2918,6 +3084,12 @@ class AnalysisController:
                 self._plot_calculate_mode()
                 if self._piston_values is not None:
                     self.main_plot.update_piston_trace(self._piston_values)
+            return
+
+        # When entering Winch mode, restore existing overlays and winch plots
+        if mode_name == 'Winch':
+            if self.sensor_data is not None:
+                self._plot_winch_mode()
             return
 
         # When entering Calculate mode, restore trip / start_core / piston lines

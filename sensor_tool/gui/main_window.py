@@ -34,6 +34,7 @@ from ..gui.views.trip_plot_view import TripPlotView
 from ..gui.views.calculation_plot_view import CalculationPlotView
 from ..gui.views.calibration_plot_view import CalibrationPlotView
 from ..gui.views.piston_analysis_view import PistonAnalysisView
+from ..gui.views.winch_plot_view import WinchPlotView
 from ..gui.panels.view_data_panel import ViewDataPanel
 from ..gui.panels.depth_offset_panel import DepthOffsetPanel
 from ..gui.panels.time_offset_panel import TimeOffsetPanel
@@ -43,10 +44,11 @@ from ..gui.panels.piston_position_panel import PistonPositionPanel
 from ..gui.panels.calculate_panel import CalculatePanel
 from ..gui.panels.alter_panel import AlterPanel
 from ..gui.panels.piston_analysis_panel import PistonAnalysisPanel
+from ..gui.panels.winch_panel import WinchPanel
 from ..controllers.analysis_controller import AnalysisController
 
 MODES = ['View Data', 'Depth Offset', 'Time Offset', 'Create Calibration',
-         'Trip Detector', 'Piston Position', 'Calculate', 'Alter',
+         'Trip Detector', 'Piston Position', 'Winch', 'Calculate', 'Alter',
          'Piston Analysis']
 
 
@@ -166,11 +168,15 @@ class MainWindow(QMainWindow):
 
         self.panel_stack.addWidget(self.trip_panel)       # 4
         self.panel_stack.addWidget(self.piston_panel)     # 5
-        self.panel_stack.addWidget(self.calculate_panel)  # 6
-        self.panel_stack.addWidget(self.alter_panel)      # 7
+
+        self.winch_panel = WinchPanel()
+        self.panel_stack.addWidget(self.winch_panel)      # 6
+
+        self.panel_stack.addWidget(self.calculate_panel)  # 7
+        self.panel_stack.addWidget(self.alter_panel)      # 8
 
         self.piston_analysis_panel = PistonAnalysisPanel()
-        self.panel_stack.addWidget(self.piston_analysis_panel)  # 8
+        self.panel_stack.addWidget(self.piston_analysis_panel)  # 9
 
         self.panel_stack.setMinimumWidth(400)
         self.panel_stack.setMaximumWidth(550)
@@ -194,6 +200,9 @@ class MainWindow(QMainWindow):
 
         self.piston_analysis_view = PistonAnalysisView()
         self.secondary_stack.addWidget(self.piston_analysis_view)  # 5
+
+        self.winch_plot_view = WinchPlotView()
+        self.secondary_stack.addWidget(self.winch_plot_view)       # 6
         self.secondary_stack.setVisible(False)
 
         # -- Right splitter (main plot + secondary) --
@@ -229,6 +238,8 @@ class MainWindow(QMainWindow):
         self.controller.alter_panel = self.alter_panel
         self.controller.piston_analysis_panel = self.piston_analysis_panel
         self.controller.piston_analysis_view = self.piston_analysis_view
+        self.controller.winch_panel = self.winch_panel
+        self.controller.winch_plot_view = self.winch_plot_view
 
     def _build_status_bar(self):
         self.statusBar().showMessage("Ready")
@@ -251,6 +262,20 @@ class MainWindow(QMainWindow):
     def get_current_mode(self) -> str:
         return self.mode_combo.currentText()
 
+    def get_selected_cruise_id(self) -> int | None:
+        """Return cruise_id for the toolbar cruise selection, or None."""
+        idx = self.cruise_combo.currentIndex()
+        if idx <= 0 or idx > len(self._cruises):
+            return None
+        return self._cruises[idx - 1]['cruise_id']
+
+    def get_selected_core_info(self) -> dict | None:
+        """Return core info dict for the toolbar core selection, or None."""
+        idx = self.core_combo.currentIndex()
+        if idx <= 0 or idx > len(self._cores):
+            return None
+        return self._cores[idx - 1]
+
     def show_secondary_view(self, view_type: str):
         """Show the secondary view area (velocity, statistics, or trip)."""
         if view_type == 'heave':
@@ -265,6 +290,8 @@ class MainWindow(QMainWindow):
             self.secondary_stack.setCurrentIndex(4)
         elif view_type == 'piston_analysis':
             self.secondary_stack.setCurrentIndex(5)
+        elif view_type == 'winch':
+            self.secondary_stack.setCurrentIndex(6)
         self.secondary_stack.setVisible(True)
 
     def hide_secondary_view(self):
@@ -335,6 +362,9 @@ class MainWindow(QMainWindow):
 
         self.core_combo.blockSignals(False)
 
+        if self.get_current_mode() == 'Winch':
+            self.controller.reload_winch_data()
+
     def _on_core_changed(self, index: int):
         """Core combo changed — load the sensor data."""
         if index <= 0 or index > len(self._cores):
@@ -353,9 +383,12 @@ class MainWindow(QMainWindow):
                 core_info["core_id"], core_info
             )
         else:
+            cruise_id = self.get_selected_cruise_id()
             self.controller.load_from_database(
-                core_info["core_id"], core_info
+                core_info["core_id"], core_info, cruise_id=cruise_id,
             )
+            if self.get_current_mode() == 'Winch':
+                self.controller.reload_winch_data()
 
     # ==================================================================
     # Toolbar actions
