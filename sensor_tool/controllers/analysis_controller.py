@@ -261,6 +261,9 @@ class AnalysisController:
             self.winch_panel.reset_winch_requested.connect(
                 self.reset_winch_alignment
             )
+            self.winch_panel.search_region_toggled.connect(
+                self._on_winch_search_region_toggled
+            )
 
         if self.winch_plot_view is not None:
             self.winch_plot_view.winch_trip_line_changed.connect(
@@ -268,6 +271,11 @@ class AnalysisController:
             )
             self.winch_plot_view.search_region_changed.connect(
                 self._on_winch_search_region_changed
+            )
+
+        if self.winch_panel is not None:
+            self.winch_panel.search_region_toggled.connect(
+                self._on_winch_search_region_toggled
             )
 
     # ==================================================================
@@ -2128,10 +2136,20 @@ class AnalysisController:
             self.winch_panel.set_search_window_label(
                 f'Search window: {start} – {end}'
             )
-        else:
+        elif self.winch_panel.show_search_region_check.isChecked():
             self.winch_panel.set_search_window_label(
                 'Search window: drag blue region on winch plot (window 1)'
             )
+        else:
+            self.winch_panel.set_search_window_label(
+                'Search window: enable checkbox to adjust on winch plot (window 1)'
+            )
+
+    def _on_winch_search_region_toggled(self, enabled: bool) -> None:
+        """Show or hide the draggable search region on the winch plot."""
+        if self.winch_plot_view is not None:
+            self.winch_plot_view.set_search_region_enabled(enabled)
+        self._on_winch_search_region_changed()
 
     def _update_winch_sensor_trip_status(self) -> None:
         """Refresh sensor trip readout on the winch panel."""

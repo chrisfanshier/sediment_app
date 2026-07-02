@@ -35,6 +35,8 @@ class WinchPanel(BaseModePanel):
         User clicked align winch data.
     reset_winch_requested
         User clicked reset winch alignment/detection.
+    search_region_toggled(bool)
+        User toggled the search window visibility checkbox.
     """
 
     reload_requested = Signal()
@@ -42,6 +44,7 @@ class WinchPanel(BaseModePanel):
     detect_winch_trip_requested = Signal()
     align_winch_requested = Signal()
     reset_winch_requested = Signal()
+    search_region_toggled = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -143,10 +146,14 @@ class WinchPanel(BaseModePanel):
         align_layout.addLayout(param_row)
 
         self.search_window_label = QLabel(
-            'Search window: drag blue region on winch plot (window 1)'
+            'Search window: enable checkbox to adjust on winch plot (window 1)'
         )
         self.search_window_label.setWordWrap(True)
         align_layout.addWidget(self.search_window_label)
+
+        self.show_search_region_check = QCheckBox('Show search window on plot')
+        self.show_search_region_check.setChecked(False)
+        align_layout.addWidget(self.show_search_region_check)
 
         detect_row = QHBoxLayout()
         self.detect_trip_btn = QPushButton('Detect Winch Trip')
@@ -193,6 +200,9 @@ class WinchPanel(BaseModePanel):
         self.detect_trip_btn.clicked.connect(self.detect_winch_trip_requested.emit)
         self.align_btn.clicked.connect(self.align_winch_requested.emit)
         self.reset_btn.clicked.connect(self.reset_winch_requested.emit)
+        self.show_search_region_check.toggled.connect(
+            self.search_region_toggled.emit
+        )
 
     # ------------------------------------------------------------------
     # Public API

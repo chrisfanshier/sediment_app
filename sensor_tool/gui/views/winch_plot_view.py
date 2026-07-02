@@ -36,7 +36,12 @@ class WinchPlotView(QWidget):
         self._winch_trip_line: Optional[pg.InfiniteLine] = None
         self._search_region: Optional[pg.LinearRegionItem] = None
         self._search_region_plot: Optional[pg.PlotItem] = None
+        self._search_region_values: Optional[tuple[float, float]] = None
+        self._search_region_enabled: bool = False
         self._window1_plot: Optional[pg.PlotItem] = None
+        self._plot_vlines: dict[pg.PlotItem, pg.InfiniteLine] = {}
+        self._mouse_proxies: list[pg.SignalProxy] = []
+        self._plotted_columns: dict[pg.PlotItem, str] = {}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -81,7 +86,23 @@ class WinchPlotView(QWidget):
             plot.addLegend()
             if row > 0:
                 plot.setXLink(plots[0])
+            vline = pg.InfiniteLine(
+                angle=90, movable=False,
+                pen=pg.mkPen('r', width=1, style=Qt.DashLine),
+            )
+            vline.setVisible(False)
+            plot.addItem(vline, ignoreBounds=True)
+            self._plot_vlines[plot] = vline
             plots.append(plot)
+
+        scene = widget.scene()
+        self._mouse_proxies.append(
+            pg.SignalProxy(
+                scene.sigMouseMoved,
+                rateLimit=60,
+                slot=self._on_mouse_moved,
+            )
+        )
 
         if num_plots == 1:
             plots[0].setLabel('bottom', 'Time')
@@ -100,6 +121,15 @@ class WinchPlotView(QWidget):
                 plot.setXLink(plot_item)
             else:
                 plot.setXLink(None)
+
+    def set_search_region_enabled(self, enabled: bool) -> None:
+        """Show or hide the draggable search region on window 1."""
+        self._search_region_enabled = enabled
+        if enabled:
+            self._ensure_search_region_on_window1()
+        elif self._search_region is not None:
+            self._search_region_values = tuple(self._search_region.getRegion())
+            self.remove_search_region()
 
     def plot(
         self,
@@ -129,6 +159,10 @@ class WinchPlotView(QWidget):
         if dual:
             self._stack.setCurrentIndex(1)
             self._window1_plot = self._dual_plot_1
+            self._plotted_columns = {
+                self._dual_plot_1: column_1,
+                self._dual_plot_2: column_2,
+            }
             self._plot_trace(self._dual_plot_1, x, df[column_1].to_numpy(), column_1)
             self._plot_trace(self._dual_plot_2, x, df[column_2].to_numpy(), column_2)
             self._dual_plot_1.setLabel('bottom', '')
@@ -137,11 +171,19 @@ class WinchPlotView(QWidget):
             self._stack.setCurrentIndex(0)
             self._window1_plot = self._single_plot
             col = column_1 if column_1 in df.columns else None
+            self._plotted_columns = {self._single_plot: column_1} if col else {}
             if col:
                 self._plot_trace(self._single_plot, x, df[col].to_numpy(), col)
             self._single_plot.setLabel('bottom', 'Time')
 
-        self._ensure_search_region_on_window1()
+        if self._search_region_enabled:
+            self._ensure_search_region_on_window1()
+        elif self._search_region_values is None:
+            x_min = float(x[0])
+            x_max = float(x[-1])
+            span = max(x_max - x_min, 1.0)
+            margin = span * 0.05
+            self._search_region_values = (x_min + margin, x_max - margin)
 
         rows = len(df)
         label = source_label or f'{rows:,} winch samples'
@@ -196,9 +238,12 @@ class WinchPlotView(QWidget):
 
     def get_search_window_timestamps(self) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
         """Return the current search region as pandas timestamps."""
-        if self._search_region is None:
+        if self._search_region is not None:
+            start_epoch, end_epoch = self._search_region.getRegion()
+        elif self._search_region_values is not None:
+            start_epoch, end_epoch = self._search_region_values
+        else:
             return None, None
-        start_epoch, end_epoch = self._search_region.getRegion()
         return (
             pd.to_datetime(start_epoch, unit='s'),
             pd.to_datetime(end_epoch, unit='s'),
@@ -253,6 +298,8 @@ class WinchPlotView(QWidget):
             plot.setXRange(x_min - pad, x_max + pad, padding=0)
 
     def _ensure_search_region_on_window1(self) -> None:
+        if not self._search_region_enabled:
+            return
         if self._x_epochs is None or self._window1_plot is None:
             return
 
@@ -268,12 +315,16 @@ class WinchPlotView(QWidget):
             self.remove_search_region()
 
         if saved_values is None:
-            x_min = float(self._x_epochs[0])
-            x_max = float(self._x_epochs[-1])
-            span = max(x_max - x_min, 1.0)
-            margin = span * 0.05
-            saved_values = (x_min + margin, x_max - margin)
+            if self._search_region_values is not None:
+                saved_values = self._search_region_values
+            else:
+                x_min = float(self._x_epochs[0])
+                x_max = float(self._x_epochs[-1])
+                span = max(x_max - x_min, 1.0)
+                margin = span * 0.05
+                saved_values = (x_min + margin, x_max - margin)
 
+        self._search_region_values = tuple(saved_values)
         self._search_region = pg.LinearRegionItem(
             values=list(saved_values),
             brush=pg.mkBrush(100, 149, 237, 40),
@@ -291,4 +342,50 @@ class WinchPlotView(QWidget):
         self.winch_trip_line_changed.emit(idx)
 
     def _on_search_region_changed(self) -> None:
+        if self._search_region is not None:
+            self._search_region_values = tuple(self._search_region.getRegion())
         self.search_region_changed.emit()
+
+    def _active_plots(self) -> list[pg.PlotItem]:
+        if self._stack.currentIndex() == 1:
+            return [self._dual_plot_1, self._dual_plot_2]
+        return [self._single_plot]
+
+    def _on_mouse_moved(self, evt) -> None:
+        if self._winch_df is None or self._x_epochs is None:
+            return
+
+        pos = evt[0]
+        for plot in self._active_plots():
+            if not plot.sceneBoundingRect().contains(pos):
+                continue
+
+            mouse_point = plot.vb.mapSceneToView(pos)
+            x_pos = mouse_point.x()
+
+            for active in self._active_plots():
+                vline = self._plot_vlines.get(active)
+                if vline is not None:
+                    vline.setPos(x_pos)
+                    vline.setVisible(True)
+
+            idx = int(np.argmin(np.abs(self._x_epochs - x_pos)))
+            if 0 <= idx < len(self._winch_df):
+                dt = self._winch_df['datetime'].iloc[idx]
+                time_str = (
+                    dt.strftime('%Y-%m-%d %H:%M:%S')
+                    if pd.notna(dt) else 'N/A'
+                )
+                parts = [f'Index: {idx}', f'Time: {time_str}']
+                for p, col in self._plotted_columns.items():
+                    if col in self._winch_df.columns:
+                        val = self._winch_df[col].iloc[idx]
+                        if pd.notna(val):
+                            parts.append(f'{col}: {val:.3f}')
+                self.info_label.setText('  |  '.join(parts))
+            return
+
+        for plot in self._active_plots():
+            vline = self._plot_vlines.get(plot)
+            if vline is not None:
+                vline.setVisible(False)
