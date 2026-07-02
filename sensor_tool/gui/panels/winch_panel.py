@@ -48,23 +48,28 @@ class WinchPanel(BaseModePanel):
         self.auto_status_label.setWordWrap(True)
         source_layout.addWidget(self.auto_status_label)
 
-        self.manual_group_box = QGroupBox('Manual Selection')
-        manual_layout = QVBoxLayout()
-
-        self.use_manual_radio = QRadioButton('Use manual file selection')
         self.use_auto_radio = QRadioButton('Use auto (core overlap)')
+        self.use_manual_radio = QRadioButton('Use manual file selection')
         self.use_auto_radio.setChecked(True)
         source_btn_group = QButtonGroup(self)
         source_btn_group.addButton(self.use_auto_radio)
         source_btn_group.addButton(self.use_manual_radio)
 
-        manual_layout.addWidget(self.use_manual_radio)
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.use_auto_radio)
+        mode_row.addWidget(self.use_manual_radio)
+        mode_row.addStretch()
+        source_layout.addLayout(mode_row)
+
+        self.manual_group_box = QGroupBox('Manual Selection')
+        manual_layout = QVBoxLayout()
 
         self.winch_file_list = QListWidget()
         self.winch_file_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
         self.winch_file_list.setMinimumHeight(120)
+        self.winch_file_list.setEnabled(False)
         manual_layout.addWidget(QLabel('Winch files (cruise):'))
         manual_layout.addWidget(self.winch_file_list)
 

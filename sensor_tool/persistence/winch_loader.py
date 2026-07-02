@@ -133,7 +133,7 @@ class WinchLoader:
     @staticmethod
     def fetch_winch_files_for_cruise(cruise_id: int) -> list[dict]:
         """Return all winch files registered for a cruise."""
-        with _get_connection() as conn:
+        with get_connection() as conn:
             rows = conn.execute(text("""
                 SELECT winch_file_id, file_name, file_path,
                        start_time, end_time, settings
@@ -157,7 +157,7 @@ class WinchLoader:
     @staticmethod
     def load_winch_file(winch_file_id: int) -> tuple[Optional[pd.DataFrame], str]:
         """Load a single winch file by database id."""
-        with _get_connection() as conn:
+        with get_connection() as conn:
             row = conn.execute(text("""
                 SELECT file_name, file_path, settings
                 FROM winch_data
@@ -205,7 +205,7 @@ class WinchLoader:
         Load and concatenate all winch files overlapping a core's deployment
         window, trimmed to that window.
         """
-        with _get_connection() as conn:
+        with get_connection() as conn:
             core_row = pd.read_sql(
                 text('SELECT * FROM cores WHERE core_id = :cid'),
                 conn,
