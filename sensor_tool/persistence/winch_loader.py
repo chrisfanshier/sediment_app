@@ -200,10 +200,12 @@ class WinchLoader:
     def load_core_winch_data(
         core_id: int,
         cruise_id: int,
-    ) -> tuple[Optional[pd.DataFrame], list[str]]:
+    ) -> tuple[Optional[pd.DataFrame], list[str], list[int]]:
         """
         Load and concatenate all winch files overlapping a core's deployment
         window, trimmed to that window.
+
+        Returns (dataframe, file_names, winch_file_ids).
         """
         with get_connection() as conn:
             core_row = pd.read_sql(
@@ -224,12 +226,12 @@ class WinchLoader:
             )
 
         if core_row.empty or winch_files.empty:
-            return None, []
+            return None, [], []
 
         core_row = core_row.iloc[0]
         window = _core_deployment_window(core_row)
         if window is None:
-            return None, []
+            return None, [], []
 
         core_start, core_end = window
         winch_files['start_time'] = winch_files['start_time'].apply(_strip_tz)
@@ -241,10 +243,11 @@ class WinchLoader:
         )
         overlapping = winch_files[overlap_mask]
         if overlapping.empty:
-            return None, []
+            return None, [], []
 
         winch_dfs: list[pd.DataFrame] = []
         file_names: list[str] = []
+        file_ids: list[int] = []
         for _, wrow in overlapping.iterrows():
             df = _parse_winch_row(
                 wrow['file_path'], wrow['file_name'], wrow['settings'],
@@ -252,9 +255,10 @@ class WinchLoader:
             if df is not None:
                 winch_dfs.append(df)
                 file_names.append(wrow['file_name'])
+                file_ids.append(int(wrow['winch_file_id']))
 
         if not winch_dfs:
-            return None, file_names
+            return None, file_names, file_ids
 
         all_winch = (
             pd.concat(winch_dfs, ignore_index=True)
@@ -267,5 +271,5 @@ class WinchLoader:
         )
         trimmed = all_winch[trim_mask].copy().reset_index(drop=True)
         if trimmed.empty:
-            return None, file_names
-        return trimmed, file_names
+            return None, file_names, file_ids
+        return trimmed, file_names, file_ids
