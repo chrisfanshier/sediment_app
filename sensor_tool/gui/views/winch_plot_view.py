@@ -3,6 +3,8 @@ WinchPlotView - Secondary plot for Winch mode.
 
 One or two stacked winch time-series subplots. X-axis is linked to the main
 sensor plot so pan/zoom on time is shared; Y-axis zooms independently.
+
+Window 1 supports a draggable search region and winch trip marker.
 """
 from __future__ import annotations
 
@@ -13,17 +15,28 @@ import pandas as pd
 import pyqtgraph as pg
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QStackedWidget
+from PySide6.QtCore import Qt, Signal
 
 from ...persistence.winch_loader import datetime_to_epoch
+
+_WINCH_TRIP_COLOR = '#9467bd'
 
 
 class WinchPlotView(QWidget):
     """Secondary view showing one or two winch parameter traces vs time."""
 
+    winch_trip_line_changed = Signal(int)
+    search_region_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._winch_df: Optional[pd.DataFrame] = None
+        self._x_epochs: Optional[np.ndarray] = None
         self._x_link_target: Optional[pg.PlotItem] = None
+        self._winch_trip_line: Optional[pg.InfiniteLine] = None
+        self._search_region: Optional[pg.LinearRegionItem] = None
+        self._search_region_plot: Optional[pg.PlotItem] = None
+        self._window1_plot: Optional[pg.PlotItem] = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -100,27 +113,35 @@ class WinchPlotView(QWidget):
         self._winch_df = df
 
         if df is None or df.empty or not column_1:
+            self._x_epochs = None
             self._clear_all_plots()
+            self.remove_winch_trip_line()
+            self.remove_search_region()
             self.info_label.setText(
                 source_label or 'No winch data loaded.'
             )
             return
 
         x = datetime_to_epoch(df).to_numpy()
+        self._x_epochs = x
         dual = show_second and column_2 and column_2 in df.columns
 
         if dual:
             self._stack.setCurrentIndex(1)
+            self._window1_plot = self._dual_plot_1
             self._plot_trace(self._dual_plot_1, x, df[column_1].to_numpy(), column_1)
             self._plot_trace(self._dual_plot_2, x, df[column_2].to_numpy(), column_2)
             self._dual_plot_1.setLabel('bottom', '')
             self._dual_plot_2.setLabel('bottom', 'Time')
         else:
             self._stack.setCurrentIndex(0)
+            self._window1_plot = self._single_plot
             col = column_1 if column_1 in df.columns else None
             if col:
                 self._plot_trace(self._single_plot, x, df[col].to_numpy(), col)
             self._single_plot.setLabel('bottom', 'Time')
+
+        self._ensure_search_region_on_window1()
 
         rows = len(df)
         label = source_label or f'{rows:,} winch samples'
@@ -131,8 +152,73 @@ class WinchPlotView(QWidget):
 
     def clear(self) -> None:
         self._winch_df = None
+        self._x_epochs = None
         self._clear_all_plots()
+        self.remove_winch_trip_line()
+        self.remove_search_region()
         self.info_label.setText('No winch data loaded.')
+
+    def add_winch_trip_line(self, trip_index: int) -> None:
+        """Place a draggable winch trip marker on window 1."""
+        if self._x_epochs is None or self._window1_plot is None:
+            return
+        if not (0 <= trip_index < len(self._x_epochs)):
+            return
+
+        x_pos = float(self._x_epochs[trip_index])
+        self.remove_winch_trip_line()
+
+        self._winch_trip_line = pg.InfiniteLine(
+            pos=x_pos, angle=90, movable=True,
+            pen=pg.mkPen(_WINCH_TRIP_COLOR, width=2, style=Qt.DashLine),
+            label='Winch Trip',
+            labelOpts={'position': 0.9, 'color': _WINCH_TRIP_COLOR},
+        )
+        self._winch_trip_line.sigPositionChangeFinished.connect(
+            self._on_winch_trip_line_moved
+        )
+        self._window1_plot.addItem(self._winch_trip_line)
+
+    def remove_winch_trip_line(self) -> None:
+        if self._winch_trip_line is not None:
+            try:
+                self._winch_trip_line.sigPositionChangeFinished.disconnect(
+                    self._on_winch_trip_line_moved
+                )
+            except Exception:
+                pass
+            if self._window1_plot is not None:
+                try:
+                    self._window1_plot.removeItem(self._winch_trip_line)
+                except Exception:
+                    pass
+            self._winch_trip_line = None
+
+    def get_search_window_timestamps(self) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+        """Return the current search region as pandas timestamps."""
+        if self._search_region is None:
+            return None, None
+        start_epoch, end_epoch = self._search_region.getRegion()
+        return (
+            pd.to_datetime(start_epoch, unit='s'),
+            pd.to_datetime(end_epoch, unit='s'),
+        )
+
+    def remove_search_region(self) -> None:
+        if self._search_region is not None:
+            try:
+                self._search_region.sigRegionChanged.disconnect(
+                    self._on_search_region_changed
+                )
+            except Exception:
+                pass
+            if self._window1_plot is not None:
+                try:
+                    self._window1_plot.removeItem(self._search_region)
+                except Exception:
+                    pass
+            self._search_region = None
+        self._search_region_plot = None
 
     # ------------------------------------------------------------------
     # Internal
@@ -165,3 +251,44 @@ class WinchPlotView(QWidget):
         pad = max((x_max - x_min) * 0.02, 1.0)
         for plot in (self._single_plot, self._dual_plot_1):
             plot.setXRange(x_min - pad, x_max + pad, padding=0)
+
+    def _ensure_search_region_on_window1(self) -> None:
+        if self._x_epochs is None or self._window1_plot is None:
+            return
+
+        if (
+            self._search_region is not None
+            and self._search_region_plot is self._window1_plot
+        ):
+            return
+
+        saved_values = None
+        if self._search_region is not None:
+            saved_values = self._search_region.getRegion()
+            self.remove_search_region()
+
+        if saved_values is None:
+            x_min = float(self._x_epochs[0])
+            x_max = float(self._x_epochs[-1])
+            span = max(x_max - x_min, 1.0)
+            margin = span * 0.05
+            saved_values = (x_min + margin, x_max - margin)
+
+        self._search_region = pg.LinearRegionItem(
+            values=list(saved_values),
+            brush=pg.mkBrush(100, 149, 237, 40),
+            movable=True,
+        )
+        self._search_region.sigRegionChanged.connect(self._on_search_region_changed)
+        self._window1_plot.addItem(self._search_region)
+        self._search_region_plot = self._window1_plot
+
+    def _on_winch_trip_line_moved(self) -> None:
+        if self._winch_trip_line is None or self._x_epochs is None:
+            return
+        x_pos = self._winch_trip_line.value()
+        idx = int(np.argmin(np.abs(self._x_epochs - x_pos)))
+        self.winch_trip_line_changed.emit(idx)
+
+    def _on_search_region_changed(self) -> None:
+        self.search_region_changed.emit()

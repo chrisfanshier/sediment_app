@@ -36,11 +36,12 @@ from ..domain.processing.calculations import (
 from ..domain.processing.piston_analysis import (
     PistonAnalysisProcessor,
 )
+from ..domain.processing.winch_trip_detection import WinchTripDetectionProcessor
 from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
 from ..persistence.database_loader import DatabaseLoader
-from ..persistence.winch_loader import WinchLoader, get_winch_parameters
+from ..persistence.winch_loader import WinchLoader, get_winch_parameters, datetime_to_epoch
 from ..persistence.analysis_results_io import insert_result, update_result
 
 
@@ -88,8 +89,12 @@ class AnalysisController:
 
         # Winch mode state
         self._winch_df: Optional[pd.DataFrame] = None
+        self._winch_df_original: Optional[pd.DataFrame] = None
         self._winch_file_names: list[str] = []
         self._winch_list_cruise_id: Optional[int] = None
+        self._winch_trip_idx: Optional[int] = None
+        self._winch_trip_result = None
+        self._winch_time_offset_sec: float = 0.0
 
         # Panels
         self.view_panel = None
@@ -246,6 +251,23 @@ class AnalysisController:
             self.winch_panel.reload_requested.connect(self.reload_winch_data)
             self.winch_panel.plot_settings_changed.connect(
                 self._update_winch_plot
+            )
+            self.winch_panel.detect_winch_trip_requested.connect(
+                self.detect_winch_trip
+            )
+            self.winch_panel.align_winch_requested.connect(
+                self.align_winch_data
+            )
+            self.winch_panel.reset_winch_requested.connect(
+                self.reset_winch_alignment
+            )
+
+        if self.winch_plot_view is not None:
+            self.winch_plot_view.winch_trip_line_changed.connect(
+                self._on_winch_trip_line_moved
+            )
+            self.winch_plot_view.search_region_changed.connect(
+                self._on_winch_search_region_changed
             )
 
     # ==================================================================
@@ -1199,6 +1221,9 @@ class AnalysisController:
             self.main_window.get_current_mode() if self.main_window else None
         )
 
+        if mode == 'Winch':
+            self._update_winch_sensor_trip_status()
+
         # Handle Calculate mode – just log the move
         if mode == 'Calculate':
             self.calculate_panel.log_widget.log(
@@ -1860,7 +1885,9 @@ class AnalysisController:
             self.winch_panel.set_cruise_winch_files([])
             self._winch_list_cruise_id = None
             self._winch_df = None
+            self._winch_df_original = None
             self._winch_file_names = []
+            self._clear_winch_trip_state()
             self.winch_panel.set_parameters([])
             self._update_winch_plot()
             log.log('Select a cruise to load winch files.')
@@ -1929,7 +1956,206 @@ class AnalysisController:
 
         params = get_winch_parameters(self._winch_df)
         self.winch_panel.set_parameters(params)
+        self._snapshot_winch_original()
         self._update_winch_plot()
+        self._update_winch_sensor_trip_status()
+
+    def _snapshot_winch_original(self) -> None:
+        """Store a copy of loaded winch data and clear trip/alignment state."""
+        if self._winch_df is not None:
+            self._winch_df_original = self._winch_df.copy()
+        else:
+            self._winch_df_original = None
+        self._clear_winch_trip_state()
+
+    def _clear_winch_trip_state(self) -> None:
+        """Clear winch trip detection and alignment metadata."""
+        self._winch_trip_idx = None
+        self._winch_trip_result = None
+        self._winch_time_offset_sec = 0.0
+        if self.winch_plot_view is not None:
+            self.winch_plot_view.remove_winch_trip_line()
+        if self.winch_panel is not None:
+            self.winch_panel.set_winch_trip_status('Winch trip: not detected')
+            self.winch_panel.set_alignment_status('Alignment: none')
+
+    def detect_winch_trip(self) -> None:
+        """Detect winch trip from a rapid drop in window 1 column."""
+        if self.winch_panel is None or self.winch_plot_view is None:
+            return
+
+        log = self.winch_panel.log_widget
+        if self._winch_df is None or self._winch_df.empty:
+            log.log('No winch data loaded.')
+            return
+
+        column = self.winch_panel.get_column_1()
+        if not column or column not in self._winch_df.columns:
+            log.log('Select a column in window 1 for trip detection.')
+            return
+
+        values = (
+            pd.to_numeric(self._winch_df[column], errors='coerce')
+            .to_numpy(dtype=float)
+        )
+        timestamps = self._winch_df['datetime']
+        search_start, search_end = (
+            self.winch_plot_view.get_search_window_timestamps()
+        )
+
+        result = WinchTripDetectionProcessor.detect_trip(
+            values,
+            timestamps,
+            column,
+            edge_buffer=self.winch_panel.get_edge_buffer(),
+            drop_threshold=self.winch_panel.get_drop_threshold(),
+            search_start=search_start,
+            search_end=search_end,
+        )
+
+        if result is None:
+            log.log(
+                'No winch trip found in search window '
+                f'(threshold={self.winch_panel.get_drop_threshold():.1f}).'
+            )
+            self._winch_trip_idx = None
+            self._winch_trip_result = None
+            self.winch_plot_view.remove_winch_trip_line()
+            self.winch_panel.set_winch_trip_status('Winch trip: not detected')
+            return
+
+        self._winch_trip_result = result
+        self._winch_trip_idx = result.trip_index
+        self.winch_plot_view.add_winch_trip_line(result.trip_index)
+        self.winch_panel.set_winch_trip_status(
+            f'Winch trip: index {result.trip_index}, '
+            f'{result.trip_datetime}  (drop {result.drop_magnitude:.1f})'
+        )
+        log.log(
+            f'Winch trip detected at index {result.trip_index} '
+            f'({result.trip_datetime}), drop={result.drop_magnitude:.1f}'
+        )
+
+    def align_winch_data(self) -> None:
+        """Shift winch datetimes so winch_trip matches sensor_trip."""
+        if self.winch_panel is None:
+            return
+
+        log = self.winch_panel.log_widget
+        if self._winch_df is None or self._winch_trip_idx is None:
+            log.log('Detect winch trip before aligning.')
+            return
+        if self.sensor_data is None:
+            log.log('No sensor data loaded.')
+            return
+
+        sensor_idx = self._resolve_calc_trip_index()
+        if sensor_idx is None:
+            log.log(
+                'Sensor trip not set. Run Trip Detector or set trip on main plot.'
+            )
+            return
+
+        sensor_epochs = self.sensor_data.get_timestamps_epoch()
+        if not (0 <= sensor_idx < len(sensor_epochs)):
+            log.log('Sensor trip index is out of range.')
+            return
+
+        winch_epochs = datetime_to_epoch(self._winch_df).to_numpy()
+        if not (0 <= self._winch_trip_idx < len(winch_epochs)):
+            log.log('Winch trip index is out of range.')
+            return
+
+        sensor_epoch = float(sensor_epochs[sensor_idx])
+        winch_epoch = float(winch_epochs[self._winch_trip_idx])
+        offset_sec = sensor_epoch - winch_epoch
+
+        self._winch_df = self._winch_df.copy()
+        self._winch_df['datetime'] = (
+            self._winch_df['datetime'] + pd.Timedelta(seconds=offset_sec)
+        )
+        self._winch_time_offset_sec += offset_sec
+
+        self._update_winch_plot()
+        if self._winch_trip_idx is not None:
+            self.winch_plot_view.add_winch_trip_line(self._winch_trip_idx)
+
+        sensor_dt = self.sensor_data.df[self.sensor_data.datetime_col].iloc[sensor_idx]
+        winch_dt = self._winch_df['datetime'].iloc[self._winch_trip_idx]
+        status = (
+            f'Alignment: offset {offset_sec:+.3f} s applied '
+            f'(sensor {sensor_dt}, winch {winch_dt})'
+        )
+        self.winch_panel.set_alignment_status(status)
+        log.log(status)
+
+    def reset_winch_alignment(self) -> None:
+        """Restore original winch data and clear trip detection."""
+        if self.winch_panel is None:
+            return
+
+        log = self.winch_panel.log_widget
+        if self._winch_df_original is not None:
+            self._winch_df = self._winch_df_original.copy()
+        else:
+            self._winch_df = None
+
+        self._clear_winch_trip_state()
+        self._update_winch_plot()
+        self._on_winch_search_region_changed()
+        log.log('Winch data reset to original; trip detection cleared.')
+
+    def _on_winch_trip_line_moved(self, new_idx: int) -> None:
+        """Handle user dragging the winch trip line."""
+        self._winch_trip_idx = new_idx
+        if self.winch_panel is None or self._winch_df is None:
+            return
+        if 0 <= new_idx < len(self._winch_df):
+            dt = self._winch_df['datetime'].iloc[new_idx]
+            self.winch_panel.set_winch_trip_status(
+                f'Winch trip: index {new_idx}, {dt}  (dragged)'
+            )
+            self.winch_panel.log_widget.log(
+                f'Winch trip line moved to index {new_idx}'
+            )
+
+    def _on_winch_search_region_changed(self) -> None:
+        """Update panel label when search region is adjusted on the plot."""
+        if self.winch_panel is None or self.winch_plot_view is None:
+            return
+        start, end = self.winch_plot_view.get_search_window_timestamps()
+        if start is not None and end is not None:
+            self.winch_panel.set_search_window_label(
+                f'Search window: {start} – {end}'
+            )
+        else:
+            self.winch_panel.set_search_window_label(
+                'Search window: drag blue region on winch plot (window 1)'
+            )
+
+    def _update_winch_sensor_trip_status(self) -> None:
+        """Refresh sensor trip readout on the winch panel."""
+        if self.winch_panel is None:
+            return
+        if self.sensor_data is None:
+            self.winch_panel.set_sensor_trip_status('Sensor trip: not set')
+            return
+
+        sensor_idx = self._resolve_calc_trip_index()
+        if sensor_idx is None:
+            self.winch_panel.set_sensor_trip_status('Sensor trip: not set')
+            return
+
+        dt_col = self.sensor_data.datetime_col
+        if dt_col in self.sensor_data.df.columns and 0 <= sensor_idx < len(self.sensor_data.df):
+            dt = self.sensor_data.df[dt_col].iloc[sensor_idx]
+            self.winch_panel.set_sensor_trip_status(
+                f'Sensor trip: index {sensor_idx}, {dt}'
+            )
+        else:
+            self.winch_panel.set_sensor_trip_status(
+                f'Sensor trip: index {sensor_idx}'
+            )
 
     def _update_winch_plot(self):
         """Refresh winch secondary plots from current panel settings."""
@@ -1954,6 +2180,11 @@ class AnalysisController:
             show_second=show_second,
             source_label=source,
         )
+
+        if self._winch_trip_idx is not None:
+            self.winch_plot_view.add_winch_trip_line(self._winch_trip_idx)
+
+        self._on_winch_search_region_changed()
 
     def _update_start_pen_line(
         self,

@@ -11,7 +11,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QCheckBox, QPushButton, QListWidget, QAbstractItemView,
-    QRadioButton, QButtonGroup,
+    QRadioButton, QButtonGroup, QSpinBox, QDoubleSpinBox,
 )
 from PySide6.QtCore import Signal
 
@@ -29,10 +29,19 @@ class WinchPanel(BaseModePanel):
         User clicked reload or changed data-source settings.
     plot_settings_changed
         Column or window-count selection changed.
+    detect_winch_trip_requested
+        User clicked detect winch trip.
+    align_winch_requested
+        User clicked align winch data.
+    reset_winch_requested
+        User clicked reset winch alignment/detection.
     """
 
     reload_requested = Signal()
     plot_settings_changed = Signal()
+    detect_winch_trip_requested = Signal()
+    align_winch_requested = Signal()
+    reset_winch_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -112,6 +121,62 @@ class WinchPanel(BaseModePanel):
         plot_group.setLayout(plot_layout)
         self._layout.addWidget(plot_group)
 
+        # -- Winch trip detection & alignment -----------------------------
+        align_group = QGroupBox('Winch Trip & Alignment')
+        align_layout = QVBoxLayout()
+
+        param_row = QHBoxLayout()
+        param_row.addWidget(QLabel('Edge buffer (samples):'))
+        self.edge_buffer_spin = QSpinBox()
+        self.edge_buffer_spin.setRange(0, 100000)
+        self.edge_buffer_spin.setValue(500)
+        param_row.addWidget(self.edge_buffer_spin)
+
+        param_row.addWidget(QLabel('Drop threshold:'))
+        self.drop_threshold_spin = QDoubleSpinBox()
+        self.drop_threshold_spin.setRange(0.0, 1e9)
+        self.drop_threshold_spin.setDecimals(1)
+        self.drop_threshold_spin.setValue(1000.0)
+        self.drop_threshold_spin.setSingleStep(100.0)
+        param_row.addWidget(self.drop_threshold_spin)
+        param_row.addStretch()
+        align_layout.addLayout(param_row)
+
+        self.search_window_label = QLabel(
+            'Search window: drag blue region on winch plot (window 1)'
+        )
+        self.search_window_label.setWordWrap(True)
+        align_layout.addWidget(self.search_window_label)
+
+        detect_row = QHBoxLayout()
+        self.detect_trip_btn = QPushButton('Detect Winch Trip')
+        detect_row.addWidget(self.detect_trip_btn)
+        detect_row.addStretch()
+        align_layout.addLayout(detect_row)
+
+        self.winch_trip_status_label = QLabel('Winch trip: not detected')
+        self.winch_trip_status_label.setWordWrap(True)
+        align_layout.addWidget(self.winch_trip_status_label)
+
+        self.sensor_trip_status_label = QLabel('Sensor trip: not set')
+        self.sensor_trip_status_label.setWordWrap(True)
+        align_layout.addWidget(self.sensor_trip_status_label)
+
+        align_row = QHBoxLayout()
+        self.align_btn = QPushButton('Align Winch Data')
+        self.reset_btn = QPushButton('Reset Winch')
+        align_row.addWidget(self.align_btn)
+        align_row.addWidget(self.reset_btn)
+        align_row.addStretch()
+        align_layout.addLayout(align_row)
+
+        self.alignment_status_label = QLabel('Alignment: none')
+        self.alignment_status_label.setWordWrap(True)
+        align_layout.addWidget(self.alignment_status_label)
+
+        align_group.setLayout(align_layout)
+        self._layout.addWidget(align_group)
+
         # -- Log ---------------------------------------------------------
         self.log_widget = LogWidget()
         self._layout.addWidget(self.log_widget)
@@ -125,6 +190,9 @@ class WinchPanel(BaseModePanel):
         self.column1_combo.currentTextChanged.connect(self.plot_settings_changed.emit)
         self.column2_combo.currentTextChanged.connect(self.plot_settings_changed.emit)
         self.second_window_check.toggled.connect(self._on_second_window_toggled)
+        self.detect_trip_btn.clicked.connect(self.detect_winch_trip_requested.emit)
+        self.align_btn.clicked.connect(self.align_winch_requested.emit)
+        self.reset_btn.clicked.connect(self.reset_winch_requested.emit)
 
     # ------------------------------------------------------------------
     # Public API
@@ -203,6 +271,24 @@ class WinchPanel(BaseModePanel):
 
     def update_file_info(self, text: str) -> None:
         pass  # reserved for parity with other panels
+
+    def get_edge_buffer(self) -> int:
+        return self.edge_buffer_spin.value()
+
+    def get_drop_threshold(self) -> float:
+        return self.drop_threshold_spin.value()
+
+    def set_search_window_label(self, text: str) -> None:
+        self.search_window_label.setText(text)
+
+    def set_winch_trip_status(self, text: str) -> None:
+        self.winch_trip_status_label.setText(text)
+
+    def set_sensor_trip_status(self, text: str) -> None:
+        self.sensor_trip_status_label.setText(text)
+
+    def set_alignment_status(self, text: str) -> None:
+        self.alignment_status_label.setText(text)
 
     # ------------------------------------------------------------------
     # Internal
