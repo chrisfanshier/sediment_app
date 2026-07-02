@@ -17,7 +17,7 @@ import pyqtgraph as pg
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QStackedWidget
 from PySide6.QtCore import Qt, Signal
 
-from ...persistence.winch_loader import datetime_to_epoch
+from ...persistence.winch_loader import datetime_to_epoch, timestamp_to_epoch
 
 _WINCH_TRIP_COLOR = '#9467bd'
 
@@ -42,6 +42,7 @@ class WinchPlotView(QWidget):
         self._plot_vlines: dict[pg.PlotItem, pg.InfiniteLine] = {}
         self._mouse_proxies: list[pg.SignalProxy] = []
         self._plotted_columns: dict[pg.PlotItem, str] = {}
+        self._data_fingerprint: Optional[tuple] = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -126,10 +127,25 @@ class WinchPlotView(QWidget):
         """Show or hide the draggable search region on window 1."""
         self._search_region_enabled = enabled
         if enabled:
-            self._ensure_search_region_on_window1()
+            self._ensure_search_region_on_window1(force=True)
         elif self._search_region is not None:
             self._search_region_values = tuple(self._search_region.getRegion())
             self.remove_search_region()
+
+    def set_search_region_epochs(
+        self,
+        start_epoch: float,
+        end_epoch: float,
+    ) -> None:
+        """Set the search window from epoch seconds and show the region."""
+        lo = min(float(start_epoch), float(end_epoch))
+        hi = max(float(start_epoch), float(end_epoch))
+        self._search_region_values = (lo, hi)
+        self._search_region_enabled = True
+        if self._search_region is not None:
+            self.remove_search_region()
+        if self._x_epochs is not None and self._window1_plot is not None:
+            self._ensure_search_region_on_window1(force=True)
 
     def plot(
         self,
@@ -144,15 +160,20 @@ class WinchPlotView(QWidget):
 
         if df is None or df.empty or not column_1:
             self._x_epochs = None
+            self._data_fingerprint = None
             self._clear_all_plots()
             self.remove_winch_trip_line()
-            self.remove_search_region()
+            self._invalidate_search_region(clear_values=True)
             self.info_label.setText(
                 source_label or 'No winch data loaded.'
             )
             return
 
         x = datetime_to_epoch(df).to_numpy()
+        fingerprint = (len(x), float(x[0]), float(x[-1]))
+        if fingerprint != self._data_fingerprint:
+            self._invalidate_search_region(clear_values=True)
+        self._data_fingerprint = fingerprint
         self._x_epochs = x
         dual = show_second and column_2 and column_2 in df.columns
 
@@ -177,7 +198,7 @@ class WinchPlotView(QWidget):
             self._single_plot.setLabel('bottom', 'Time')
 
         if self._search_region_enabled:
-            self._ensure_search_region_on_window1()
+            self._ensure_search_region_on_window1(force=True)
         elif self._search_region_values is None:
             x_min = float(x[0])
             x_max = float(x[-1])
@@ -197,7 +218,7 @@ class WinchPlotView(QWidget):
         self._x_epochs = None
         self._clear_all_plots()
         self.remove_winch_trip_line()
-        self.remove_search_region()
+        self._invalidate_search_region(clear_values=True)
         self.info_label.setText('No winch data loaded.')
 
     def add_winch_trip_line(self, trip_index: int) -> None:
@@ -219,7 +240,9 @@ class WinchPlotView(QWidget):
         self._winch_trip_line.sigPositionChangeFinished.connect(
             self._on_winch_trip_line_moved
         )
+        self._winch_trip_line.setZValue(20)
         self._window1_plot.addItem(self._winch_trip_line)
+        self._window1_plot.update()
 
     def remove_winch_trip_line(self) -> None:
         if self._winch_trip_line is not None:
@@ -245,8 +268,8 @@ class WinchPlotView(QWidget):
         else:
             return None, None
         return (
-            pd.to_datetime(start_epoch, unit='s'),
-            pd.to_datetime(end_epoch, unit='s'),
+            pd.to_datetime(start_epoch, unit='s', utc=False),
+            pd.to_datetime(end_epoch, unit='s', utc=False),
         )
 
     def remove_search_region(self) -> None:
@@ -297,14 +320,22 @@ class WinchPlotView(QWidget):
         for plot in (self._single_plot, self._dual_plot_1):
             plot.setXRange(x_min - pad, x_max + pad, padding=0)
 
-    def _ensure_search_region_on_window1(self) -> None:
+    def _invalidate_search_region(self, clear_values: bool = False) -> None:
+        """Remove the on-plot search region; optionally clear stored bounds."""
+        if self._search_region is not None:
+            self.remove_search_region()
+        if clear_values:
+            self._search_region_values = None
+
+    def _ensure_search_region_on_window1(self, force: bool = False) -> None:
         if not self._search_region_enabled:
             return
         if self._x_epochs is None or self._window1_plot is None:
             return
 
         if (
-            self._search_region is not None
+            not force
+            and self._search_region is not None
             and self._search_region_plot is self._window1_plot
         ):
             return
@@ -324,12 +355,23 @@ class WinchPlotView(QWidget):
                 margin = span * 0.05
                 saved_values = (x_min + margin, x_max - margin)
 
-        self._search_region_values = tuple(saved_values)
+        x_min = float(self._x_epochs[0])
+        x_max = float(self._x_epochs[-1])
+        lo, hi = float(saved_values[0]), float(saved_values[1])
+        lo = max(lo, x_min)
+        hi = min(hi, x_max)
+        if lo >= hi:
+            span = max(x_max - x_min, 1.0)
+            margin = span * 0.05
+            lo, hi = x_min + margin, x_max - margin
+
+        self._search_region_values = (lo, hi)
         self._search_region = pg.LinearRegionItem(
-            values=list(saved_values),
+            values=[lo, hi],
             brush=pg.mkBrush(100, 149, 237, 40),
             movable=True,
         )
+        self._search_region.setZValue(5)
         self._search_region.sigRegionChanged.connect(self._on_search_region_changed)
         self._window1_plot.addItem(self._search_region)
         self._search_region_plot = self._window1_plot

@@ -41,7 +41,7 @@ from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
 from ..persistence.database_loader import DatabaseLoader
-from ..persistence.winch_loader import WinchLoader, get_winch_parameters, datetime_to_epoch
+from ..persistence.winch_loader import WinchLoader, get_winch_parameters, datetime_to_epoch, timestamp_to_epoch
 from ..persistence.analysis_results_io import insert_result, update_result
 
 
@@ -1973,6 +1973,22 @@ class AnalysisController:
         self._snapshot_winch_original()
         self._update_winch_plot()
         self._update_winch_sensor_trip_status()
+        self._sync_winch_search_region_visibility()
+
+    def _sync_winch_search_region_visibility(self) -> None:
+        """Show or hide the plot search region to match the panel checkbox."""
+        if self.winch_panel is None or self.winch_plot_view is None:
+            return
+        if self.winch_panel.show_search_region_check.isChecked():
+            self.winch_plot_view.set_search_region_enabled(True)
+
+    def _refresh_winch_ui(self) -> None:
+        """Refresh winch plots without reloading data from the database."""
+        if self.winch_plot_view is not None and self.main_plot is not None:
+            self.winch_plot_view.set_x_link(self.main_plot.plot_item)
+        self._update_winch_plot()
+        self._update_winch_sensor_trip_status()
+        self._sync_winch_search_region_visibility()
 
     def _snapshot_winch_original(self) -> None:
         """Store a copy of loaded winch data and clear trip/alignment state."""
@@ -3428,9 +3444,12 @@ class AnalysisController:
             self.main_window.show_secondary_view('piston_analysis')
         elif mode_name == 'Winch':
             self.main_window.show_secondary_view('winch')
-            if self.winch_plot_view is not None and self.main_plot is not None:
-                self.winch_plot_view.set_x_link(self.main_plot.plot_item)
-            self.reload_winch_data()
+            if self._winch_df is not None and self._winch_aligned:
+                self._refresh_winch_ui()
+            else:
+                if self.winch_plot_view is not None and self.main_plot is not None:
+                    self.winch_plot_view.set_x_link(self.main_plot.plot_item)
+                self.reload_winch_data()
         else:
             self.main_window.hide_secondary_view()
 
@@ -4206,9 +4225,27 @@ class AnalysisController:
                 f'Alignment: offset {offset_sec:+.3f} s applied (restored)'
             )
 
+        search_start = detection.get('search_start')
+        search_end = detection.get('search_end')
+
         self._update_winch_plot()
-        if self.winch_plot_view is not None:
-            self.winch_plot_view.add_winch_trip_line(trip_idx)
+
+        if self.winch_plot_view is not None and search_start and search_end:
+            try:
+                self.winch_plot_view.set_search_region_epochs(
+                    timestamp_to_epoch(search_start),
+                    timestamp_to_epoch(search_end),
+                )
+                panel.show_search_region_check.blockSignals(True)
+                panel.show_search_region_check.setChecked(True)
+                panel.show_search_region_check.blockSignals(False)
+            except Exception as exc:
+                log(f'  Winch search window restore warning: {exc}')
+        else:
+            self._sync_winch_search_region_visibility()
+
+        if self.winch_plot_view is not None and self._winch_trip_idx is not None:
+            self.winch_plot_view.add_winch_trip_line(self._winch_trip_idx)
 
         self._update_winch_sensor_trip_status()
         log(

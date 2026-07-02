@@ -122,9 +122,20 @@ def get_winch_parameters(df: Optional[pd.DataFrame]) -> list[str]:
 
 
 def datetime_to_epoch(df: pd.DataFrame) -> pd.Series:
-    """Convert winch datetime column to Unix epoch seconds."""
-    vals = pd.to_datetime(df['datetime']).values.astype('datetime64[ns]')
+    """Convert winch datetime column to Unix epoch seconds (naive UTC)."""
+    s = pd.to_datetime(df['datetime'], utc=False)
+    if getattr(s.dt, 'tz', None) is not None:
+        s = s.dt.tz_convert('UTC').dt.tz_localize(None)
+    vals = s.values.astype('datetime64[ns]')
     return pd.Series(vals.view('int64') / 1e9, index=df.index)
+
+
+def timestamp_to_epoch(dt) -> float:
+    """Convert a single timestamp to Unix epoch seconds (naive UTC)."""
+    ts = pd.Timestamp(dt)
+    if ts.tz is not None:
+        ts = ts.tz_convert('UTC').tz_localize(None)
+    return float(ts.value / 1e9)
 
 
 class WinchLoader:
