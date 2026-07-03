@@ -59,6 +59,7 @@ dredge_app/
 
 ## Dependencies
 
-See `requirements.txt`. GeoPackage export requires the optional `geopandas` /
-`shapely` extras; without them the app runs with CSV export only (the
-GeoPackage checkbox is disabled).
+See `requirements.txt`. GeoPackage export uses `geopandas` / `shapely` /
+`fiona`. (The GeoPackage checkbox degrades gracefully and is disabled at
+runtime if those libraries happen to be unavailable, but they are installed by
+default.)
