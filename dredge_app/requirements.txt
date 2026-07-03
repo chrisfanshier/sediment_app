@@ -1,0 +1,20 @@
+# Dredge App (database-integrated) dependencies
+#
+# Run from the sediment_app repo root with:
+#     python -m dredge_app
+#
+# Core GUI / plotting / data
+pyside6>=6.5.0
+pyqtgraph>=0.13.0
+pandas>=2.0.0
+numpy>=1.24.0
+pyproj>=3.4.0
+
+# Database access (reuses sediment_app db_util / config)
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# Optional — enables GeoPackage export (otherwise CSV export only)
+# geopandas>=0.13.0
+# shapely>=2.0.0
+# fiona>=1.9.0
