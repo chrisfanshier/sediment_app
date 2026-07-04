@@ -10,8 +10,11 @@ Table: recoil_analysis_results
   deployment_params JSONB  : full DeploymentParams snapshot (dataclasses.asdict)
   trip_time_epoch          : absolute UTC epoch seconds of the trip instant
   fit_end_epoch            : absolute UTC epoch seconds of the fit-end marker
-  E_gpa, C_drag            : physics model tuning params (NULL for empirical rows)
-  v0_ms … k_nm             : physics model outputs     (NULL for empirical rows)
+    E_gpa, C_drag            : physics model tuning params (NULL for empirical rows)
+    v0_ms, k_nm              : physics model outputs       (NULL for empirical rows)
+    model_peak_*             : model-derived peak metrics  (all curve types; NULL for asymptotic)
+    observed_peak_*          : observed raw-signal peak metrics in fit window
+    observed_smooth_peak_*   : observed SG-smoothed peak metrics
   A_m, tau_s, omega_rads   : empirical fit params      (NULL for physics rows)
     H_m, t_p_s, alpha        : single_lobe_damped params (NULL for other rows)
   saved_at                 : timestamp of last save
@@ -83,9 +86,15 @@ def create_table_if_not_exists() -> None:
                 E_gpa                DOUBLE PRECISION,
                 C_drag               DOUBLE PRECISION,
                 v0_ms                DOUBLE PRECISION,
-                peak_displacement_m  DOUBLE PRECISION,
-                peak_time_s          DOUBLE PRECISION,
                 k_nm                 DOUBLE PRECISION,
+
+                -- Unified model / observed peaks
+                model_peak_displacement_m           DOUBLE PRECISION,
+                model_peak_time_s                   DOUBLE PRECISION,
+                observed_peak_displacement_m        DOUBLE PRECISION,
+                observed_peak_time_s                DOUBLE PRECISION,
+                observed_smooth_peak_displacement_m DOUBLE PRECISION,
+                observed_smooth_peak_time_s         DOUBLE PRECISION,
 
                 -- Empirical fit parameters (NULL for physics rows)
                 A_m                  DOUBLE PRECISION,
@@ -124,11 +133,27 @@ def create_table_if_not_exists() -> None:
         """))
         conn.execute(text("""
             ALTER TABLE recoil_analysis_results
-            ADD COLUMN IF NOT EXISTS smooth_peak_displacement_m DOUBLE PRECISION
+            ADD COLUMN IF NOT EXISTS model_peak_displacement_m DOUBLE PRECISION
         """))
         conn.execute(text("""
             ALTER TABLE recoil_analysis_results
-            ADD COLUMN IF NOT EXISTS smooth_peak_time_s DOUBLE PRECISION
+            ADD COLUMN IF NOT EXISTS model_peak_time_s DOUBLE PRECISION
+        """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS observed_peak_displacement_m DOUBLE PRECISION
+        """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS observed_peak_time_s DOUBLE PRECISION
+        """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS observed_smooth_peak_displacement_m DOUBLE PRECISION
+        """))
+        conn.execute(text("""
+            ALTER TABLE recoil_analysis_results
+            ADD COLUMN IF NOT EXISTS observed_smooth_peak_time_s DOUBLE PRECISION
         """))
         conn.commit()
 
@@ -147,8 +172,6 @@ def upsert_result(
     E_gpa: Optional[float] = None,
     C_drag: Optional[float] = None,
     v0_ms: Optional[float] = None,
-    peak_displacement_m: Optional[float] = None,
-    peak_time_s: Optional[float] = None,
     k_nm: Optional[float] = None,
     A_m: Optional[float] = None,
     tau_s: Optional[float] = None,
@@ -156,8 +179,12 @@ def upsert_result(
     H_m: Optional[float] = None,
     t_p_s: Optional[float] = None,
     alpha: Optional[float] = None,
-    smooth_peak_displacement_m: Optional[float] = None,
-    smooth_peak_time_s: Optional[float] = None,
+    model_peak_displacement_m: Optional[float] = None,
+    model_peak_time_s: Optional[float] = None,
+    observed_peak_displacement_m: Optional[float] = None,
+    observed_peak_time_s: Optional[float] = None,
+    observed_smooth_peak_displacement_m: Optional[float] = None,
+    observed_smooth_peak_time_s: Optional[float] = None,
 ) -> None:
     """
     Insert or overwrite one recoil_analysis_results row.
@@ -172,16 +199,20 @@ def upsert_result(
             INSERT INTO recoil_analysis_results
                 (core_id, curve_type, deployment_params,
                  trip_time_epoch, fit_end_epoch,
-                 E_gpa, C_drag, v0_ms, peak_displacement_m, peak_time_s, k_nm,
+                  E_gpa, C_drag, v0_ms, k_nm,
                  A_m, tau_s, omega_rads, H_m, t_p_s, alpha,
-                 smooth_peak_displacement_m, smooth_peak_time_s,
+                  model_peak_displacement_m, model_peak_time_s,
+                  observed_peak_displacement_m, observed_peak_time_s,
+                  observed_smooth_peak_displacement_m, observed_smooth_peak_time_s,
                  saved_at, created_at, modified_at, created_on_ship, sync_status)
             VALUES
                 (:core_id, :curve_type, (:params_json)::jsonb,
                  :trip_time_epoch, :fit_end_epoch,
-                 :E_gpa, :C_drag, :v0_ms, :peak_displacement_m, :peak_time_s, :k_nm,
+                  :E_gpa, :C_drag, :v0_ms, :k_nm,
                  :A_m, :tau_s, :omega_rads, :H_m, :t_p_s, :alpha,
-                 :smooth_peak_displacement_m, :smooth_peak_time_s,
+                  :model_peak_displacement_m, :model_peak_time_s,
+                  :observed_peak_displacement_m, :observed_peak_time_s,
+                  :observed_smooth_peak_displacement_m, :observed_smooth_peak_time_s,
                  now(), now(), now(), :created_on_ship, :sync_status)
             ON CONFLICT (core_id, curve_type) DO UPDATE SET
                 deployment_params          = EXCLUDED.deployment_params,
@@ -190,8 +221,6 @@ def upsert_result(
                 E_gpa                      = EXCLUDED.E_gpa,
                 C_drag                     = EXCLUDED.C_drag,
                 v0_ms                      = EXCLUDED.v0_ms,
-                peak_displacement_m        = EXCLUDED.peak_displacement_m,
-                peak_time_s                = EXCLUDED.peak_time_s,
                 k_nm                       = EXCLUDED.k_nm,
                 A_m                        = EXCLUDED.A_m,
                 tau_s                      = EXCLUDED.tau_s,
@@ -199,8 +228,12 @@ def upsert_result(
                 H_m                        = EXCLUDED.H_m,
                 t_p_s                      = EXCLUDED.t_p_s,
                 alpha                      = EXCLUDED.alpha,
-                smooth_peak_displacement_m = EXCLUDED.smooth_peak_displacement_m,
-                smooth_peak_time_s         = EXCLUDED.smooth_peak_time_s,
+                model_peak_displacement_m  = EXCLUDED.model_peak_displacement_m,
+                model_peak_time_s          = EXCLUDED.model_peak_time_s,
+                observed_peak_displacement_m = EXCLUDED.observed_peak_displacement_m,
+                observed_peak_time_s         = EXCLUDED.observed_peak_time_s,
+                observed_smooth_peak_displacement_m = EXCLUDED.observed_smooth_peak_displacement_m,
+                observed_smooth_peak_time_s = EXCLUDED.observed_smooth_peak_time_s,
                 saved_at                   = now(),
                 sync_status                = 'pending',
                 modified_at                = now()
@@ -213,8 +246,6 @@ def upsert_result(
             'E_gpa':                        E_gpa,
             'C_drag':                       C_drag,
             'v0_ms':                        v0_ms,
-            'peak_displacement_m':          peak_displacement_m,
-            'peak_time_s':                  peak_time_s,
             'k_nm':                         k_nm,
             'A_m':                          A_m,
             'tau_s':                        tau_s,
@@ -222,8 +253,12 @@ def upsert_result(
             'H_m':                          H_m,
             't_p_s':                        t_p_s,
             'alpha':                        alpha,
-            'smooth_peak_displacement_m':   smooth_peak_displacement_m,
-            'smooth_peak_time_s':           smooth_peak_time_s,
+            'model_peak_displacement_m':    model_peak_displacement_m,
+            'model_peak_time_s':            model_peak_time_s,
+            'observed_peak_displacement_m': observed_peak_displacement_m,
+            'observed_peak_time_s':         observed_peak_time_s,
+            'observed_smooth_peak_displacement_m': observed_smooth_peak_displacement_m,
+            'observed_smooth_peak_time_s':         observed_smooth_peak_time_s,
             'created_on_ship':              True,
             'sync_status':                  'pending',
         })

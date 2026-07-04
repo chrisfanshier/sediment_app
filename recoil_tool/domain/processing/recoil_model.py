@@ -8,6 +8,7 @@ All functions are pure Python/numpy — no Qt, no DB.
 """
 from __future__ import annotations
 
+import math
 import warnings
 
 import numpy as np
@@ -232,6 +233,66 @@ _CURVE_FN_MAP = {
     'damped_sine':        (_damped_sine_curve,     3),
     'single_lobe_damped': (_single_lobe_damped_curve, 2),
 }
+
+
+def compute_model_peak(
+    curve_type: str,
+    *,
+    t_rel: 'np.ndarray | None' = None,
+    x_model: 'np.ndarray | None' = None,
+    A_m: 'float | None' = None,
+    tau_s: 'float | None' = None,
+    omega_rads: 'float | None' = None,
+    H_m: 'float | None' = None,
+    t_p_s: 'float | None' = None,
+    alpha: 'float | None' = None,
+) -> tuple['float | None', 'float | None']:
+    """Return model peak displacement/time for the selected curve type.
+
+    Returns (None, None) for asymptotic curve types where no finite peak exists.
+    """
+    if curve_type == 'physics':
+        if x_model is None or t_rel is None or len(x_model) == 0 or len(t_rel) == 0:
+            return None, None
+        idx = int(np.argmax(x_model))
+        return float(x_model[idx]), float(t_rel[idx])
+
+    if curve_type == 'single_lobe_damped':
+        if H_m is None or t_p_s is None:
+            return None, None
+        a = float(alpha if alpha is not None else 0.25)
+        t_p = float(t_p_s)
+        H = float(H_m)
+        if t_p <= 0:
+            return None, None
+        u_peak = a / (1.0 + a) if a >= 0 else 0.0
+        t_peak = t_p * u_peak
+        x_peak = H * (u_peak ** a) * (1.0 / (1.0 + a)) if a >= 0 else None
+        if x_peak is None:
+            return None, None
+        return float(x_peak), float(t_peak)
+
+    if curve_type == 'gamma_pulse':
+        if A_m is None or tau_s is None:
+            return None, None
+        return float(A_m), float(tau_s)
+
+    if curve_type == 'damped_sine':
+        if A_m is None or tau_s is None or omega_rads is None:
+            return None, None
+        tau = float(tau_s)
+        omega = float(omega_rads)
+        A = float(A_m)
+        if tau <= 0 or omega == 0:
+            return None, None
+        t_peak = math.atan(omega * tau) / omega
+        x_peak = A * math.exp(-t_peak / tau) * math.sin(omega * t_peak)
+        return float(x_peak), float(t_peak)
+
+    if curve_type in ('exponential', 'critically_damped'):
+        return None, None
+
+    return None, None
 
 
 

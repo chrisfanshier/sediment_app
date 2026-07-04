@@ -19,7 +19,7 @@ from PySide6.QtWidgets import QMessageBox
 from ..domain.models.recoil_params import DeploymentParams, ModelResult
 from ..domain.processing.recoil_model import (
     forward_model, estimate_v0, _spring_constant,
-    fit_empirical_curve, evaluate_empirical_curve,
+    fit_empirical_curve, evaluate_empirical_curve, compute_model_peak,
 )
 from ..persistence.recoil_loader import RecoilLoader
 from ..persistence.recoil_results_io import upsert_result, load_results_for_core
@@ -242,12 +242,25 @@ class RecoilController:
         if self._loaded_core_id is None:
             self._show_warning("No core loaded", "Load a core first.")
             return
-        if self._time_s is None or self._trip_idx is None:
+        if self._time_s is None or self._depth_m is None or self._trip_idx is None:
             return
 
         trip_epoch  = float(self._time_s[self._trip_idx])
         fit_end_idx = self._fit_end_idx if self._fit_end_idx is not None else self._trip_idx
         fit_end_epoch = float(self._time_s[min(fit_end_idx, len(self._time_s) - 1)])
+
+        # Observed raw-signal peak over the current fit window [trip, fit_end].
+        observed_peak_displacement_m: Optional[float] = None
+        observed_peak_time_s: Optional[float] = None
+        fit_end_idx = min(max(fit_end_idx, self._trip_idx), len(self._depth_m) - 1)
+        post_trip_depth = self._depth_m[self._trip_idx: fit_end_idx + 1]
+        if len(post_trip_depth) > 0 and np.any(np.isfinite(post_trip_depth)):
+            raw_peak_rel = int(np.nanargmin(post_trip_depth))
+            observed_peak_displacement_m = abs(
+                float(self._depth_m[self._trip_idx]) - float(post_trip_depth[raw_peak_rel])
+            )
+            peak_abs_idx = self._trip_idx + raw_peak_rel
+            observed_peak_time_s = float(self._time_s[peak_abs_idx] - self._time_s[self._trip_idx])
 
         dep_dict = dataclasses.asdict(self._last_params) if self._last_params else {}
 
@@ -259,32 +272,50 @@ class RecoilController:
             }
 
         curve_type = self._last_result_type
+        model_peak_displacement_m: Optional[float] = None
+        model_peak_time_s: Optional[float] = None
 
         kwargs: dict = {}
         if curve_type == 'physics' and self._last_model_result is not None:
             r = self._last_model_result
+            model_peak_displacement_m = r.peak_displacement_m
+            model_peak_time_s = r.peak_time_s
             kwargs = dict(
                 E_gpa=r.deployment.E_gpa,
                 C_drag=r.deployment.C_drag,
                 v0_ms=r.v0_ms,
-                peak_displacement_m=r.peak_displacement_m,
-                peak_time_s=r.peak_time_s,
                 k_nm=r.k_nm,
             )
         elif self._last_empirical_params is not None:
             A, tau, omega = self._last_empirical_params
             if curve_type == 'single_lobe_damped':
                 # A = H, tau = t_p, omega = None
+                model_peak_displacement_m, model_peak_time_s = compute_model_peak(
+                    curve_type=curve_type,
+                    H_m=A,
+                    t_p_s=tau,
+                    alpha=self._last_params.alpha,
+                )
                 kwargs = dict(H_m=A, t_p_s=tau, alpha=self._last_params.alpha)
             else:
+                model_peak_displacement_m, model_peak_time_s = compute_model_peak(
+                    curve_type=curve_type,
+                    A_m=A,
+                    tau_s=tau,
+                    omega_rads=omega,
+                )
                 kwargs = dict(A_m=A, tau_s=tau, omega_rads=omega)
 
         try:
             upsert_result(
                 self._loaded_core_id, curve_type,
                 trip_epoch, fit_end_epoch, dep_dict,
-                smooth_peak_displacement_m=self._last_smooth_peak_m,
-                smooth_peak_time_s=self._last_smooth_elapsed_s,
+                model_peak_displacement_m=model_peak_displacement_m,
+                model_peak_time_s=model_peak_time_s,
+                observed_peak_displacement_m=observed_peak_displacement_m,
+                observed_peak_time_s=observed_peak_time_s,
+                observed_smooth_peak_displacement_m=self._last_smooth_peak_m,
+                observed_smooth_peak_time_s=self._last_smooth_elapsed_s,
                 **kwargs,
             )
             # Update local cache so switching curve types immediately sees it
@@ -293,8 +324,12 @@ class RecoilController:
                 'trip_time_epoch':             trip_epoch,
                 'fit_end_epoch':               fit_end_epoch,
                 'deployment_params':           dep_dict,
-                'smooth_peak_displacement_m':  self._last_smooth_peak_m,
-                'smooth_peak_time_s':          self._last_smooth_elapsed_s,
+                'model_peak_displacement_m':   model_peak_displacement_m,
+                'model_peak_time_s':           model_peak_time_s,
+                'observed_peak_displacement_m': observed_peak_displacement_m,
+                'observed_peak_time_s':         observed_peak_time_s,
+                'observed_smooth_peak_displacement_m': self._last_smooth_peak_m,
+                'observed_smooth_peak_time_s':         self._last_smooth_elapsed_s,
                 **kwargs,
             }
             self._status(f"Saved {curve_type} result for core {self._loaded_core_id}")
@@ -352,8 +387,8 @@ class RecoilController:
         self._on_plot_requested(params)
 
         # Restore smoothing results if they were saved with this result
-        smooth_peak = saved.get('smooth_peak_displacement_m')
-        smooth_time = saved.get('smooth_peak_time_s')
+        smooth_peak = saved.get('observed_smooth_peak_displacement_m')
+        smooth_time = saved.get('observed_smooth_peak_time_s')
         if smooth_peak is not None and smooth_time is not None:
             self._last_smooth_peak_m = float(smooth_peak)
             self._last_smooth_elapsed_s = float(smooth_time)
