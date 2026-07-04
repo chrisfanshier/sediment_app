@@ -30,6 +30,7 @@ class CalculationResults:
 
     # Always computable (need trip_idx)
     recoil_max: Optional[float] = None
+    recoil_time_s: Optional[float] = None
     fall_dist: Optional[float] = None
 
     # Need trip_idx + start_core_idx
@@ -175,8 +176,15 @@ def compute_calculations(
         # recoil_max:  |release[trip] - min(release[trip : end_pen])|
         window_end = idx_ep + 1
         if window_end > trip_idx:
-            min_release_ep = np.nanmin(release[trip_idx:window_end])
-            res.recoil_max = abs(float(release[trip_idx] - min_release_ep))
+            recoil_window = release[trip_idx:window_end]
+            if np.any(np.isfinite(recoil_window)):
+                peak_rel_idx = int(np.nanargmin(recoil_window))
+                peak_abs_idx = trip_idx + peak_rel_idx
+                min_release_ep = float(recoil_window[peak_rel_idx])
+                res.recoil_max = abs(float(release[trip_idx] - min_release_ep))
+                dt = float(np.median(np.diff(timestamps_epoch))) if len(timestamps_epoch) > 1 else 0.0
+                if dt > 0:
+                    res.recoil_time_s = (peak_abs_idx - trip_idx) * dt
             res.notes.append(
                 f"recoil_max window: idx {trip_idx}..{idx_ep}"
             )
@@ -333,6 +341,7 @@ def format_results(res: CalculationResults) -> str:
     lines.append("")
     lines.append("--- Basic Metrics ---")
     lines.append(_fmt("Recoil Max:", res.recoil_max))
+    lines.append(_fmt("Recoil Time:", res.recoil_time_s, "s"))
     lines.append(_fmt("Fall Distance:", res.fall_dist))
     lines.append(_fmt("Suck-in:", res.suck_in))
 

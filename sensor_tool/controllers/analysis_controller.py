@@ -2589,6 +2589,7 @@ class AnalysisController:
             inp = self._last_calc_inputs
             calc_flat = {
                 "result_recoil_max":     r.recoil_max,
+                "result_recoil_time_s":  r.recoil_time_s,
                 "result_fall_dist":      r.fall_dist,
                 "result_suck_in":        r.suck_in,
                 "result_recoil_start":   r.recoil_start,
@@ -2764,6 +2765,7 @@ class AnalysisController:
         inp = self._last_calc_inputs
         flat_data = {
             "result_recoil_max":     r.recoil_max,
+            "result_recoil_time_s":  r.recoil_time_s,
             "result_fall_dist":      r.fall_dist,
             "result_suck_in":        r.suck_in,
             "result_recoil_start":   r.recoil_start,
