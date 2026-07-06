@@ -78,6 +78,21 @@ def get_files_to_copy():
                 'relative_path': os.path.join(row.file_path, row.file_name) if row.file_path else row.file_name,
                 'filename': row.file_name
             })
+        
+        # Get USBL files
+        result = conn.execute(text("""
+            SELECT DISTINCT u.file_path, u.file_name
+            FROM usbl_files u
+            JOIN cruises cr ON u.cruise_id = cr.cruise_id
+            WHERE u.file_path IS NOT NULL
+            ORDER BY u.file_path
+        """))
+        for row in result:
+            files_to_copy.append({
+                'type': 'USBL',
+                'relative_path': os.path.join(row.file_path, row.file_name) if row.file_path else row.file_name,
+                'filename': row.file_name
+            })
     
     return files_to_copy
 
