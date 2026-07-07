@@ -360,6 +360,10 @@ class DredgeApp(QtWidgets.QMainWindow):
         self.export_csv_checkbox.setChecked(True)
         layout.addWidget(self.export_csv_checkbox)
 
+        self.export_sensor_csv_checkbox = QtWidgets.QCheckBox("CSV (sensor & winch data)")
+        self.export_sensor_csv_checkbox.setChecked(False)
+        layout.addWidget(self.export_sensor_csv_checkbox)
+
         try:
             import geopandas  # noqa: F401
             gpkg_available = True
@@ -1001,17 +1005,22 @@ class DredgeApp(QtWidgets.QMainWindow):
     def export_annotated_data(self):
         """Export USBL data with annotations in selected format(s)"""
         export_csv = self.export_csv_checkbox.isChecked()
+        export_sensor_csv = self.export_sensor_csv_checkbox.isChecked()
         export_gpkg = self.export_gpkg_checkbox.isChecked()
 
-        if not export_csv and not export_gpkg:
+        if not export_csv and not export_sensor_csv and not export_gpkg:
             QtWidgets.QMessageBox.warning(
                 self, "No Format Selected",
-                "Please select at least one export format (CSV or GeoPackage)."
+                "Please select at least one export format."
             )
             return
 
-        if self.usbl_df is None:
+        if (export_csv or export_gpkg) and self.usbl_df is None:
             QtWidgets.QMessageBox.warning(self, "No Data", "No USBL data loaded.")
+            return
+
+        if export_sensor_csv and (self.sensor_df is None or self.sensor_df.empty):
+            QtWidgets.QMessageBox.warning(self, "No Data", "No sensor/winch data loaded.")
             return
 
         output_dir = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Output Directory")
@@ -1037,18 +1046,20 @@ class DredgeApp(QtWidgets.QMainWindow):
 
             exported_files = []
 
-            usbl_export = self.usbl_df.copy()
+            usbl_export = None
+            if export_csv or export_gpkg:
+                usbl_export = self.usbl_df.copy()
 
-            for ann in self.annotations:
-                original_name = ann['annotation_name']
-                sanitized_name = self.sanitize_field_name(original_name)
+                for ann in self.annotations:
+                    original_name = ann['annotation_name']
+                    sanitized_name = self.sanitize_field_name(original_name)
 
-                mask = (usbl_export['datetime'] >= ann['start_datetime']) & \
-                       (usbl_export['datetime'] <= ann['end_datetime'])
+                    mask = (usbl_export['datetime'] >= ann['start_datetime']) & \
+                           (usbl_export['datetime'] <= ann['end_datetime'])
 
-                usbl_export[sanitized_name] = mask
+                    usbl_export[sanitized_name] = mask
 
-            # === CSV EXPORT ===
+            # === CSV EXPORT (USBL + metadata) ===
             if export_csv:
                 if len(self.annotations) > 0:
                     annotations_df = pd.DataFrame(self.annotations)
@@ -1063,6 +1074,20 @@ class DredgeApp(QtWidgets.QMainWindow):
                 ann_count = len(self.annotations) if self.annotations else 0
                 exported_files.append(
                     f"✓ {usbl_csv_filename} ({len(usbl_export)} points, {ann_count} annotation columns)"
+                )
+
+            # === CSV EXPORT (sensor + winch time series) ===
+            if export_sensor_csv:
+                sensor_export = self.sensor_df.copy()
+                if pd.api.types.is_datetime64_any_dtype(sensor_export['datetime']):
+                    if getattr(sensor_export['datetime'].dt, 'tz', None) is not None:
+                        sensor_export['datetime'] = sensor_export['datetime'].dt.tz_localize(None)
+
+                sensor_csv_filename = f"{prefix}_sensor_winch.csv"
+                sensor_csv_path = os.path.normpath(os.path.join(output_dir, sensor_csv_filename))
+                sensor_export.to_csv(sensor_csv_path, index=False)
+                exported_files.append(
+                    f"✓ {sensor_csv_filename} ({len(sensor_export)} rows, {len(sensor_export.columns)} columns)"
                 )
 
             # === GEOPACKAGE EXPORT ===
