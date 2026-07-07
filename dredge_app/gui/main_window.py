@@ -312,6 +312,10 @@ class DredgeApp(QtWidgets.QMainWindow):
                 selector.setCurrentIndex(i)
             selector.blockSignals(False)
 
+        # Clear curves so the next update auto-ranges for the new dataset
+        for curve in self.plot_curves:
+            curve.setData([], [])
+
         for i in range(len(self.plot_widgets)):
             self.update_timeseries_plot(i)
 
@@ -487,8 +491,6 @@ class DredgeApp(QtWidgets.QMainWindow):
         self.plot_curves = []
         self.plot_selectors = []
         self.plot_regions = []
-
-        self.fixed_x_range = None
 
         self.add_plot()  # Plot 1
         self.add_plot()  # Plot 2
@@ -757,7 +759,11 @@ class DredgeApp(QtWidgets.QMainWindow):
             return
 
         viewbox = plot_widget.getViewBox()
-        current_x_range = viewbox.viewRange()[0]
+        had_data = curve.xData is not None and len(curve.xData) > 0
+        if had_data:
+            x_range, y_range = viewbox.viewRange()
+        else:
+            x_range = y_range = None
 
         valid_mask = self.sensor_df[column].notna()
         valid_data = self.sensor_df[valid_mask].reset_index(drop=True)
@@ -772,17 +778,13 @@ class DredgeApp(QtWidgets.QMainWindow):
         curve.setData(time_values, y_values)
         plot_widget.setLabel('left', column)
 
-        if self.fixed_x_range is not None:
-            viewbox.setXRange(*self.fixed_x_range, padding=0)
-        elif current_x_range[0] != current_x_range[1]:
+        if had_data and x_range is not None:
+            viewbox.disableAutoRange()
+            viewbox.setXRange(x_range[0], x_range[1], padding=0)
+            viewbox.setYRange(y_range[0], y_range[1], padding=0)
+        else:
             viewbox.enableAutoRange(axis='x')
             viewbox.enableAutoRange(axis='y')
-            QtCore.QTimer.singleShot(100, lambda: self._store_x_range(plot_widget))
-
-    def _store_x_range(self, plot_widget):
-        """Helper to store the current X-range after auto-ranging"""
-        viewbox = plot_widget.getViewBox()
-        self.fixed_x_range = viewbox.viewRange()[0]
 
     def toggle_brush_mode(self, checked):
         """Toggle between pan mode and brush selection mode"""
