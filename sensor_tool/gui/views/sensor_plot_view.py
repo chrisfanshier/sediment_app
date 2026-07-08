@@ -656,6 +656,10 @@ class SensorPlotView(QWidget):
 
             self.remove_trip_line()
             self.remove_start_core_line()
+            self.remove_end_pen_line()
+            self.remove_pullout_line()
+            self.remove_start_pen_line()
+            self.remove_seafloor_line()
             self._piston_plot_item = None
             self._smoothed_plot_items.clear()
 

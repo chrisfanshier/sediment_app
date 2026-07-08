@@ -307,6 +307,8 @@ class AnalysisController:
         self._last_calc_inputs = None
         self._manual_seafloor = None
         self._current_db_result_id = None  # new analysis session
+        self._heave_profiles = None
+        self._heave_sel = None
         # Restore button requires a DB core with saved results
         if self.main_window is not None:
             self.main_window.restore_action.setEnabled(False)
@@ -3424,6 +3426,8 @@ class AnalysisController:
         # Switch to Calculate mode to show the restored state
         if self.main_window is not None and restored:
             self.main_window.set_mode('Calculate')
+            # set_mode is a no-op signal when already in Calculate; always replot.
+            self._plot_calculate_mode()
 
         parts = []
         if restored:
