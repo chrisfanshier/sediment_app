@@ -38,6 +38,10 @@ class TimeCorrectionProcessor:
         1. Detrend with a 2nd-order polynomial.
         2. Bandpass filter to retain only heave frequencies.
         """
+        series = np.asarray(series, dtype=float)
+        if len(series) < 3:
+            return series
+
         x = np.arange(len(series))
         p = np.polyfit(x, series, 2)
         detrended = series - np.polyval(p, x)
