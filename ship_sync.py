@@ -560,10 +560,11 @@ else:
                 except Exception as e:
                     st.caption(f"Note: Could not log sync locally ({str(e)})")
                 
-                # Auto-refresh after 2 seconds
-                import time
-                time.sleep(2)
-                st.rerun()
+                # Auto-refresh only when fully successful (no errors)
+                if result.get('error_count', 0) == 0:
+                    import time
+                    time.sleep(2)
+                    st.rerun()
                 
             else:
                 st.error(f"❌ Central server error: {response.status_code}")
