@@ -31,6 +31,8 @@ SYNC_TABLES = [
     ('winch_data', 'winch_file_id'),
     ('usbl_files', 'usbl_file_id'),
     ('core_media', 'media_id'),
+    ('sensor_analysis_results', 'result_id'),
+    ('recoil_analysis_results', 'id'),
 ]
 
 st.set_page_config(page_title="Sync to Central", layout="wide")
@@ -290,7 +292,63 @@ def get_pending_records_with_fk_lookup(table_name, id_column, conn):
             processed.append(record_dict)
 
         return processed
-    
+
+    # SENSOR_ANALYSIS_RESULTS: Replace core_id with core's central_id
+    elif table_name == 'sensor_analysis_results':
+        query = text("""
+            SELECT
+                sar.*,
+                co.central_id as core_central_id
+            FROM sensor_analysis_results sar
+            LEFT JOIN cores co ON sar.core_id = co.core_id
+            WHERE sar.sync_status = 'pending'
+            AND sar.created_on_ship = TRUE
+            ORDER BY sar.created_at
+        """)
+        records = conn.execute(query).fetchall()
+
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            core_central_id = record_dict.pop('core_central_id', None)
+
+            if core_central_id:
+                record_dict['core_id'] = core_central_id
+            elif record_dict.get('core_id'):
+                st.warning(f"⚠️ Sensor analysis result references core that hasn't been synced yet!")
+
+            processed.append(record_dict)
+
+        return processed
+
+    # RECOIL_ANALYSIS_RESULTS: Replace core_id with core's central_id
+    elif table_name == 'recoil_analysis_results':
+        query = text("""
+            SELECT
+                rar.*,
+                co.central_id as core_central_id
+            FROM recoil_analysis_results rar
+            LEFT JOIN cores co ON rar.core_id = co.core_id
+            WHERE rar.sync_status = 'pending'
+            AND rar.created_on_ship = TRUE
+            ORDER BY rar.created_at
+        """)
+        records = conn.execute(query).fetchall()
+
+        processed = []
+        for record in records:
+            record_dict = dict(record._mapping)
+            core_central_id = record_dict.pop('core_central_id', None)
+
+            if core_central_id:
+                record_dict['core_id'] = core_central_id
+            elif record_dict.get('core_id'):
+                st.warning(f"⚠️ Recoil analysis result references core that hasn't been synced yet!")
+
+            processed.append(record_dict)
+
+        return processed
+
     # DEFAULT: Tables without FK dependencies (vessels, cruises, capture_devices)
     else:
         query = text(f"""
