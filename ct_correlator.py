@@ -314,23 +314,25 @@ def load_tif_scientific(tif_path, px_per_cm=FALLBACK_PX_PER_CM):
 def load_tif_display_ready(tif_path, px_per_cm=FALLBACK_PX_PER_CM):
     """Load a display-ready TIFF without re-stretching.
 
-    Maps stored pixel values linearly to 8-bit with no auto-crop or
-    percentile windowing. Use for files that already have correct
-    leveling baked in (e.g. re-saved from a CT viewer).
+    Uses Pillow's native conversion to 8-bit grayscale with no auto-crop or
+    percentile windowing. Use for files that already have correct leveling
+    baked in (e.g. re-saved from a CT viewer).
 
     Returns (PIL L-mode image, px_per_cm, crop_top_px, original_px_h).
     """
     img = Image.open(tif_path)
     if img.mode in ("I;16", "I;16B", "I"):
-        arr = np.array(img, dtype=np.float32) * (255.0 / 65535.0)
+        arr = np.array(img)
+        # Some exports store 8-bit display values in a 16-bit container.
+        if arr.max() <= 255:
+            pil = Image.fromarray(arr.astype(np.uint8), mode="L")
+        else:
+            pil = img.convert("L")
     elif img.mode == "L":
-        arr = np.array(img, dtype=np.float32)
+        pil = img
     else:
-        arr = np.array(img.convert("L"), dtype=np.float32)
-    original_px_h = arr.shape[0]
-    arr = np.clip(arr, 0, 255)
-    return (Image.fromarray(arr.astype(np.uint8)),
-            px_per_cm, 0, original_px_h)
+        pil = img.convert("L")
+    return (pil, px_per_cm, 0, pil.size[1])
 
 
 # ── Image Cache ────────────────────────────────────────────────────────────────
@@ -809,9 +811,10 @@ class CoreCorrelatorApp(QMainWindow):
             lambda s: self.canvas.set_show_guide(s == Qt.Checked.value))
         gl.addWidget(self.chk_guide)
         self.chk_display_ready = QCheckBox("Display-ready TIFF (load as-is)")
+        self.chk_display_ready.setChecked(True)
         self.chk_display_ready.setToolTip(
             "Skip auto-crop and contrast stretch for TIFFs that already "
-            "have correct leveling baked in")
+            "have correct leveling baked in (e.g. re-saved from GQuickView)")
         self.chk_display_ready.stateChanged.connect(self._on_display_ready_changed)
         gl.addWidget(self.chk_display_ready)
         zr = QHBoxLayout()
