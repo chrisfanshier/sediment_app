@@ -49,6 +49,12 @@ from config import get_full_path, ROOT_DIRECTORY
 FALLBACK_PX_PER_CM  = 35.0
 UI_PX_PER_CM        = 22.0
 RENDER_SCALE        = 4       # internal render multiplier for crisp output
+EXPORT_SCALE_HIGH   = 10      # high-res export render multiplier
+EXPORT_SCALE_PRESENTATION = 4 # presentation export (~screen fidelity)
+EXPORT_DPI_HIGH     = 300
+EXPORT_DPI_PRESENTATION = 150
+PRESENTATION_MAX_LONG_EDGE = 4096
+PRESENTATION_JPEG_QUALITY = 85
 CROP_COL_THRESH     = 0.15
 CROP_ROW_THRESH     = 0.25
 
@@ -805,6 +811,9 @@ class CoreCorrelatorApp(QMainWindow):
         btn_export = QPushButton("Export High-Res Image…")
         btn_export.clicked.connect(self._export_view)
         lv.addWidget(btn_export)
+        btn_export_pres = QPushButton("Export for Presentation…")
+        btn_export_pres.clicked.connect(self._export_presentation_view)
+        lv.addWidget(btn_export_pres)
 
         # ── Offset controls ───────────────────────────────────────────
         self.grp_offset = QGroupBox("Correlation Offset")
@@ -1623,20 +1632,38 @@ class CoreCorrelatorApp(QMainWindow):
 
         return plots
 
-    # ── High-res export ────────────────────────────────────────────────────
+    # ── Export ───────────────────────────────────────────────────────────
 
     def _export_view(self):
         """Export the current view as a high-resolution PNG or TIFF."""
+        self._run_export(
+            dialog_title="Export High-Resolution Image",
+            file_filter="PNG Files (*.png);;TIFF Files (*.tiff *.tif)",
+            scale=EXPORT_SCALE_HIGH,
+            dpi=EXPORT_DPI_HIGH,
+        )
+
+    def _export_presentation_view(self):
+        """Export a compact JPEG/PNG suitable for email and slides."""
+        self._run_export(
+            dialog_title="Export for Presentation",
+            file_filter="JPEG Files (*.jpg *.jpeg);;PNG Files (*.png)",
+            scale=EXPORT_SCALE_PRESENTATION,
+            dpi=EXPORT_DPI_PRESENTATION,
+            max_long_edge=PRESENTATION_MAX_LONG_EDGE,
+            jpeg_quality=PRESENTATION_JPEG_QUALITY,
+        )
+
+    def _run_export(self, *, dialog_title, file_filter, scale, dpi,
+                    max_long_edge=None, jpeg_quality=None):
         path, _filt = QFileDialog.getSaveFileName(
-            self, "Export High-Resolution Image", "",
-            "PNG Files (*.png);;TIFF Files (*.tiff *.tif)")
+            self, dialog_title, "", file_filter)
         if not path:
             return
 
         self.status.showMessage("Exporting…")
         QApplication.processEvents()
 
-        EXP_S = 10  # export render scale (vs RENDER_SCALE=4 for screen)
         mode = self.combo_mode.currentText()
 
         label      = self.combo_type.currentText()
@@ -1659,16 +1686,16 @@ class CoreCorrelatorApp(QMainWindow):
             ids = checked if mode == "Correlate" else [checked[0]]
             ranges = self._global_mscl_ranges(sel_cols, ids)
 
-        gap = 20 * EXP_S
+        gap = 20 * scale
 
         try:
             if mode == "Overview":
                 final = self._export_overview(
-                    checked[0], image_type, EXP_S, show_scale,
+                    checked[0], image_type, scale, show_scale,
                     sel_cols, ranges, mscl_w, gap)
             else:
                 final = self._export_correlate(
-                    checked, image_type, EXP_S, show_scale, show_sec,
+                    checked, image_type, scale, show_scale, show_sec,
                     sel_cols, ranges, mscl_w, gap)
         except Exception as exc:
             QMessageBox.warning(self, "Export Error", str(exc))
@@ -1679,15 +1706,38 @@ class CoreCorrelatorApp(QMainWindow):
             self.status.showMessage("Nothing to export", 3000)
             return
 
-        dpi = 300
-        if path.lower().endswith((".tiff", ".tif")):
-            final.save(path, dpi=(dpi, dpi), compression="tiff_lzw")
-        else:
-            final.save(path, dpi=(dpi, dpi))
+        final = self._downscale_if_needed(final, max_long_edge)
+        self._save_export_image(final, path, dpi, jpeg_quality)
 
+        size_mb = os.path.getsize(path) / (1024 * 1024)
         self.status.showMessage(
             f"Exported {final.size[0]}\u00d7{final.size[1]} px "
-            f"@ {dpi} DPI \u2192 {os.path.basename(path)}", 8000)
+            f"@ {dpi} DPI ({size_mb:.1f} MB) "
+            f"\u2192 {os.path.basename(path)}", 8000)
+
+    @staticmethod
+    def _downscale_if_needed(img, max_long_edge):
+        if max_long_edge is None:
+            return img
+        w, h = img.size
+        long_edge = max(w, h)
+        if long_edge <= max_long_edge:
+            return img
+        factor = max_long_edge / long_edge
+        return img.resize(
+            (max(1, int(w * factor)), max(1, int(h * factor))),
+            Image.Resampling.LANCZOS)
+
+    @staticmethod
+    def _save_export_image(img, path, dpi, jpeg_quality=None):
+        lower = path.lower()
+        if lower.endswith((".tiff", ".tif")):
+            img.save(path, dpi=(dpi, dpi), compression="tiff_lzw")
+        elif lower.endswith((".jpg", ".jpeg")):
+            img.save(path, dpi=(dpi, dpi), quality=jpeg_quality or 85,
+                     optimize=True)
+        else:
+            img.save(path, dpi=(dpi, dpi), optimize=True)
 
     # -- Overview export --
 
