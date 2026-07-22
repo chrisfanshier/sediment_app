@@ -131,6 +131,12 @@ def receive_sync():
                                     record_data[fk_column] = central_fk_value
                                     print(f"    🔗 Remapped {fk_column}: {ship_fk_value} → {central_fk_value}")
 
+                    # Serialize any dict/list values (JSONB columns) to JSON strings
+                    # psycopg2 cannot bind Python dicts directly as SQL parameters
+                    for k, v in record_data.items():
+                        if isinstance(v, (dict, list)):
+                            record_data[k] = json.dumps(v)
+
                     if not central_id:
                         # INSERT - CHANGE: exclude primary key column
                         columns = [col for col in record_data.keys() if col != id_column]
