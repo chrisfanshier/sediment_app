@@ -455,7 +455,7 @@ def get_mgr_export_data(cruise_name: str) -> list:
             ct.core_type_name AS recovery_method,
             regexp_replace(c.core_name, '^[A-Z0-9]+-([A-Z]+)\\d+.*$', '\\1') AS core_abbreviation,
             c.date AS date_collected,
-            c.time_launched AS time_collected_utc,
+            COALESCE(c.time_on_bottom, c.time_recovered, c.time_launched) AS time_collected_utc,
             c.latitude, c.longitude, c.water_depth_m,
             se.section_number, se.working_archive,
             c.core_name || '-' || se.section_number || se.wa_suffix AS section_name,
@@ -463,7 +463,7 @@ def get_mgr_export_data(cruise_name: str) -> list:
             se.section_length, se.top_cum_length, se.bottom_cum_length,
                         ROUND(lc.liner_id / 10.0, 2) AS core_diameter_cm,
                         lc.liner_material AS core_tube_material,
-            se.remarks
+            c.notes
         FROM split_expand se
         JOIN cores c         ON se.core_id     = c.core_id
         JOIN cruises cr      ON c.cruise_id    = cr.cruise_id
