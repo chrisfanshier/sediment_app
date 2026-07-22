@@ -317,16 +317,42 @@ def load_tif_scientific(tif_path, px_per_cm=FALLBACK_PX_PER_CM):
             px_per_cm, crop_top_px, original_px_h)
 
 
+def load_tif_display_ready(tif_path, px_per_cm=FALLBACK_PX_PER_CM):
+    """Load a display-ready TIFF without re-stretching.
+
+    Uses Pillow's native conversion to 8-bit grayscale with no auto-crop or
+    percentile windowing. Use for files that already have correct leveling
+    baked in (e.g. re-saved from a CT viewer).
+
+    Returns (PIL L-mode image, px_per_cm, crop_top_px, original_px_h).
+    """
+    img = Image.open(tif_path)
+    if img.mode in ("I;16", "I;16B", "I"):
+        arr = np.array(img)
+        # Some exports store 8-bit display values in a 16-bit container.
+        if arr.max() <= 255:
+            pil = Image.fromarray(arr.astype(np.uint8), mode="L")
+        else:
+            pil = img.convert("L")
+    elif img.mode == "L":
+        pil = img
+    else:
+        pil = img.convert("L")
+    return (pil, px_per_cm, 0, pil.size[1])
+
+
 # ── Image Cache ────────────────────────────────────────────────────────────────
 
 class ImageCache:
     def __init__(self):
         self._cache = {}
 
-    def get(self, tif_path: str, px_per_cm: float):
-        key = str(tif_path)
+    def get(self, tif_path: str, px_per_cm: float, *, display_ready=False):
+        key = (str(tif_path), display_ready)
         if key not in self._cache:
-            self._cache[key] = load_tif_scientific(tif_path, px_per_cm)
+            loader = (load_tif_display_ready if display_ready
+                      else load_tif_scientific)
+            self._cache[key] = loader(tif_path, px_per_cm)
         return self._cache[key]
 
     def clear(self):
@@ -790,6 +816,13 @@ class CoreCorrelatorApp(QMainWindow):
         self.chk_guide.stateChanged.connect(
             lambda s: self.canvas.set_show_guide(s == Qt.Checked.value))
         gl.addWidget(self.chk_guide)
+        self.chk_display_ready = QCheckBox("Display-ready TIFF (load as-is)")
+        self.chk_display_ready.setChecked(True)
+        self.chk_display_ready.setToolTip(
+            "Skip auto-crop and contrast stretch for TIFFs that already "
+            "have correct leveling baked in (e.g. re-saved from GQuickView)")
+        self.chk_display_ready.stateChanged.connect(self._on_display_ready_changed)
+        gl.addWidget(self.chk_display_ready)
         zr = QHBoxLayout()
         self.lbl_zoom = QLabel("Zoom: 100%")
         btn_zi = QPushButton("+")
@@ -1059,6 +1092,15 @@ class CoreCorrelatorApp(QMainWindow):
         self.image_cache.clear()
         self._rebuild_section_panel()
         self.refresh_display()
+
+    def _on_display_ready_changed(self):
+        self.image_cache.clear()
+        self.refresh_display()
+
+    def _cached_image(self, tif_path, px_per_cm):
+        return self.image_cache.get(
+            tif_path, px_per_cm,
+            display_ready=self.chk_display_ready.isChecked())
 
     # ── Zoom ───────────────────────────────────────────────────────────────
 
@@ -1379,7 +1421,7 @@ class CoreCorrelatorApp(QMainWindow):
         meta_ppcm = section["px_per_cm"]
         sec_num   = section["section_number"]
 
-        pil_img, _, crop_top_px, orig_h = self.image_cache.get(
+        pil_img, _, crop_top_px, orig_h = self._cached_image(
             section["tif"], meta_ppcm)
         phys_cm = orig_h / meta_ppcm
         scale   = px_per_cm_r / meta_ppcm
@@ -1458,7 +1500,7 @@ class CoreCorrelatorApp(QMainWindow):
         max_img_w  = 0
         for sec in sections:
             meta_ppcm = sec["px_per_cm"]
-            pil_img, _, crop_top_px, orig_h = self.image_cache.get(
+            pil_img, _, crop_top_px, orig_h = self._cached_image(
                 sec["tif"], meta_ppcm)
             phys_cm = orig_h / meta_ppcm
             scale   = px_per_cm_r / meta_ppcm
@@ -1571,7 +1613,7 @@ class CoreCorrelatorApp(QMainWindow):
         for sec in sections:
             sn = sec["section_number"]
             meta_ppcm = sec["px_per_cm"]
-            _, _, _, orig_h = self.image_cache.get(sec["tif"], meta_ppcm)
+            _, _, _, orig_h = self._cached_image(sec["tif"], meta_ppcm)
             phys_cm = orig_h / meta_ppcm
             sec_offsets[sn] = cumul
             cumul += phys_cm
@@ -1828,7 +1870,7 @@ class CoreCorrelatorApp(QMainWindow):
         processed, max_img_w, total_cm = [], 0, 0.0
         for sec in sections:
             meta_ppcm = sec["px_per_cm"]
-            pil_img, _, crop_top_px, orig_h = self.image_cache.get(
+            pil_img, _, crop_top_px, orig_h = self._cached_image(
                 sec["tif"], meta_ppcm)
             phys_cm = orig_h / meta_ppcm
             scale   = px_per_cm_r / meta_ppcm
@@ -1891,7 +1933,7 @@ class CoreCorrelatorApp(QMainWindow):
         meta_ppcm   = section["px_per_cm"]
         sec_num     = section["section_number"]
 
-        pil_img, _, crop_top_px, orig_h = self.image_cache.get(
+        pil_img, _, crop_top_px, orig_h = self._cached_image(
             section["tif"], meta_ppcm)
         phys_cm = orig_h / meta_ppcm
         scale   = px_per_cm_r / meta_ppcm
@@ -1968,7 +2010,7 @@ class CoreCorrelatorApp(QMainWindow):
         cumul, sec_offsets = 0.0, {}
         for sec in sections:
             sn = sec["section_number"]
-            _, _, _, orig_h = self.image_cache.get(
+            _, _, _, orig_h = self._cached_image(
                 sec["tif"], sec["px_per_cm"])
             phys_cm = orig_h / sec["px_per_cm"]
             sec_offsets[sn] = cumul
