@@ -38,6 +38,8 @@ SYNC_TABLES = {
     'winch_data': 'winch_file_id',
     'usbl_files': 'usbl_file_id',
     'core_media': 'media_id',
+    'sensor_analysis_results': 'result_id',
+    'recoil_analysis_results': 'id',
 }
 
 # ADD THIS: Foreign key dependencies for remapping
@@ -50,6 +52,8 @@ FK_DEPENDENCIES = {
     'winch_data': {'cruise_id': 'cruises'},
     'usbl_files': {'cruise_id': 'cruises'},
     'core_media': {'core_id': 'cores', 'capture_device_id': 'capture_devices'},
+    'sensor_analysis_results': {'core_id': 'cores'},
+    'recoil_analysis_results': {'core_id': 'cores'},
 }
 
 def get_pg_conn():
