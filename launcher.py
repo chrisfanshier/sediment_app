@@ -54,8 +54,6 @@ def main():
              "--server.headless", "true",
              "--server.enableXsrfProtection", "false",
              "--server.enableCORS", "false"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
         )
         processes.append(process)
         time.sleep(2)
