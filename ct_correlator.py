@@ -320,25 +320,26 @@ def load_tif_scientific(tif_path, px_per_cm=FALLBACK_PX_PER_CM):
 def load_tif_display_ready(tif_path, px_per_cm=FALLBACK_PX_PER_CM):
     """Load a display-ready TIFF without re-stretching.
 
-    Uses Pillow's native conversion to 8-bit grayscale with no auto-crop or
-    percentile windowing. Use for files that already have correct leveling
-    baked in (e.g. re-saved from a CT viewer).
+    Converts to 8-bit grayscale and trims empty margins (auto-crop) but
+    does not apply percentile contrast stretch. Use for files that already
+    have correct leveling baked in (e.g. re-saved from a CT viewer).
 
     Returns (PIL L-mode image, px_per_cm, crop_top_px, original_px_h).
     """
-    img = Image.open(tif_path)
-    if img.mode in ("I;16", "I;16B", "I"):
-        arr = np.array(img)
-        # Some exports store 8-bit display values in a 16-bit container.
-        if arr.max() <= 255:
-            pil = Image.fromarray(arr.astype(np.uint8), mode="L")
+    with Image.open(tif_path) as im:
+        im.load()
+        if im.mode in ("I;16", "I;16B", "I"):
+            arr = np.array(im, dtype=np.float32)
+            if arr.max() > 255:
+                arr = arr / 256.0
         else:
-            pil = img.convert("L")
-    elif img.mode == "L":
-        pil = img
-    else:
-        pil = img.convert("L")
-    return (pil, px_per_cm, 0, pil.size[1])
+            arr = np.array(im.convert("L"), dtype=np.float32)
+
+    arr = np.clip(arr, 0, 255)
+    original_px_h = arr.shape[0]
+    arr, crop_top_px = auto_crop(arr)
+    pil = Image.fromarray(arr.astype(np.uint8), mode="L")
+    return (pil, px_per_cm, crop_top_px, original_px_h)
 
 
 # ── Image Cache ────────────────────────────────────────────────────────────────
@@ -817,11 +818,12 @@ class CoreCorrelatorApp(QMainWindow):
             lambda s: self.canvas.set_show_guide(s == Qt.Checked.value))
         gl.addWidget(self.chk_guide)
         self.chk_display_ready = QCheckBox("Display-ready TIFF (load as-is)")
-        self.chk_display_ready.setChecked(True)
         self.chk_display_ready.setToolTip(
-            "Skip auto-crop and contrast stretch for TIFFs that already "
-            "have correct leveling baked in (e.g. re-saved from GQuickView)")
+            "Skip contrast stretch for TIFFs that already have correct "
+            "leveling baked in (e.g. re-saved from GQuickView). "
+            "Margins are still trimmed for alignment.")
         self.chk_display_ready.stateChanged.connect(self._on_display_ready_changed)
+        self.chk_display_ready.setChecked(True)
         gl.addWidget(self.chk_display_ready)
         zr = QHBoxLayout()
         self.lbl_zoom = QLabel("Zoom: 100%")
