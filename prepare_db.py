@@ -285,6 +285,8 @@ def select_cruises_to_keep():
             conn.execute(text(f"DELETE FROM files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM associated_files WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM physical_properties WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
+            conn.execute(text(f"DELETE FROM sensor_analysis_results WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
+            conn.execute(text(f"DELETE FROM recoil_analysis_results WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM sections WHERE core_id IN (SELECT core_id FROM cores WHERE cruise_id IN ({delete_str}))"))
             conn.execute(text(f"DELETE FROM cores WHERE cruise_id IN ({delete_str})"))
             conn.execute(text(f"DELETE FROM winch_data WHERE cruise_id IN ({delete_str})"))
