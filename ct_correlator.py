@@ -7,7 +7,7 @@ Connects directly to the sediment_cores PostgreSQL database via db_util.
 Cruise → Core → Section selection is driven by database queries against
 the ct_xml, cores, cruises, and mscl_files tables.
 
-Image types supported: giXRayImage, giCTOrthogonalView
+Image types: giXRayImage and giCTOrthogonalView (shown together; use filename filter to narrow)
 """
 
 import sys
@@ -58,12 +58,6 @@ PRESENTATION_JPEG_QUALITY = 85
 CROP_COL_THRESH     = 0.15
 CROP_ROW_THRESH     = 0.25
 
-# Image types the app supports (maps display label -> image_type value in ct_xml)
-SUPPORTED_IMAGE_TYPES = {
-    "XRay (giXRayImage)":                "giXRayImage",
-    "CT Orthogonal (giCTOrthogonalView)": "giCTOrthogonalView",
-}
-
 MSCL_COLORS = [
     "#1f77b4", "#d62728", "#2ca02c", "#ff7f0e",
     "#9467bd", "#8c564b", "#17becf", "#e377c2",
@@ -110,42 +104,12 @@ def db_get_cores_for_cruise(cruise_id, image_type=None):
     return [r[0] for r in rows]
 
 
-def db_get_suffixes_for_core(core_name, image_type):
-    """Discover filename suffixes present for a core + image_type.
-    Returns a sorted list of suffix strings found between the base stem
-    and .tif extension (e.g. '_corrected', '_filtered', '').
-    Empty string means no suffix (plain filename)."""
-    with get_connection() as conn:
-        rows = conn.execute(sa_text("""
-            SELECT tif_filename, xml_path FROM ct_xml
-            WHERE core_name = :cn AND image_type = :it
-        """), {"cn": core_name, "it": image_type}).fetchall()
-    suffixes = set()
-    for r in rows:
-        fn = r[0] or ""
-        if not fn and r[1]:
-            fn = os.path.splitext(os.path.basename(r[1]))[0] + ".tif"
-        if not fn:
-            continue
-        stem = os.path.splitext(fn)[0]
-        lower = stem.lower()
-        # Compare against the xml basename to isolate the suffix
-        xml_stem = ""
-        if r[1]:
-            xml_stem = os.path.splitext(os.path.basename(r[1]))[0].lower()
-        if xml_stem and lower.startswith(xml_stem) and lower != xml_stem:
-            suffixes.add(stem[len(xml_stem):])  # preserve original case
-        elif xml_stem and lower == xml_stem:
-            suffixes.add("")   # no suffix — original file
-        else:
-            # Fallback: detect common known suffixes
-            for known in ("_beam_hardening_corrected", "_corrected", "_filtered"):
-                if lower.endswith(known):
-                    suffixes.add(known)
-                    break
-            else:
-                suffixes.add("")
-    return sorted(suffixes)
+def _tif_filename_for_row(row):
+    """Return the TIF filename for a ct_xml row dict."""
+    fn = row.get("tif_filename") or ""
+    if not fn and row.get("xml_path"):
+        fn = os.path.splitext(os.path.basename(row["xml_path"]))[0] + ".tif"
+    return fn
 
 
 def db_get_sections_for_core(core_name, image_type, suffix_filter=None):
@@ -242,23 +206,30 @@ def db_resolve_tif_path(row):
     return None
 
 
-def db_get_section_files(core_name, image_type):
+def db_get_section_files(core_name, filename_filter=""):
     """Return {section_number: [row_dict, ...], ...} for all ct_xml rows
-    matching (core_name, image_type).  Each row_dict contains the full
+    for core_name across all image types.  Each row_dict contains the full
     ct_xml columns needed to resolve a TIF path.  Sections are sorted
-    numerically and files within each section are sorted by tif_filename."""
+    numerically and files within each section are sorted by tif_filename.
+
+    filename_filter: if non-empty, only rows whose TIF filename contains
+    this substring (case-insensitive) are included."""
     with get_connection() as conn:
         rows = conn.execute(sa_text("""
             SELECT section_number, tiff_folder, xml_path,
-                   tif_filename, processing_stage, xml_root_tag
+                   tif_filename, processing_stage, xml_root_tag, image_type
             FROM ct_xml
-            WHERE core_name  = :cn
-              AND image_type = :it
+            WHERE core_name = :cn
             ORDER BY CAST(section_number AS INTEGER), tif_filename
-        """), {"cn": core_name, "it": image_type}).fetchall()
+        """), {"cn": core_name}).fetchall()
+    needle = (filename_filter or "").strip().lower()
     result = defaultdict(list)
     for r in rows:
         d = dict(r._mapping)
+        if needle:
+            fn = _tif_filename_for_row(d).lower()
+            if needle not in fn:
+                continue
         sec = int(d["section_number"] or 0)
         result[sec].append(d)
     return dict(result)
@@ -648,7 +619,7 @@ class CoreCorrelatorApp(QMainWindow):
         self._cruises: list      = []   # [(cruise_id, cruise_name), ...]
         self._core_names: list   = []   # available for selected cruise
 
-        # Section cache: (core_name, image_type, suffix) -> [section dicts]
+        # Section cache: core_name -> [section dicts]
         self.core_sections: dict = {}
         self.image_cache         = ImageCache()
 
@@ -712,20 +683,16 @@ class CoreCorrelatorApp(QMainWindow):
         gl.addWidget(self.lbl_db)
         lv.addWidget(grp)
 
-        # ── Image Type + Suffix ────────────────────────────────────────
-        grp = QGroupBox("Image Type")
+        # ── Filename filter ───────────────────────────────────────────
+        grp = QGroupBox("File Filter")
         gl  = QVBoxLayout(grp)
-        self.combo_type = QComboBox()
-        for label in SUPPORTED_IMAGE_TYPES:
-            self.combo_type.addItem(label)
-        self.combo_type.currentIndexChanged.connect(self._on_type_changed)
-        gl.addWidget(self.combo_type)
-
-        gl.addWidget(QLabel("Filename suffix filter:"))
-        self.combo_suffix = QComboBox()
-        self.combo_suffix.addItem("(all variants)")
-        self.combo_suffix.currentIndexChanged.connect(self._on_suffix_changed)
-        gl.addWidget(self.combo_suffix)
+        gl.addWidget(QLabel("Filename contains:"))
+        self.edit_filename_filter = QLineEdit()
+        self.edit_filename_filter.setPlaceholderText(
+            "e.g. Processed, corrected, filtered")
+        self.edit_filename_filter.textChanged.connect(
+            self._on_filename_filter_changed)
+        gl.addWidget(self.edit_filename_filter)
         lv.addWidget(grp)
 
         # ── Core / Section selection ───────────────────────────────────
@@ -916,18 +883,13 @@ class CoreCorrelatorApp(QMainWindow):
             return
         cruise_id = self._cruises[idx][0]
 
-        label      = self.combo_type.currentText()
-        image_type = SUPPORTED_IMAGE_TYPES.get(label)
-
         try:
-            self._core_names = db_get_cores_for_cruise(
-                cruise_id, image_type=image_type)
+            self._core_names = db_get_cores_for_cruise(cruise_id)
         except Exception as e:
             self.status.showMessage(f"Error loading cores: {e}", 5000)
             self._core_names = []
 
         self._populate_core_list()
-        self._populate_suffix_combo()
 
     def _populate_core_list(self):
         self.list_cores.blockSignals(True)
@@ -985,22 +947,22 @@ class CoreCorrelatorApp(QMainWindow):
             if os.path.exists(full):
                 self._parse_and_store_mscl(cname, full, fn)
 
+    def _filename_filter_text(self):
+        return self.edit_filename_filter.text().strip()
+
     def _rebuild_section_panel(self):
         """Rebuild the per-section dropdown panel for all checked cores."""
         self._clear_section_widgets()
 
-        label      = self.combo_type.currentText()
-        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
-        if not image_type:
-            return
-
+        filename_filter = self._filename_filter_text()
         checked = self._checked_cores()
         if not checked:
             return
 
         for core_name in checked:
             try:
-                sec_files = db_get_section_files(core_name, image_type)
+                sec_files = db_get_section_files(
+                    core_name, filename_filter=filename_filter)
             except Exception as e:
                 self.status.showMessage(f"Error loading sections: {e}", 5000)
                 continue
@@ -1016,6 +978,8 @@ class CoreCorrelatorApp(QMainWindow):
 
             for sec_num in sorted(sec_files.keys()):
                 files = sec_files[sec_num]
+                if not files:
+                    continue
                 row_w = QWidget()
                 rl    = QHBoxLayout(row_w)
                 rl.setContentsMargins(12, 0, 0, 0)
@@ -1028,10 +992,7 @@ class CoreCorrelatorApp(QMainWindow):
                 combo = QComboBox()
                 combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 for f in files:
-                    fn = f.get("tif_filename") or ""
-                    if not fn and f.get("xml_path"):
-                        fn = os.path.splitext(
-                            os.path.basename(f["xml_path"]))[0] + ".tif"
+                    fn = _tif_filename_for_row(f)
                     stage = f.get("processing_stage") or ""
                     display = fn if not stage else f"{fn}  [{stage}]"
                     combo.addItem(display, userData=f)
@@ -1056,41 +1017,7 @@ class CoreCorrelatorApp(QMainWindow):
                 checked.append(it.data(Qt.UserRole))
         return checked
 
-    def _populate_suffix_combo(self):
-        """Discover available filename suffixes across all cores in the current cruise."""
-        label      = self.combo_type.currentText()
-        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
-        all_suffixes = set()
-        for cname in self._core_names:
-            try:
-                for s in db_get_suffixes_for_core(cname, image_type):
-                    all_suffixes.add(s)
-            except Exception:
-                pass
-
-        self.combo_suffix.blockSignals(True)
-        self.combo_suffix.clear()
-        self.combo_suffix.addItem("(all variants)", userData=None)
-        for s in sorted(all_suffixes):
-            display = s if s else "(original / no suffix)"
-            self.combo_suffix.addItem(display, userData=s)
-        self.combo_suffix.blockSignals(False)
-
-        # Default to _corrected if available
-        for i in range(self.combo_suffix.count()):
-            if self.combo_suffix.itemData(i) == "_corrected":
-                self.combo_suffix.setCurrentIndex(i)
-                return
-        self.combo_suffix.setCurrentIndex(0)
-
-    # ── Image type / suffix changes ────────────────────────────────────────
-
-    def _on_type_changed(self):
-        self.core_sections = {}
-        self.image_cache.clear()
-        self._on_cruise_changed()
-
-    def _on_suffix_changed(self):
+    def _on_filename_filter_changed(self):
         self.image_cache.clear()
         self._rebuild_section_panel()
         self.refresh_display()
@@ -1272,8 +1199,7 @@ class CoreCorrelatorApp(QMainWindow):
 
     # ── Section loading from widget selections ──────────────────────────
 
-    def _get_sections_for_core(self, core_name: str,
-                                image_type: str) -> list[dict]:
+    def _get_sections_for_core(self, core_name: str) -> list[dict]:
         """Build section list from the per-section widget selections.
         Only includes sections whose checkbox is checked, using the
         file chosen in each section's dropdown."""
@@ -1318,11 +1244,6 @@ class CoreCorrelatorApp(QMainWindow):
         old_offsets = {s.core_id: s.offset_px for s in self.canvas.strips}
         self.canvas.clear()
 
-        label      = self.combo_type.currentText()
-        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
-        if not image_type:
-            return
-
         checked = self._checked_cores()
         if not checked:
             return
@@ -1338,10 +1259,10 @@ class CoreCorrelatorApp(QMainWindow):
             ranges = self._global_mscl_ranges(sel_cols, checked)
 
         for cid in checked:
-            sections = self._get_sections_for_core(cid, image_type)
+            sections = self._get_sections_for_core(cid)
             if not sections:
                 self.status.showMessage(
-                    f"No {label} TIFs found for {cid}", 3000)
+                    f"No matching TIFs found for {cid}", 3000)
                 continue
 
             pix, total_cm, logical_h, header_h, data_h = \
@@ -1370,11 +1291,6 @@ class CoreCorrelatorApp(QMainWindow):
         self.canvas._align_tops = True
         self.canvas.clear()
 
-        label      = self.combo_type.currentText()
-        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
-        if not image_type:
-            return
-
         checked = self._checked_cores()
         if not checked:
             return
@@ -1389,10 +1305,10 @@ class CoreCorrelatorApp(QMainWindow):
         if show_mscl and sel_cols:
             ranges = self._global_mscl_ranges(sel_cols, [core_id])
 
-        sections = self._get_sections_for_core(core_id, image_type)
+        sections = self._get_sections_for_core(core_id)
         if not sections:
             self.status.showMessage(
-                f"No {label} TIFs found for {core_id}", 3000)
+                f"No matching TIFs found for {core_id}", 3000)
             return
 
         for sec in sections:
@@ -1710,11 +1626,6 @@ class CoreCorrelatorApp(QMainWindow):
 
         mode = self.combo_mode.currentText()
 
-        label      = self.combo_type.currentText()
-        image_type = SUPPORTED_IMAGE_TYPES.get(label, "")
-        if not image_type:
-            return
-
         checked = self._checked_cores()
         if not checked:
             self.status.showMessage("No cores selected", 3000)
@@ -1735,11 +1646,11 @@ class CoreCorrelatorApp(QMainWindow):
         try:
             if mode == "Overview":
                 final = self._export_overview(
-                    checked[0], image_type, scale, show_scale,
+                    checked[0], scale, show_scale,
                     sel_cols, ranges, mscl_w, gap)
             else:
                 final = self._export_correlate(
-                    checked, image_type, scale, show_scale, show_sec,
+                    checked, scale, show_scale, show_sec,
                     sel_cols, ranges, mscl_w, gap)
         except Exception as exc:
             QMessageBox.warning(self, "Export Error", str(exc))
@@ -1785,9 +1696,9 @@ class CoreCorrelatorApp(QMainWindow):
 
     # -- Overview export --
 
-    def _export_overview(self, core_id, image_type, S, show_scale,
+    def _export_overview(self, core_id, S, show_scale,
                          sel_cols, ranges, mscl_w, gap):
-        sections = self._get_sections_for_core(core_id, image_type)
+        sections = self._get_sections_for_core(core_id)
         if not sections:
             return None
 
@@ -1810,7 +1721,7 @@ class CoreCorrelatorApp(QMainWindow):
 
     # -- Correlate export --
 
-    def _export_correlate(self, checked, image_type, S, show_scale,
+    def _export_correlate(self, checked, S, show_scale,
                           show_sec, sel_cols, ranges, mscl_w, gap):
         # Collect current screen offsets (in px at current zoom)
         screen_off = {}
@@ -1819,7 +1730,7 @@ class CoreCorrelatorApp(QMainWindow):
 
         panels = []   # (PIL image, export_offset_y)
         for cid in checked:
-            sections = self._get_sections_for_core(cid, image_type)
+            sections = self._get_sections_for_core(cid)
             if not sections:
                 continue
             ct, _cm, hdr_h, data_h = self._export_render_strip(
