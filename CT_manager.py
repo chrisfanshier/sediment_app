@@ -528,10 +528,18 @@ def verify_xml_paths(ct_root):
     return results
 
 
+def _fingerprint_parent_folder(tiff_folder):
+    """Recon parent folder (e.g. Recon vs 3_Helical_Scan_Recon), not leaf (e.g. Orthogonal)."""
+    path = (tiff_folder or "").rstrip(os.sep)
+    if not path:
+        return ""
+    return os.path.basename(os.path.dirname(path))
+
+
 def create_xml_fingerprint(record):
     xml_filename = os.path.basename(record["xml_path"])
     if record["xml_root_tag"] == "geotek-ct-stack":
-        parent_folder = os.path.basename(record["tiff_folder"])
+        parent_folder = _fingerprint_parent_folder(record["tiff_folder"])
         return {
             "core_name": record["core_name"],
             "section_number": str(record["section_number"]),
@@ -542,11 +550,13 @@ def create_xml_fingerprint(record):
             "xml_filename": xml_filename
         }
     elif record["xml_root_tag"] == "geotek-image":
+        parent_folder = _fingerprint_parent_folder(record["tiff_folder"])
         return {
             "core_name": record["core_name"],
             "section_number": str(record["section_number"]),
             "xml_root_tag": record["xml_root_tag"],
             "image_type": record.get("image_type", ""),
+            "parent_folder": parent_folder,
             "xml_filename": xml_filename
         }
     else:
