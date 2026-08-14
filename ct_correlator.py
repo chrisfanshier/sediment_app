@@ -7,7 +7,7 @@ Connects directly to the sediment_cores PostgreSQL database via db_util.
 Cruise → Core → Section selection is driven by database queries against
 the ct_xml, cores, cruises, and mscl_files tables.
 
-Image types: giXRayImage and giCTOrthogonalView (shown together; use filename filter to narrow)
+Image types: giXRayImage and giCTOrthogonalView (geotek-image XMLs only; use filename filter to narrow)
 """
 
 import sys
@@ -58,6 +58,9 @@ PRESENTATION_JPEG_QUALITY = 85
 CROP_COL_THRESH     = 0.15
 CROP_ROW_THRESH     = 0.25
 
+# Only ct_xml rows with this root tag are shown in the Correlator
+CORRELATOR_XML_ROOT_TAG = "geotek-image"
+
 MSCL_COLORS = [
     "#1f77b4", "#d62728", "#2ca02c", "#ff7f0e",
     "#9467bd", "#8c564b", "#17becf", "#e377c2",
@@ -80,9 +83,9 @@ def db_get_cruises_with_ct():
             FROM cruises cr
             JOIN cores c  ON c.cruise_id = cr.cruise_id
             JOIN ct_xml x ON x.core_name = c.core_name
-              AND x.image_type IS NOT NULL
+              AND x.xml_root_tag = :root_tag
             ORDER BY cr.cruise_name
-        """)).fetchall()
+        """), {"root_tag": CORRELATOR_XML_ROOT_TAG}).fetchall()
     return [(r[0], r[1]) for r in rows]
 
 
@@ -94,9 +97,9 @@ def db_get_cores_for_cruise(cruise_id, image_type=None):
         FROM cores c
         JOIN ct_xml x ON x.core_name = c.core_name
         WHERE c.cruise_id = :cruise_id
-          AND x.image_type IS NOT NULL
+          AND x.xml_root_tag = :root_tag
     """
-    params = {"cruise_id": cruise_id}
+    params = {"cruise_id": cruise_id, "root_tag": CORRELATOR_XML_ROOT_TAG}
     if image_type:
         q += " AND x.image_type = :image_type"
         params["image_type"] = image_type
@@ -209,10 +212,10 @@ def db_resolve_tif_path(row):
 
 
 def db_get_section_files(core_name, filename_filter=""):
-    """Return {section_number: [row_dict, ...], ...} for all ct_xml rows
-    for core_name across all image types.  Each row_dict contains the full
-    ct_xml columns needed to resolve a TIF path.  Sections are sorted
-    numerically and files within each section are sorted by tif_filename.
+    """Return {section_number: [row_dict, ...], ...} for geotek-image
+    ct_xml rows for core_name.  Each row_dict contains the full ct_xml
+    columns needed to resolve a TIF path.  Sections are sorted numerically
+    and files within each section are sorted by tif_filename.
 
     filename_filter: if non-empty, only rows whose TIF filename contains
     this substring (case-insensitive) are included."""
@@ -222,9 +225,9 @@ def db_get_section_files(core_name, filename_filter=""):
                    tif_filename, processing_stage, xml_root_tag, image_type
             FROM ct_xml
             WHERE core_name = :cn
-              AND image_type IS NOT NULL
+              AND xml_root_tag = :root_tag
             ORDER BY CAST(section_number AS INTEGER), tif_filename
-        """), {"cn": core_name}).fetchall()
+        """), {"cn": core_name, "root_tag": CORRELATOR_XML_ROOT_TAG}).fetchall()
     needle = (filename_filter or "").strip().lower()
     result = defaultdict(list)
     for r in rows:
