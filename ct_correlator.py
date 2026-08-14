@@ -80,6 +80,7 @@ def db_get_cruises_with_ct():
             FROM cruises cr
             JOIN cores c  ON c.cruise_id = cr.cruise_id
             JOIN ct_xml x ON x.core_name = c.core_name
+              AND x.image_type IS NOT NULL
             ORDER BY cr.cruise_name
         """)).fetchall()
     return [(r[0], r[1]) for r in rows]
@@ -93,6 +94,7 @@ def db_get_cores_for_cruise(cruise_id, image_type=None):
         FROM cores c
         JOIN ct_xml x ON x.core_name = c.core_name
         WHERE c.cruise_id = :cruise_id
+          AND x.image_type IS NOT NULL
     """
     params = {"cruise_id": cruise_id}
     if image_type:
@@ -220,6 +222,7 @@ def db_get_section_files(core_name, filename_filter=""):
                    tif_filename, processing_stage, xml_root_tag, image_type
             FROM ct_xml
             WHERE core_name = :cn
+              AND image_type IS NOT NULL
             ORDER BY CAST(section_number AS INTEGER), tif_filename
         """), {"cn": core_name}).fetchall()
     needle = (filename_filter or "").strip().lower()
