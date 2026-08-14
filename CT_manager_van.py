@@ -442,15 +442,9 @@ def import_to_database(validated_records):
                 skipped_by_path += 1
                 continue
 
-            fingerprint = (
-                record["core_name"],
-                str(record["section_number"]),
-                record["xml_root_tag"],
-                record.get("image_type", "") or "",
-                record.get("processing_stage", "") or ""
-            )
+            fp_string = fingerprint_to_string(create_xml_fingerprint(record))
 
-            if fingerprint in existing_fingerprints:
+            if fp_string in existing_fingerprints:
                 print(f"[WARN] Skipping duplicate fingerprint: {record['core_name']}-{record['section_number']} {record['xml_root_tag']} {os.path.basename(record['xml_path'])}")
                 skipped_by_fingerprint += 1
                 continue
@@ -500,6 +494,8 @@ def import_to_database(validated_records):
                     )
                 )
                 saved_count += 1
+                existing_paths.add(record["xml_path"])
+                existing_fingerprints.add(fp_string)
 
             except Exception as e:
                 print(f"[ERROR] Error importing {record['xml_path']}: {e}")
@@ -613,11 +609,20 @@ def create_xml_fingerprint(record):
             "xml_filename": xml_filename
         }
     elif record["xml_root_tag"] == "geotek-image":
+        # Parent recon folder (e.g. "Recon" vs "3_Helical_Scan_Recon") so the
+        # same XML basename in different folder layouts stays distinct.
+        folder = record.get("tiff_folder") or ""
+        parent_folder = (
+            os.path.basename(os.path.dirname(folder.rstrip(os.sep)))
+            if folder else ""
+        )
         return {
             "core_name": record["core_name"],
             "section_number": str(record["section_number"]),
             "xml_root_tag": record["xml_root_tag"],
             "image_type": record.get("image_type", ""),
+            "processing_stage": record.get("processing_stage", ""),
+            "parent_folder": parent_folder,
             "xml_filename": xml_filename
         }
     else:
