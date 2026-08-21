@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Sensor Alignment Tool v2.0")
+        self.setWindowTitle("Sensorius")
         self.resize(1600, 1000)
 
         # Controller
@@ -380,8 +380,8 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.about(
             self,
-            "Sensor Alignment Tool",
-            "Sensor Alignment Tool v2.0\n\n"
+            "Sensorius",
+            "Sensorius\n\n"
             "Multi-sensor depth comparison, calibration,\n"
             "and time-offset correction tool.\n\n"
             "Built with PySide6 + pyqtgraph."
