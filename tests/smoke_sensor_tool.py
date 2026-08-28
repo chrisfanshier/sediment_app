@@ -282,6 +282,85 @@ def t_persisted_columns():
         assert col in ctrl_src, f"{col} missing from analysis_controller"
 
 
+def _db_columns_written_by_controller():
+    """Column names the controller sends to insert_result/update_result.
+
+    insert_result builds its INSERT column list from the payload dict keys, so
+    any key here that the schema lacks fails the whole save at runtime. The
+    payloads are literal dicts assigned to flat_data/calc_flat, plus subscript
+    assignments on flat_data, so they can be read statically.
+    """
+    import ast
+    import sensor_tool.controllers.analysis_controller as ctrl_mod
+
+    tree = ast.parse(open(ctrl_mod.__file__).read())
+    targets = {"flat_data", "calc_flat"}
+    columns = set()
+
+    def is_target(node):
+        return isinstance(node, ast.Name) and node.id in targets
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        lhs = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for t in lhs:
+            if is_target(t) and isinstance(node.value, ast.Dict):
+                columns.update(
+                    k.value for k in node.value.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                )
+            elif (isinstance(t, ast.Subscript) and is_target(t.value)
+                  and isinstance(t.slice, ast.Constant)
+                  and isinstance(t.slice.value, str)):
+                columns.add(t.slice.value)
+
+    return columns
+
+
+def _prepare_db_columns():
+    """Columns prepare_db.py gives sensor_analysis_results (CREATE plus ALTER)."""
+    import re
+    src = open(os.path.join(REPO_ROOT, "prepare_db.py")).read()
+    start = src.index("CREATE TABLE IF NOT EXISTS sensor_analysis_results")
+    end = src.index("print(\"  ✓ sensor_analysis_results table ready\")")
+    body = src[start:end]
+    created = set(re.findall(r"^\s{16}(\w+)\s+[A-Z]", body, re.MULTILINE))
+    altered = set(re.findall(r"ADD COLUMN IF NOT EXISTS\s+(\w+)", body))
+    return created | altered
+
+
+def t_save_columns_exist_in_schema():
+    written = _db_columns_written_by_controller()
+    schema = _prepare_db_columns()
+    assert "result_recoil_max" in written, "payload extraction found nothing"
+    assert "result_recoil_max" in schema, "schema extraction found nothing"
+    missing = sorted(written - schema)
+    assert not missing, (
+        f"controller writes columns prepare_db.py never creates: {missing}")
+
+
+def t_migrations_cover_added_columns():
+    """Every column added after the original CREATE TABLE needs a migration too,
+    for databases that were prepared before it existed."""
+    import re
+    mig_dir = os.path.join(REPO_ROOT, "migrations")
+    sql = "".join(
+        open(os.path.join(mig_dir, f)).read() for f in sorted(os.listdir(mig_dir))
+    )
+    migrated = set(re.findall(r"ADD COLUMN IF NOT EXISTS\s+(\w+)", sql))
+
+    src = open(os.path.join(REPO_ROOT, "prepare_db.py")).read()
+    start = src.index("CREATE TABLE IF NOT EXISTS sensor_analysis_results")
+    end = src.index("print(\"  ✓ sensor_analysis_results table ready\")")
+    altered = set(re.findall(
+        r"ADD COLUMN IF NOT EXISTS\s+(\w+)", src[start:end]))
+
+    assert altered, "prepare_db.py has no backfill ALTER block"
+    missing = sorted(altered - migrated)
+    assert not missing, f"columns backfilled by prepare_db but not migrated: {missing}"
+
+
 def t_migration_example_present():
     path = os.path.join(
         REPO_ROOT, "migrations",
@@ -308,6 +387,8 @@ check("winch loader parameter/epoch helpers", t_winch_loader_parameters)
 check("winch panel widgets present", t_winch_panel_widgets)
 check("winch + recoil_time persisted columns", t_persisted_columns)
 check("winch migration example present", t_migration_example_present)
+check("every saved column exists in prepare_db schema", t_save_columns_exist_in_schema)
+check("added columns have migrations", t_migrations_cover_added_columns)
 
 print()
 if failures:

@@ -1,0 +1,13 @@
+-- result_recoil_time_s column for sensor_analysis_results.
+-- The sensor tool writes this on every Save All that includes calculations,
+-- so saving fails with 'column "result_recoil_time_s" does not exist' until
+-- this is applied. Run against the shipside database.
+-- Copy/rename to .sql or paste into psql.
+--
+-- Re-running prepare_db.py also applies this.
+
+ALTER TABLE sensor_analysis_results
+    ADD COLUMN IF NOT EXISTS result_recoil_time_s double precision;
+
+COMMENT ON COLUMN sensor_analysis_results.result_recoil_time_s IS
+    'Seconds from recoil start to peak recoil, from the calculate-mode results';

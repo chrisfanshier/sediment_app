@@ -1,6 +1,8 @@
 -- Winch alignment columns for sensor_analysis_results (Option B).
 -- Run against the shipside database before using Save All with winch alignment.
 -- Copy/rename to .sql or paste into psql.
+--
+-- Re-running prepare_db.py also applies this.
 
 ALTER TABLE sensor_analysis_results
     ADD COLUMN IF NOT EXISTS winch_trip_index integer,
