@@ -318,15 +318,23 @@ def _db_columns_written_by_controller():
     return columns
 
 
-def _prepare_db_columns():
-    """Columns prepare_db.py gives sensor_analysis_results (CREATE plus ALTER)."""
-    import re
+def _sensor_analysis_table_source():
     src = open(os.path.join(REPO_ROOT, "prepare_db.py")).read()
     start = src.index("CREATE TABLE IF NOT EXISTS sensor_analysis_results")
     end = src.index("print(\"  ✓ sensor_analysis_results table ready\")")
-    body = src[start:end]
-    created = set(re.findall(r"^\s{16}(\w+)\s+[A-Z]", body, re.MULTILINE))
-    altered = set(re.findall(r"ADD COLUMN IF NOT EXISTS\s+(\w+)", body))
+    return src[start:end]
+
+
+def _prepare_db_columns():
+    """Columns prepare_db.py gives sensor_analysis_results (CREATE plus ALTER)."""
+    import re
+    body = _sensor_analysis_table_source()
+    create_body = body[:body.index("ALTER TABLE")]
+    # Column names are lowercase; the type that follows is uppercase. Anchoring
+    # on that keeps SQL keywords out of the result.
+    created = set(re.findall(
+        r"^\s+([a-z_]+)\s+[A-Z]", create_body, re.MULTILINE))
+    altered = set(re.findall(r"ADD COLUMN IF NOT EXISTS\s+([a-z_]+)", body))
     return created | altered
 
 
@@ -335,6 +343,9 @@ def t_save_columns_exist_in_schema():
     schema = _prepare_db_columns()
     assert "result_recoil_max" in written, "payload extraction found nothing"
     assert "result_recoil_max" in schema, "schema extraction found nothing"
+    # Anything that is not a plausible column name means a parse slip.
+    assert all(c.islower() for c in schema), sorted(
+        c for c in schema if not c.islower())
     missing = sorted(written - schema)
     assert not missing, (
         f"controller writes columns prepare_db.py never creates: {missing}")
@@ -348,13 +359,10 @@ def t_migrations_cover_added_columns():
     sql = "".join(
         open(os.path.join(mig_dir, f)).read() for f in sorted(os.listdir(mig_dir))
     )
-    migrated = set(re.findall(r"ADD COLUMN IF NOT EXISTS\s+(\w+)", sql))
+    migrated = set(re.findall(r"ADD COLUMN IF NOT EXISTS\s+([a-z_]+)", sql))
 
-    src = open(os.path.join(REPO_ROOT, "prepare_db.py")).read()
-    start = src.index("CREATE TABLE IF NOT EXISTS sensor_analysis_results")
-    end = src.index("print(\"  ✓ sensor_analysis_results table ready\")")
     altered = set(re.findall(
-        r"ADD COLUMN IF NOT EXISTS\s+(\w+)", src[start:end]))
+        r"ADD COLUMN IF NOT EXISTS\s+([a-z_]+)", _sensor_analysis_table_source()))
 
     assert altered, "prepare_db.py has no backfill ALTER block"
     missing = sorted(altered - migrated)
