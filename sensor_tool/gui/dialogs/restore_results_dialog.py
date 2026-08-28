@@ -29,6 +29,10 @@ def _section_summary(row: dict) -> str:
         parts.append('piston')
     if 'calc_inputs' in params:
         parts.append('calc')
+    if row.get('winch_time_offset_sec') is not None or (
+        params.get('winch', {}).get('aligned')
+    ):
+        parts.append('winch')
     return ', '.join(parts) if parts else 'no sections'
 
 
@@ -127,11 +131,16 @@ class RestoreResultsDialog(QDialog):
         recoil_str = f"{recoil:.3f} m" if recoil is not None else 'n/a'
         trip_idx = r.get('trip_index')
         sc_idx = r.get('start_core_index')
+        winch_offset = r.get('winch_time_offset_sec')
+        winch_str = (
+            f"{winch_offset:+.2f} s" if winch_offset is not None else 'n/a'
+        )
         self._detail_label.setText(
             f"Result #{r.get('result_id')}  |  "
             f"Trip index: {trip_idx if trip_idx is not None else 'n/a'}  |  "
             f"Start core: {sc_idx if sc_idx is not None else 'n/a'}  |  "
-            f"Recoil max: {recoil_str}"
+            f"Recoil max: {recoil_str}  |  "
+            f"Winch offset: {winch_str}"
         )
 
     def _accept_if_selected(self):
