@@ -319,8 +319,6 @@ class AnalysisController:
             self._loaded_cruise_id = cruise_id
 
             self._reset_analysis_state()
-            self._winch_df = None
-            self._winch_file_names = []
             self._update_all_panels_file_info()
             self.main_plot.set_sensor_data(self.sensor_data)
             self.plot_depths()
@@ -358,9 +356,22 @@ class AnalysisController:
         self._current_db_result_id = None  # new analysis session
         self._heave_profiles = None
         self._heave_sel = None
+        self._reset_winch_state()
         # Restore button requires a DB core with saved results
         if self.main_window is not None:
             self.main_window.restore_action.setEnabled(False)
+
+    def _reset_winch_state(self):
+        """Drop winch data and alignment belonging to the previously loaded core.
+
+        Alignment is core-specific, so leaving it set would let the previous
+        core's trip index and file ids be written to the new core's row.
+        """
+        self._winch_df = None
+        self._winch_df_original = None
+        self._winch_file_names = []
+        self._winch_file_ids = []
+        self._clear_winch_trip_state()
 
     def load_calibration(self, file_path: str):
         """Load a JSON calibration file and set up mapping UI."""
