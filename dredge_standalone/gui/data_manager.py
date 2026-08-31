@@ -317,6 +317,7 @@ class DataManagerPage(QtWidgets.QWidget):
         cruise_layout.addWidget(self.delete_cruise_btn)
 
         cruise_layout.addStretch()
+        cruise_group.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
         layout.addWidget(cruise_group)
 
         # ── splitter: dredges | files ─────────────────────────────────
@@ -435,7 +436,7 @@ class DataManagerPage(QtWidgets.QWidget):
         splitter.addWidget(files_group)
         splitter.setSizes([450, 750])
 
-        layout.addWidget(splitter)
+        layout.addWidget(splitter, stretch=1)
 
     @staticmethod
     def _setup_file_table(table: QtWidgets.QTableWidget):
