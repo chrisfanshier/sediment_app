@@ -3,8 +3,9 @@ Main launcher for Shipside Database applications
 Opens all apps in separate browser tabs, or a single app if a port is specified.
 
 Usage:
-    python launcher.py           -> starts all apps
-    python launcher.py 8501      -> starts only the app on port 8501
+    python launcher.py           -> starts all Streamlit apps + desktop apps
+    python launcher.py 8501      -> starts only the Streamlit app on port 8501
+    python launcher.py dredge    -> starts only the Dredge App (PySide6 desktop)
 """
 import subprocess
 import time
@@ -22,14 +23,53 @@ APPS = [
     {"name": "CT Manager",         "script": "CT_manager_van.py",    "port": 8507},
 ]
 
+# PySide6 desktop apps (no browser / port)
+DESKTOP_APPS = [
+    {"name": "Dredge App", "key": "dredge", "module": "dredge_app"},
+]
+
+
+def start_desktop_app(app):
+    """Launch a PySide6 desktop application as a module."""
+    print(f"Starting {app['name']}...")
+    return subprocess.Popen([sys.executable, "-m", app["module"]])
+
+
 def main():
-    # If a port argument is passed, run only that app
+    # Desktop-only launch: python launcher.py dredge
+    if len(sys.argv) > 1 and not sys.argv[1].isdigit():
+        key = sys.argv[1].lower()
+        desktop_apps = [
+            d for d in DESKTOP_APPS
+            if d["key"] == key or d["module"].lower() == key
+        ]
+        if not desktop_apps:
+            print(f"Error: No app found for '{sys.argv[1]}'")
+            print("Available desktop apps: " + ", ".join(d["key"] for d in DESKTOP_APPS))
+            print("Available Streamlit ports: " + ", ".join(str(a["port"]) for a in APPS))
+            sys.exit(1)
+
+        print("=" * 60)
+        print(f"  Starting {desktop_apps[0]['name']}")
+        print("=" * 60)
+        print()
+        process = start_desktop_app(desktop_apps[0])
+        try:
+            process.wait()
+        except KeyboardInterrupt:
+            print("\n\nStopping application...")
+            process.terminate()
+            print("Done.")
+        return
+
+    # If a port argument is passed, run only that Streamlit app
     if len(sys.argv) > 1:
         target_port = sys.argv[1]
         apps_to_run = [a for a in APPS if str(a["port"]) == target_port]
         if not apps_to_run:
             print(f"Error: No app found for port {target_port}")
             print("Available ports: " + ", ".join(str(a["port"]) for a in APPS))
+            print("Available desktop apps: " + ", ".join(d["key"] for d in DESKTOP_APPS))
             sys.exit(1)
     else:
         apps_to_run = APPS  # Default: start everything
@@ -58,11 +98,17 @@ def main():
         processes.append(process)
         time.sleep(2)
 
+    # Start desktop apps when launching the full suite
+    if len(sys.argv) <= 1:
+        for app in DESKTOP_APPS:
+            processes.append(start_desktop_app(app))
+            time.sleep(1)
+
     # Wait for apps to initialize
     print("\nWaiting for app(s) to initialize...")
     time.sleep(3)
 
-    # Open browser tab(s)
+    # Open browser tab(s) for Streamlit apps
     print("\nOpening browser tab(s)...")
     for app in apps_to_run:
         url = f"http://localhost:{app['port']}"
@@ -76,6 +122,9 @@ def main():
     print("\nURLs:")
     for app in apps_to_run:
         print(f"  - {app['name']}: http://localhost:{app['port']}")
+    if len(sys.argv) <= 1:
+        for app in DESKTOP_APPS:
+            print(f"  - {app['name']}: desktop window")
     print("\nPress Ctrl+C to stop.")
     print("=" * 60)
 
