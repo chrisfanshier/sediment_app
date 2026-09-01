@@ -15,9 +15,12 @@ infrastructure is required.
 
 **Easiest (no setup):** double-click `run_windows.bat` (Windows) or run
 `./run_mac_linux.sh` (macOS/Linux) inside this folder. On first run it
-creates a virtual environment and installs the requirements automatically;
-after that it just launches the app (with no console window on Windows).
-Requires Python 3.10+ on the PATH.
+creates a dedicated virtual environment *inside this folder* (`venv/`) and
+installs the requirements automatically; after that it just launches the app
+(with no console window on Windows). It never reuses a venv from elsewhere,
+and if startup fails it keeps the window open and shows the actual error.
+Requires Python 3.10+ on the PATH. If the app ever crashes after launch,
+details are written to `dredge_app_error.log` in your temp folder.
 
 **Manual:**
 
