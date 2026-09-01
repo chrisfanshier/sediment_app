@@ -11,27 +11,46 @@ directory: zip it, move it, share it, and everything (files, metadata,
 annotations) travels together. No PostgreSQL server or other external
 infrastructure is required.
 
-## Installation
+## Installation & running
 
-Requires Python 3.10+.
+**Easiest (no setup):** double-click `run_windows.bat` (Windows) or run
+`./run_mac_linux.sh` (macOS/Linux) inside this folder. On first run it
+creates a virtual environment and installs the requirements automatically;
+after that it just launches the app (with no console window on Windows).
+Requires Python 3.10+ on the PATH.
+
+**Manual:**
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Optionally, for GeoPackage export:
-
-```bash
-pip install geopandas shapely fiona
-```
-
-## Running
-
-From the directory *containing* the `dredge_standalone` folder:
+then, from the directory *containing* the `dredge_standalone` folder:
 
 ```bash
 python -m dredge_standalone
 ```
+
+GeoPackage export is **built in** — the app writes `.gpkg` files directly
+with the standard-library `sqlite3` module (a GeoPackage *is* a SQLite
+database) and `pyproj` for the CRS definition. No geopandas / shapely /
+fiona / GDAL installation is needed.
+
+## Building a single-file executable
+
+Because the app has no GDAL dependency, PyInstaller bundling works without
+any of the usual GDAL/fiona workarounds. On the OS you are targeting
+(a Windows `.exe` must be built on Windows):
+
+```bash
+pip install -r dredge_standalone/requirements.txt pyinstaller
+pyinstaller dredge_standalone/packaging/dredge_app.spec
+```
+
+This produces a single double-clickable `dist/DredgeApp.exe` (~100–150 MB,
+no console window, no Python installation needed on the target machine).
+Note the one-file format extracts itself on launch, so startup takes a few
+extra seconds; everything after that is normal speed.
 
 ## Workflow
 
@@ -91,6 +110,8 @@ pre-built CSV files without a project (annotations are session-only there).
 dredge_standalone/
   __main__.py                 # python -m dredge_standalone entry point
   formats.py                  # ship winch format presets + form constants
+  run_windows.bat             # double-clickable launcher (auto venv setup)
+  run_mac_linux.sh            # launcher for macOS / Linux
   gui/
     main_window.py            # project handling + tabs
     data_manager.py           # metadata entry & file registration page
@@ -100,6 +121,10 @@ dredge_standalone/
     project.py                # ProjectStore: SQLite schema + file copy-in
     loader.py                 # per-dredge dataset assembly pipeline
     file_parsers.py           # USBL / Star-Oddi / winch parsers
+    gpkg.py                   # built-in GeoPackage point-layer writer (no GDAL)
+  packaging/
+    dredge_app.spec           # PyInstaller spec for single-file executable
+    pyinstaller_entry.py      # entry script used by the spec
   requirements.txt
 ```
 

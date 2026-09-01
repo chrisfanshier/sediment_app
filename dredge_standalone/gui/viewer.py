@@ -377,23 +377,12 @@ class ViewerPage(QtWidgets.QWidget):
         self.export_sensor_csv_checkbox.setChecked(False)
         layout.addWidget(self.export_sensor_csv_checkbox)
 
-        try:
-            import geopandas  # noqa: F401
-            gpkg_available = True
-            gpkg_tooltip = "Export as GeoPackage with UTM coordinates"
-        except ImportError:
-            gpkg_available = False
-            gpkg_tooltip = (
-                "GeoPackage export requires 'geopandas' library\n"
-                "Install with: pip install geopandas"
-            )
-
         self.export_gpkg_checkbox = QtWidgets.QCheckBox("GeoPackage (spatial points)")
         self.export_gpkg_checkbox.setChecked(False)
-        self.export_gpkg_checkbox.setEnabled(gpkg_available)
-        self.export_gpkg_checkbox.setToolTip(gpkg_tooltip)
-        if not gpkg_available:
-            self.export_gpkg_checkbox.setStyleSheet("color: gray;")
+        self.export_gpkg_checkbox.setToolTip(
+            "Export as GeoPackage with UTM point geometry (built-in writer, "
+            "no GDAL/geopandas required)"
+        )
         layout.addWidget(self.export_gpkg_checkbox)
 
         layout.addSpacing(5)
@@ -1145,36 +1134,25 @@ class ViewerPage(QtWidgets.QWidget):
                     f"✓ {sensor_csv_filename} ({len(sensor_export)} rows, {len(sensor_export.columns)} columns)"
                 )
 
-            # === GEOPACKAGE EXPORT ===
+            # === GEOPACKAGE EXPORT (built-in writer, no GDAL) ===
             if export_gpkg:
-                try:
-                    import geopandas as gpd
-                    from shapely.geometry import Point
+                from ..persistence.gpkg import write_gpkg_points
 
-                    geometry = [Point(row['easting'], row['northing']) for _, row in usbl_export.iterrows()]
+                epsg = 32610
+                if self.utm_epsg and ":" in self.utm_epsg:
+                    epsg = int(self.utm_epsg.split(":")[1])
 
-                    gdf = gpd.GeoDataFrame(
-                        usbl_export,
-                        geometry=geometry,
-                        crs=self.utm_epsg if self.utm_epsg else "EPSG:32610"
-                    )
+                gpkg_filename = f"{prefix}.gpkg"
+                gpkg_path = os.path.normpath(os.path.join(output_dir, gpkg_filename))
+                n_written = write_gpkg_points(
+                    usbl_export, gpkg_path, layer='usbl_points', epsg=epsg,
+                    x_col='easting', y_col='northing',
+                )
 
-                    gpkg_filename = f"{prefix}.gpkg"
-                    gpkg_path = os.path.normpath(os.path.join(output_dir, gpkg_filename))
-                    gdf.to_file(gpkg_path, layer='usbl_points', driver='GPKG')
-
-                    ann_count = len(self.annotations) if self.annotations else 0
-                    exported_files.append(
-                        f"✓ {gpkg_filename} (Point layer: {len(gdf)} points, {ann_count} annotation columns)"
-                    )
-
-                except ImportError:
-                    QtWidgets.QMessageBox.warning(
-                        self, "GeoPackage Not Available",
-                        "GeoPackage export requires 'geopandas' library.\n\n"
-                        "Install with: pip install geopandas\n\n"
-                        "CSV export will proceed without GeoPackage."
-                    )
+                ann_count = len(self.annotations) if self.annotations else 0
+                exported_files.append(
+                    f"✓ {gpkg_filename} (Point layer: {n_written} points, {ann_count} annotation columns)"
+                )
 
             files_list = "\n".join(exported_files)
             QtWidgets.QMessageBox.information(
