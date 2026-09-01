@@ -67,6 +67,11 @@ class SensorPlotView(QWidget):
 
         self._setup_ui()
 
+    @property
+    def plot_item(self) -> pg.PlotItem:
+        """Underlying plot item (for X-axis linking with secondary views)."""
+        return self.plot_widget.plotItem
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

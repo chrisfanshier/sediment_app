@@ -320,6 +320,7 @@ def create_sensor_analysis_table():
 
                 -- Calculation results (all real columns — queried/reported directly)
                 result_recoil_max       FLOAT,
+                result_recoil_time_s    FLOAT,
                 result_fall_dist        FLOAT,
                 result_suck_in          FLOAT,
                 result_recoil_start     FLOAT,
@@ -330,6 +331,11 @@ def create_sensor_analysis_table():
                 result_pen_deficit      FLOAT,
                 result_freefall_est     FLOAT,
                 trigger_pen_m           FLOAT,
+
+                -- Winch alignment (real columns — see migrations/001)
+                winch_trip_index        INTEGER,
+                winch_trip_datetime     TIMESTAMP,
+                winch_time_offset_sec   FLOAT,
 
                 -- All input parameters stored as JSONB (no schema migrations needed)
                 -- Keys: depth_offset, time_offset, trip, piston, calc_inputs, calc_notes
@@ -350,6 +356,16 @@ def create_sensor_analysis_table():
             CREATE TRIGGER sensor_analysis_results_modified
                 BEFORE UPDATE ON sensor_analysis_results
                 FOR EACH ROW EXECUTE FUNCTION update_modified_at();
+        """))
+
+        # CREATE TABLE IF NOT EXISTS leaves an existing table untouched, so
+        # columns added after a database was first prepared must be backfilled.
+        conn.execute(text("""
+            ALTER TABLE sensor_analysis_results
+                ADD COLUMN IF NOT EXISTS result_recoil_time_s  FLOAT,
+                ADD COLUMN IF NOT EXISTS winch_trip_index      INTEGER,
+                ADD COLUMN IF NOT EXISTS winch_trip_datetime   TIMESTAMP,
+                ADD COLUMN IF NOT EXISTS winch_time_offset_sec FLOAT;
         """))
         conn.commit()
     print("  ✓ sensor_analysis_results table ready")

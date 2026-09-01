@@ -159,7 +159,8 @@ def fetch_results_for_core(core_id: int) -> list[dict]:
         rows = conn.execute(
             text("""
                 SELECT result_id, analyzed_at, trip_index, start_core_index,
-                       result_recoil_max, params
+                       result_recoil_max, winch_trip_index, winch_time_offset_sec,
+                       params
                 FROM sensor_analysis_results
                 WHERE core_id = :cid
                 ORDER BY analyzed_at DESC NULLS LAST

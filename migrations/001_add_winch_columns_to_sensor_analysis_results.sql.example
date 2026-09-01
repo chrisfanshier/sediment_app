@@ -1,0 +1,17 @@
+-- Winch alignment columns for sensor_analysis_results (Option B).
+-- Run against the shipside database before using Save All with winch alignment.
+-- Copy/rename to .sql or paste into psql.
+--
+-- Re-running prepare_db.py also applies this.
+
+ALTER TABLE sensor_analysis_results
+    ADD COLUMN IF NOT EXISTS winch_trip_index integer,
+    ADD COLUMN IF NOT EXISTS winch_trip_datetime timestamp without time zone,
+    ADD COLUMN IF NOT EXISTS winch_time_offset_sec double precision;
+
+COMMENT ON COLUMN sensor_analysis_results.winch_trip_index IS
+    'Row index of winch trip in the original (pre-alignment) concatenated winch series';
+COMMENT ON COLUMN sensor_analysis_results.winch_trip_datetime IS
+    'Winch trip datetime before alignment offset is applied';
+COMMENT ON COLUMN sensor_analysis_results.winch_time_offset_sec IS
+    'Seconds added to winch datetimes to align winch_trip with sensor trip';
