@@ -154,19 +154,14 @@ class DataManagerPage(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.store: ProjectStore | None = None
-        self._cruise_id: int | None = None
-        self._core_id: int | None = None
+        self._cruises: list[dict] = []
+        self._cores: list[dict] = []
         self._build_ui()
 
     def set_store(self, store: ProjectStore | None):
         self.store = store
         self._set_enabled(store is not None)
-        self._refresh_cruises()
-        self._cruise_id = None
-        self._core_id = None
-        self._refresh_cores()
-        self._refresh_sensor_files()
-        self._refresh_winch_files()
+        self.refresh(keep_selection=False)
 
     def _build_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
@@ -252,30 +247,83 @@ class DataManagerPage(QtWidgets.QWidget):
         ):
             w.setEnabled(on)
 
-    def _refresh_cruises(self):
+    def _current_cruise(self) -> dict | None:
+        idx = self.cruise_combo.currentIndex()
+        if 0 <= idx < len(self._cruises):
+            return self._cruises[idx]
+        return None
+
+    def _current_core(self) -> dict | None:
+        idx = self.core_combo.currentIndex()
+        if 0 <= idx < len(self._cores):
+            return self._cores[idx]
+        return None
+
+    def refresh(self, keep_selection: bool = True):
+        """Reload cruises/cores/files from the store."""
+        prev_cruise_id = None
+        prev_core_id = None
+        if keep_selection:
+            cruise = self._current_cruise()
+            core = self._current_core()
+            prev_cruise_id = cruise["cruise_id"] if cruise else None
+            prev_core_id = core["core_id"] if core else None
+
         self.cruise_combo.blockSignals(True)
         self.cruise_combo.clear()
-        if self.store:
-            for c in self.store.fetch_cruises():
-                label = c["cruise_name"]
-                if c.get("vessel_name"):
-                    label += f" — {c['vessel_name']}"
-                self.cruise_combo.addItem(label, c["cruise_id"])
+        self._cruises = self.store.fetch_cruises() if self.store else []
+        for cr in self._cruises:
+            label = cr["cruise_name"]
+            if cr.get("vessel_name"):
+                label += f" — {cr['vessel_name']}"
+            self.cruise_combo.addItem(label)
+
+        cruise_index = 0 if self._cruises else -1
+        if prev_cruise_id is not None:
+            for i, cr in enumerate(self._cruises):
+                if cr["cruise_id"] == prev_cruise_id:
+                    cruise_index = i
+                    break
+        self.cruise_combo.setCurrentIndex(cruise_index if self._cruises else -1)
         self.cruise_combo.blockSignals(False)
 
-    def _refresh_cores(self):
+        self._refresh_cruise_details(prev_core_id=prev_core_id if keep_selection else None)
+
+    def _refresh_cruise_details(self, prev_core_id: int | None = None):
+        cruise = self._current_cruise()
+
         self.core_combo.blockSignals(True)
         self.core_combo.clear()
-        if self.store and self._cruise_id:
-            for c in self.store.fetch_cores(self._cruise_id):
-                self.core_combo.addItem(c["core_name"], c["core_id"])
+        self._cores = []
+        if cruise is not None:
+            self._cores = self.store.fetch_cores(cruise["cruise_id"])
+            for c in self._cores:
+                self.core_combo.addItem(c["core_name"])
+
+        core_index = -1
+        if prev_core_id is not None:
+            for i, c in enumerate(self._cores):
+                if c["core_id"] == prev_core_id:
+                    core_index = i
+                    break
+        elif len(self._cores) == 1:
+            core_index = 0
+        self.core_combo.setCurrentIndex(core_index)
         self.core_combo.blockSignals(False)
+
+        self._refresh_sensor_files()
+        self._refresh_winch_files()
+
+    def _refresh_cruises(self):
+        """Backward-compatible alias."""
+        self.refresh(keep_selection=True)
 
     def _refresh_sensor_files(self):
         self.sensor_table.setRowCount(0)
-        if not self.store or not self._core_id:
+        core = self._current_core()
+        if not self.store or core is None:
             return
-        for sf in self.store.fetch_sensor_files(self._core_id):
+        for sf in self.store.fetch_sensor_files(core["core_id"]):
             row = self.sensor_table.rowCount()
             self.sensor_table.insertRow(row)
             self.sensor_table.setItem(row, 0, QtWidgets.QTableWidgetItem(sf["file_name"]))
@@ -286,9 +334,10 @@ class DataManagerPage(QtWidgets.QWidget):
 
     def _refresh_winch_files(self):
         self.winch_table.setRowCount(0)
-        if not self.store or not self._cruise_id:
+        cruise = self._current_cruise()
+        if not self.store or cruise is None:
             return
-        for wf in self.store.fetch_winch_files(self._cruise_id):
+        for wf in self.store.fetch_winch_files(cruise["cruise_id"]):
             row = self.winch_table.rowCount()
             self.winch_table.insertRow(row)
             self.winch_table.setItem(row, 0, QtWidgets.QTableWidgetItem(wf["file_name"]))
@@ -298,14 +347,9 @@ class DataManagerPage(QtWidgets.QWidget):
             self.winch_table.item(row, 0).setData(QtCore.Qt.UserRole, wf["winch_file_id"])
 
     def _on_cruise_changed(self, index: int):
-        self._cruise_id = self.cruise_combo.itemData(index) if index >= 0 else None
-        self._core_id = None
-        self._refresh_cores()
-        self._refresh_sensor_files()
-        self._refresh_winch_files()
+        self._refresh_cruise_details()
 
     def _on_core_changed(self, index: int):
-        self._core_id = self.core_combo.itemData(index) if index >= 0 else None
         self._refresh_sensor_files()
 
     def _add_cruise(self):
@@ -314,76 +358,81 @@ class DataManagerPage(QtWidgets.QWidget):
             return
         name, vessel, notes = dlg.values()
         self.store.add_cruise(name, vessel, notes)
-        self._refresh_cruises()
+        self.refresh(keep_selection=False)
+        for i, cr in enumerate(self._cruises):
+            if cr["cruise_name"] == name:
+                self.cruise_combo.setCurrentIndex(i)
+                self._refresh_cruise_details()
+                break
         self.dataChanged.emit()
 
     def _edit_cruise(self):
-        if self._cruise_id is None:
-            return
-        cruises = {c["cruise_id"]: c for c in self.store.fetch_cruises()}
-        cruise = cruises.get(self._cruise_id)
-        if not cruise:
+        cruise = self._current_cruise()
+        if cruise is None:
             return
         dlg = CruiseDialog(self, cruise)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
         name, vessel, notes = dlg.values()
-        self.store.update_cruise(self._cruise_id, name, vessel, notes)
-        self._refresh_cruises()
+        self.store.update_cruise(cruise["cruise_id"], name, vessel, notes)
+        self.refresh(keep_selection=True)
         self.dataChanged.emit()
 
     def _delete_cruise(self):
-        if self._cruise_id is None:
+        cruise = self._current_cruise()
+        if cruise is None:
             return
         if QtWidgets.QMessageBox.question(
             self, "Delete Cruise", "Delete this cruise and all cores/files?",
         ) != QtWidgets.QMessageBox.Yes:
             return
-        self.store.delete_cruise(self._cruise_id)
-        self._cruise_id = None
-        self._refresh_cruises()
-        self._on_cruise_changed(-1)
+        self.store.delete_cruise(cruise["cruise_id"])
+        self.refresh(keep_selection=False)
         self.dataChanged.emit()
 
     def _add_core(self):
-        if self._cruise_id is None:
+        cruise = self._current_cruise()
+        if cruise is None:
             QtWidgets.QMessageBox.information(self, "Select Cruise", "Select or create a cruise first.")
             return
         dlg = CoreDialog(self)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        self.store.add_core(self._cruise_id, **dlg.values())
-        self._refresh_cores()
+        core_id = self.store.add_core(cruise["cruise_id"], **dlg.values())
+        self._refresh_cruise_details()
+        for i, c in enumerate(self._cores):
+            if c["core_id"] == core_id:
+                self.core_combo.setCurrentIndex(i)
+                break
+        self._refresh_sensor_files()
         self.dataChanged.emit()
 
     def _edit_core(self):
-        if self._core_id is None:
-            return
-        core = self.store.get_core(self._core_id)
-        if not core:
+        core = self._current_core()
+        if core is None:
             return
         dlg = CoreDialog(self, core)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
-        self.store.update_core(self._core_id, **dlg.values())
-        self._refresh_cores()
+        self.store.update_core(core["core_id"], **dlg.values())
+        self._refresh_cruise_details(prev_core_id=core["core_id"])
         self.dataChanged.emit()
 
     def _delete_core(self):
-        if self._core_id is None:
+        core = self._current_core()
+        if core is None:
             return
         if QtWidgets.QMessageBox.question(
             self, "Delete Core", "Delete this core and all sensor files?",
         ) != QtWidgets.QMessageBox.Yes:
             return
-        self.store.delete_core(self._core_id)
-        self._core_id = None
-        self._refresh_cores()
-        self._refresh_sensor_files()
+        self.store.delete_core(core["core_id"])
+        self._refresh_cruise_details()
         self.dataChanged.emit()
 
     def _add_sensor_files(self):
-        if self._core_id is None:
+        core = self._current_core()
+        if core is None:
             QtWidgets.QMessageBox.information(self, "Select Core", "Select or create a core first.")
             return
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
@@ -414,7 +463,7 @@ class DataManagerPage(QtWidgets.QWidget):
         for path in paths:
             try:
                 self.store.add_sensor_file(
-                    self._core_id, path, sensor_location=loc,
+                    core["core_id"], path, sensor_location=loc,
                     sensor_type=stype.strip() or None,
                 )
             except Exception as exc:
@@ -432,7 +481,8 @@ class DataManagerPage(QtWidgets.QWidget):
         self.dataChanged.emit()
 
     def _add_winch_file(self):
-        if self._cruise_id is None:
+        cruise = self._current_cruise()
+        if cruise is None:
             QtWidgets.QMessageBox.information(self, "Select Cruise", "Select a cruise first.")
             return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -445,7 +495,7 @@ class DataManagerPage(QtWidgets.QWidget):
         if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
         self.store.add_winch_file(
-            self._cruise_id, path, dlg.settings,
+            cruise["cruise_id"], path, dlg.settings,
             start_time=dlg.start_time, end_time=dlg.end_time,
             notes=dlg.notes,
         )
