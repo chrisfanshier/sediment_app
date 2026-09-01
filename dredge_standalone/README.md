@@ -1,4 +1,4 @@
-# Dredge App (standalone)
+# Dragognosificator
 
 Interactive viewer for dredge deployments: a USBL location map linked to
 high-frequency time-series plots (Star-Oddi sensor + winch data), with brush
@@ -7,20 +7,28 @@ metadata entry and file uploads, so it runs entirely on its own.
 
 All metadata lives in a per-project **SQLite** database and all data files are
 **copied into the project folder**, so a project is a single portable
-directory: zip it, move it, share it, and everything (files, metadata,
-annotations) travels together. No PostgreSQL server or other external
-infrastructure is required.
+directory. No PostgreSQL server or Streamlit apps required.
+
+## What the user needs (uncompiled / launcher version)
+
+| Requirement | Details |
+|---|---|
+| **Python** | **3.10 or newer** (3.11 / 3.12 recommended) |
+| **PATH** | The `python` command must work from a Command Prompt / terminal. On Windows, tick **"Add python.exe to PATH"** during installation from [python.org](https://www.python.org/downloads/). If `python` is not found, the launcher tries `py -3`. |
+| **Internet** | Only on **first run** of `run_windows.bat` / `run_mac_linux.sh`, while pip installs the requirements into a dedicated `dredge_standalone/venv/`. After that, offline use is fine. |
+| **Linux extra** | On Debian/Ubuntu, install `python3-venv` once if venv creation fails (`sudo apt install python3-venv`). |
+
+The **compiled `.exe`** (`Dragognosificator.exe`) needs **none of the above** on the target machine — it is a self-contained double-clickable file (~100–150 MB). Build it on Windows with `packaging/build_windows.bat`.
+
+### Uncompiled vs compiled — which to share?
+
+**Uncompiled (launcher + source)** is the better choice when you expect to **add winch formats or other tweaks**: ship the `dredge_standalone` folder (or a zip of the public repo). Users double-click `run_windows.bat`; you edit `formats.py` (winch presets) and push an update — they pull / re-download and run again (delete `dredge_standalone/venv` only if dependencies changed).
+
+**Compiled `.exe`** is for recipients who should not install Python. Rebuild and re-share the exe whenever you change the code.
 
 ## Installation & running
 
-**Easiest (no setup):** double-click `run_windows.bat` (Windows) or run
-`./run_mac_linux.sh` (macOS/Linux) inside this folder. On first run it
-creates a dedicated virtual environment *inside this folder* (`venv/`) and
-installs the requirements automatically; after that it just launches the app
-(with no console window on Windows). It never reuses a venv from elsewhere,
-and if startup fails it keeps the window open and shows the actual error.
-Requires Python 3.10+ on the PATH. If the app ever crashes after launch,
-details are written to `dredge_app_error.log` in your temp folder.
+**Easiest:** double-click `run_windows.bat` (Windows) or run `./run_mac_linux.sh` (macOS/Linux) inside this folder. On first run it creates a dedicated virtual environment *inside this folder* (`venv/`) and installs requirements automatically; after that it launches with no console window. If startup fails, the window stays open and shows the actual error. Runtime crashes are logged to `dragognosificator_error.log` in your temp folder.
 
 **Manual:**
 
@@ -34,26 +42,31 @@ then, from the directory *containing* the `dredge_standalone` folder:
 python -m dredge_standalone
 ```
 
-GeoPackage export is **built in** — the app writes `.gpkg` files directly
-with the standard-library `sqlite3` module (a GeoPackage *is* a SQLite
-database) and `pyproj` for the CRS definition. No geopandas / shapely /
-fiona / GDAL installation is needed.
+GeoPackage export is **built in** (stdlib `sqlite3` + `pyproj`) — no geopandas / GDAL required.
 
 ## Building a single-file executable
 
-Because the app has no GDAL dependency, PyInstaller bundling works without
-any of the usual GDAL/fiona workarounds. On the OS you are targeting
-(a Windows `.exe` must be built on Windows):
+On **Windows** (produces `dist\Dragognosificator.exe`):
+
+```bat
+dredge_standalone\packaging\build_windows.bat
+```
+
+On **macOS / Linux**:
+
+```bash
+chmod +x dredge_standalone/packaging/build_mac_linux.sh
+./dredge_standalone/packaging/build_mac_linux.sh
+```
+
+Or manually:
 
 ```bash
 pip install -r dredge_standalone/requirements.txt pyinstaller
-pyinstaller dredge_standalone/packaging/dredge_app.spec
+pyinstaller dredge_standalone/packaging/dragognosificator.spec
 ```
 
-This produces a single double-clickable `dist/DredgeApp.exe` (~100–150 MB,
-no console window, no Python installation needed on the target machine).
-Note the one-file format extracts itself on launch, so startup takes a few
-extra seconds; everything after that is normal speed.
+The one-file bundle self-extracts on launch (a few extra seconds at startup); no Python needed on the target machine.
 
 ## Workflow
 
@@ -61,84 +74,30 @@ extra seconds; everything after that is normal speed.
 
    ```
    MyProject/
-     dredge_data.sqlite     # metadata + annotations
-     sensor_data/<cruise>/  # copied-in Star-Oddi files
-     winch_data/<cruise>/   # copied-in winch logs
-     usbl_data/<cruise>/    # copied-in USBL files
+     dredge_data.sqlite
+     sensor_data/<cruise>/
+     winch_data/<cruise>/
+     usbl_data/<cruise>/
    ```
 
-   The last project is reopened automatically on the next launch
-   (File ▸ Recent Projects lists earlier ones).
+2. **Data Manager tab** — cruises, dredge deployments (name, start/end UTC, USBL distance), sensor / winch / USBL file registration. Winch presets live in **`formats.py`** — add new ships there. Sensor location is a free-text field.
 
-2. **Data Manager tab** — enter metadata and register files:
-   - **Cruise**: create one per cruise (multiple cruises can coexist in one
-     project).
-   - **Dredge deployments**: name, start/end datetimes (UTC), optional USBL
-     distance and notes. The start/end window is what the viewer uses to
-     truncate all data sources.
-   - **Sensor (Star-Oddi)**: `.dat` / `.acc` files, assigned to a specific
-     dredge, with sensor location and measurement types.
-   - **Winch**: any delimited winch log. Pick a ship format preset
-     (Sikuliaq, Armstrong, Atlantis, Revelle, Thompson, Kilo Moana, …) or
-     configure delimiter / header lines / column names / datetime code by
-     hand, preview the raw rows, then **Test Parse** — saving is only enabled
-     after a successful test, and the test uses the exact parser the viewer
-     uses later. The file's start/end times are stored for overlap matching.
-   - **USBL**: `$PSONLLD` files. Start/end times are auto-detected (with
-     midnight-rollover handling) and previewed before saving.
-
-   Winch and USBL files are **pooled per cruise** and matched to dredges by
-   time overlap at load time — register a day-long file once and every dredge
-   whose window overlaps it picks it up. Sensor files belong to one dredge.
-
-3. **Viewer tab** — pick a cruise and a dredge; the app merges the dredge's
-   Star-Oddi files with overlapping winch data into the time-series frame,
-   loads overlapping USBL fixes, truncates everything to the deployment
-   window, and displays the linked map + time-series plots. Brush-select a
-   time range, watch the corresponding USBL fixes highlight, and save named
-   zone annotations.
-
-   **Annotations are persisted** in the project database per dredge — close
-   the app, reopen the project, reselect the dredge, and they're back.
-
-4. **Export** — CSV (annotation metadata + annotated USBL), CSV (merged
-   sensor & winch time series), and/or GeoPackage with UTM point geometry.
-
-`File ▸ Load USBL CSV… / Load Sensor CSV…` remain available for viewing
-pre-built CSV files without a project (annotations are session-only there).
+3. **Viewer tab** — cruise + dredge dropdowns, linked map/time-series, brush annotations (persisted per dredge), export.
 
 ## Layout
 
 ```
 dredge_standalone/
-  __main__.py                 # python -m dredge_standalone entry point
-  formats.py                  # ship winch format presets + form constants
-  run_windows.bat             # double-clickable launcher (auto venv setup)
-  run_mac_linux.sh            # launcher for macOS / Linux
+  __main__.py
+  formats.py                  # winch ship presets — edit this to add formats
+  run_windows.bat
+  run_mac_linux.sh
   gui/
-    main_window.py            # project handling + tabs
-    data_manager.py           # metadata entry & file registration page
-    winch_dialog.py           # winch format/preview/test-parse dialog
-    viewer.py                 # map + time-series viewer page
   persistence/
-    project.py                # ProjectStore: SQLite schema + file copy-in
-    loader.py                 # per-dredge dataset assembly pipeline
-    file_parsers.py           # USBL / Star-Oddi / winch parsers
-    gpkg.py                   # built-in GeoPackage point-layer writer (no GDAL)
+    gpkg.py                   # built-in GeoPackage writer
   packaging/
-    dredge_app.spec           # PyInstaller spec for single-file executable
-    pyinstaller_entry.py      # entry script used by the spec
+    dragognosificator.spec
+    build_windows.bat
+    build_mac_linux.sh
   requirements.txt
 ```
-
-## Data format notes
-
-- All datetimes are treated as **UTC** throughout.
-- USBL files must contain the date as `YYYYMMDD` in the filename
-  (e.g. `PSONLLD_20251018_000000.txt`); per-row times come from the
-  `$PSONLLD` records and midnight rollover within a file is corrected.
-- Star-Oddi `.dat` files use comma decimal separators and `DD.MM.YYYY`
-  datetimes; `.acc` acceleration files are also supported.
-- Winch parsing settings (delimiter, header lines, columns, datetime
-  expression, numeric columns) are stored per file in the database, so files
-  from different ships can coexist in one cruise.

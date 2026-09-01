@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Dredge App
+title Dragognosificator
 rem Double-clickable launcher. Creates a dedicated Python environment inside
 rem this folder (dredge_standalone\venv) on first run — it deliberately does
 rem NOT reuse any venv that may exist elsewhere, so it can't be broken by

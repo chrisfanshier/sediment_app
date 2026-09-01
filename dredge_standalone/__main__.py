@@ -7,8 +7,9 @@ import traceback
 from pyqtgraph.Qt import QtWidgets
 
 from .gui.main_window import MainWindow
+from . import APP_NAME
 
-CRASH_LOG = os.path.join(tempfile.gettempdir(), "dredge_app_error.log")
+CRASH_LOG = os.path.join(tempfile.gettempdir(), "dragognosificator_error.log")
 
 
 def _excepthook(exc_type, exc_value, exc_tb):
@@ -30,7 +31,7 @@ def _excepthook(exc_type, exc_value, exc_tb):
     if app is not None:
         QtWidgets.QMessageBox.critical(
             None,
-            "Dredge App — Unexpected Error",
+            f"{APP_NAME} — Unexpected Error",
             f"An unexpected error occurred:\n\n{exc_value}\n\n"
             f"Details were written to:\n{CRASH_LOG}",
         )
@@ -39,8 +40,8 @@ def _excepthook(exc_type, exc_value, exc_tb):
 def main() -> int:
     sys.excepthook = _excepthook
     app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("Dredge App")
-    app.setOrganizationName("DredgeApp")
+    app.setApplicationName(APP_NAME)
+    app.setOrganizationName(APP_NAME)
     window = MainWindow()
     window.show()
     return app.exec()

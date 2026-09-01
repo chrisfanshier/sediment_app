@@ -3,6 +3,7 @@ import os
 
 from pyqtgraph.Qt import QtWidgets, QtCore
 
+from .. import APP_NAME
 from ..persistence.project import ProjectStore, DB_FILENAME
 from .data_manager import DataManagerPage
 from .viewer import ViewerPage
@@ -13,11 +14,11 @@ _MAX_RECENT = 8
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Dredge App")
+        self.setWindowTitle(APP_NAME)
         self.resize(1400, 900)
 
         self.store = None
-        self.settings = QtCore.QSettings("DredgeApp", "DredgeApp")
+        self.settings = QtCore.QSettings(APP_NAME, APP_NAME)
 
         self.tabs = QtWidgets.QTabWidget()
         self.data_manager = DataManagerPage()
@@ -142,7 +143,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.data_manager.set_store(store)
         self.viewer.set_store(store)
 
-        self.setWindowTitle(f"Dredge App — {path}")
+        self.setWindowTitle(f"{APP_NAME} — {path}")
         self._remember_project(path)
 
         n_cruises = len(store.fetch_cruises())

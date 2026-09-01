@@ -1,4 +1,4 @@
-"""PyInstaller entry point for the Dredge App single-file executable.
+"""PyInstaller entry point for Dragognosificator.
 
 Not used when running from source (use ``python -m dredge_standalone``).
 """

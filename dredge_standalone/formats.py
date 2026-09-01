@@ -65,13 +65,5 @@ WINCH_FORMATS = {
     }
 }
 
-# Sensor location choices offered in the sensor-file registration form.
-SENSOR_LOCATIONS = [
-    "Weight Stand",
-    "Release Device",
-    "Trigger Core/Weight",
-    "Other Location",
-]
-
 # Measurement types selectable for a sensor file.
 SENSOR_MEASUREMENTS = ["Temperature", "Depth/Pressure", "Acceleration", "Tilt"]

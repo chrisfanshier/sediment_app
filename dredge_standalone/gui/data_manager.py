@@ -8,7 +8,8 @@ files are assigned to a specific dredge.
 """
 from pyqtgraph.Qt import QtWidgets, QtCore
 
-from ..formats import SENSOR_LOCATIONS, SENSOR_MEASUREMENTS
+from .. import APP_NAME
+from ..formats import SENSOR_MEASUREMENTS
 from ..persistence import file_parsers as fp
 from .winch_dialog import WinchImportDialog
 
@@ -143,15 +144,9 @@ class SensorFileDialog(QtWidgets.QDialog):
         files_label.setStyleSheet("font-weight: bold;")
         form.addRow("File(s):", files_label)
 
-        self.location_combo = QtWidgets.QComboBox()
-        self.location_combo.addItems(["Select Location…"] + SENSOR_LOCATIONS)
-        self.location_combo.currentTextChanged.connect(self._on_location_changed)
-        form.addRow("Sensor location*:", self.location_combo)
-
-        self.other_location_edit = QtWidgets.QLineEdit()
-        self.other_location_edit.setPlaceholderText("Specify other location")
-        self.other_location_edit.setVisible(False)
-        form.addRow("", self.other_location_edit)
+        self.location_edit = QtWidgets.QLineEdit()
+        self.location_edit.setPlaceholderText("e.g., Weight Stand, Release Device, Trigger Core/Weight")
+        form.addRow("Sensor location*:", self.location_edit)
 
         measurements_box = QtWidgets.QWidget()
         m_layout = QtWidgets.QHBoxLayout(measurements_box)
@@ -174,15 +169,9 @@ class SensorFileDialog(QtWidgets.QDialog):
         btns.rejected.connect(self.reject)
         form.addRow(btns)
 
-    def _on_location_changed(self, text):
-        self.other_location_edit.setVisible(text == "Other Location")
-
     def _validate(self):
-        if self.location_combo.currentIndex() == 0:
-            QtWidgets.QMessageBox.warning(self, "Missing Field", "Please select a sensor location.")
-            return
-        if self.location_combo.currentText() == "Other Location" and not self.other_location_edit.text().strip():
-            QtWidgets.QMessageBox.warning(self, "Missing Field", "Please specify the other location.")
+        if not self.location_edit.text().strip():
+            QtWidgets.QMessageBox.warning(self, "Missing Field", "Please enter a sensor location.")
             return
         if not any(cb.isChecked() for cb in self.measure_checks.values()):
             QtWidgets.QMessageBox.warning(self, "Missing Field", "Please select at least one measurement.")
@@ -190,12 +179,9 @@ class SensorFileDialog(QtWidgets.QDialog):
         self.accept()
 
     def values(self):
-        location = self.location_combo.currentText()
-        if location == "Other Location":
-            location = self.other_location_edit.text().strip()
         measurements = [m for m, cb in self.measure_checks.items() if cb.isChecked()]
         return (
-            location,
+            self.location_edit.text().strip(),
             ", ".join(measurements),
             self.remarks_edit.text().strip() or None,
         )

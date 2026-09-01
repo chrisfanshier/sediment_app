@@ -1,4 +1,4 @@
-# Standalone Dredge App dependencies
+# Dragognosificator dependencies
 #
 # Run from the folder containing this package with:
 #     python -m dredge_standalone

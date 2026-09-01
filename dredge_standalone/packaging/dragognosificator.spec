@@ -1,12 +1,14 @@
-# PyInstaller spec for the Dredge App single-file executable.
+# PyInstaller spec for Dragognosificator single-file executable.
 #
-# Build (from any directory, on the OS you are targeting):
-#     pyinstaller path/to/dredge_standalone/packaging/dredge_app.spec
+# Build on the OS you are targeting (a Windows .exe must be built on Windows):
+#     pyinstaller dredge_standalone/packaging/dragognosificator.spec
 #
-# Produces dist/DredgeApp (or DredgeApp.exe on Windows). Since the app has no
-# GDAL/geopandas dependency (GeoPackage export uses the built-in sqlite
-# writer), no special hooks or data-file workarounds are required beyond
-# PyInstaller's stock PySide6 / pyproj hooks.
+# Or double-click / run:
+#     dredge_standalone/packaging/build_windows.bat
+#
+# Produces dist/Dragognosificator.exe (Windows) or dist/Dragognosificator
+# (macOS/Linux).  No GDAL/geopandas — GeoPackage export uses the built-in
+# sqlite writer, so no special PyInstaller hooks are required.
 import os
 
 root = os.path.abspath(os.path.join(SPECPATH, "..", ".."))
@@ -20,7 +22,6 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     excludes=[
-        # Heavy Qt modules the app never uses — keeps the exe smaller.
         "PySide6.QtWebEngineCore",
         "PySide6.QtWebEngineWidgets",
         "PySide6.QtWebEngineQuick",
@@ -49,7 +50,6 @@ a = Analysis(
         "PySide6.QtDesigner",
         "PySide6.QtHelp",
         "PySide6.QtTest",
-        # Non-Qt extras
         "tkinter",
         "matplotlib",
         "IPython",
@@ -66,10 +66,10 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="DredgeApp",
+    name="Dragognosificator",
     debug=False,
     strip=False,
     upx=False,
-    console=False,       # no console window (pythonw-style)
+    console=False,
     onefile=True,
 )

@@ -187,7 +187,7 @@ def write_gpkg_points(
             "(table_name, data_type, identifier, description, last_change, "
             " min_x, min_y, max_x, max_y, srs_id) "
             "VALUES (?, 'features', ?, ?, ?, ?, ?, ?, ?, ?)",
-            (layer, layer, "Exported by Dredge App", now,
+            (layer, layer, "Exported by Dragognosificator", now,
              float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max()),
              epsg),
         )
