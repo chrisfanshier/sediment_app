@@ -79,6 +79,16 @@ WINCH_FORMATS = {
 SENSOR_LOCATIONS = [
     "Weight Stand",
     "Release Device",
-    "Trigger Core",
-    "Trigger Weight",
+    "Trigger Core/Weight",
 ]
+
+# Matches add_data_file.py "Sensor Brand" — stored in sensor_type and used by parsers.
+SENSOR_BRANDS = [
+    "RBR Sensor",
+    "Star-Oddi Sensor",
+]
+
+SENSOR_FILE_FILTERS = {
+    "RBR Sensor": "RBR files (*.rsk)",
+    "Star-Oddi Sensor": "Star-Oddi files (*.dat *.acc *.txt)",
+}

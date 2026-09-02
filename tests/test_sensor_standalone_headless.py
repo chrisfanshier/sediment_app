@@ -40,7 +40,7 @@ def test_store_crud_and_loader():
         )
         sensor_path = os.path.join(tmp, "ws.dat")
         _write_staroddi(sensor_path)
-        store.add_sensor_file(core_id, sensor_path, sensor_location="Weight Stand", sensor_type="Star-Oddi")
+        store.add_sensor_file(core_id, sensor_path, sensor_location="Weight Stand", sensor_type="Star-Oddi Sensor")
 
         core_info = store.get_core(core_id)
         loader = ProjectDataLoader(store)

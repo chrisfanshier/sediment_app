@@ -1,9 +1,11 @@
 """Data Manager — cruises, cores, sensor files, and winch files."""
 from __future__ import annotations
 
+import os
+
 from pyqtgraph.Qt import QtWidgets, QtCore
 
-from ..formats import SENSOR_LOCATIONS
+from ..formats import SENSOR_LOCATIONS, SENSOR_BRANDS
 from ..persistence.project import ProjectStore
 from .winch_dialog import WinchImportDialog
 
@@ -146,6 +148,78 @@ class CoreDialog(QtWidgets.QDialog):
             "wire_type": self.wire_edit.text().strip() or None,
             "notes": self.notes_edit.text().strip() or None,
         }
+
+
+class SensorFileDialog(QtWidgets.QDialog):
+    """Register one or more sensor files with location and brand (parser driver)."""
+
+    def __init__(self, file_names: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Register Sensor Files")
+        self.location: str | None = None
+        self.sensor_type: str | None = None
+        self.remarks: str = ""
+
+        form = QtWidgets.QFormLayout(self)
+        files_label = QtWidgets.QLabel(
+            "\n".join(file_names) if len(file_names) <= 3
+            else f"{file_names[0]}\n… and {len(file_names) - 1} more"
+        )
+        files_label.setWordWrap(True)
+        form.addRow("Files:", files_label)
+
+        self.location_combo = QtWidgets.QComboBox()
+        self.location_combo.addItems(SENSOR_LOCATIONS + ["Other…"])
+        form.addRow("Sensor location*:", self.location_combo)
+
+        self.other_location_edit = QtWidgets.QLineEdit()
+        self.other_location_edit.setPlaceholderText("Custom location name")
+        self.other_location_edit.setVisible(False)
+        self.location_combo.currentTextChanged.connect(self._on_location_changed)
+        form.addRow("", self.other_location_edit)
+
+        self.brand_combo = QtWidgets.QComboBox()
+        self.brand_combo.addItems(SENSOR_BRANDS)
+        form.addRow("Sensor brand*:", self.brand_combo)
+
+        hint = QtWidgets.QLabel(
+            "Brand selects the parser (RBR .rsk vs Star-Oddi .dat/.acc/.txt).\n"
+            "Location becomes the column prefix and drives auto-detection in\n"
+            "Calculate mode (Weight Stand, Release Device, Trigger Core/Weight)."
+        )
+        hint.setStyleSheet("color: gray; font-size: 10px;")
+        hint.setWordWrap(True)
+        form.addRow(hint)
+
+        self.remarks_edit = QtWidgets.QLineEdit()
+        self.remarks_edit.setPlaceholderText("Optional remarks")
+        form.addRow("Remarks:", self.remarks_edit)
+
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self._validate)
+        btns.rejected.connect(self.reject)
+        form.addRow(btns)
+
+    def _on_location_changed(self, text: str):
+        self.other_location_edit.setVisible(text == "Other…")
+
+    def _validate(self):
+        loc = self.location_combo.currentText()
+        if loc == "Other…":
+            loc = self.other_location_edit.text().strip()
+        if not loc:
+            QtWidgets.QMessageBox.warning(
+                self, "Missing Location",
+                "Choose a sensor location (Weight Stand, Release Device, "
+                "Trigger Core/Weight, or enter a custom location)."
+            )
+            return
+        self.location = loc
+        self.sensor_type = self.brand_combo.currentText()
+        self.remarks = self.remarks_edit.text().strip()
+        self.accept()
 
 
 class DataManagerPage(QtWidgets.QWidget):
@@ -393,7 +467,16 @@ class DataManagerPage(QtWidgets.QWidget):
     def _add_core(self):
         cruise = self._current_cruise()
         if cruise is None:
-            QtWidgets.QMessageBox.information(self, "Select Cruise", "Select or create a cruise first.")
+            if not self._cruises:
+                QtWidgets.QMessageBox.information(
+                    self, "No Cruise",
+                    "Create a cruise first using the New Cruise button, then add a core.",
+                )
+            else:
+                QtWidgets.QMessageBox.information(
+                    self, "No Cruise Selected",
+                    "Select a cruise from the dropdown above before adding a core.",
+                )
             return
         dlg = CoreDialog(self)
         if dlg.exec() != QtWidgets.QDialog.Accepted:
@@ -433,8 +516,14 @@ class DataManagerPage(QtWidgets.QWidget):
     def _add_sensor_files(self):
         core = self._current_core()
         if core is None:
-            QtWidgets.QMessageBox.information(self, "Select Core", "Select or create a core first.")
+            QtWidgets.QMessageBox.information(
+                self, "No Core Selected",
+                "Select a core from the dropdown, or create one with New Core, "
+                "before adding sensor files.",
+            )
             return
+
+        brand = SENSOR_BRANDS[0]
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self, "Select Sensor Files", "",
             "Sensor files (*.rsk *.dat *.acc *.txt);;All files (*)",
@@ -442,29 +531,30 @@ class DataManagerPage(QtWidgets.QWidget):
         if not paths:
             return
 
-        loc, ok = QtWidgets.QInputDialog.getItem(
-            self, "Sensor Location", "Location:",
-            SENSOR_LOCATIONS + ["Other…"], 0, False,
-        )
-        if not ok:
-            return
-        if loc == "Other…":
-            loc, ok = QtWidgets.QInputDialog.getText(self, "Sensor Location", "Enter location:")
-            if not ok or not loc.strip():
-                return
-            loc = loc.strip()
-
-        stype, ok = QtWidgets.QInputDialog.getText(
-            self, "Sensor Type", "Type (optional, e.g. RBR Sensor):",
-        )
-        if not ok:
+        dlg = SensorFileDialog([os.path.basename(p) for p in paths], self)
+        if dlg.exec() != QtWidgets.QDialog.Accepted:
             return
 
         for path in paths:
+            ext = os.path.splitext(path)[1].lower()
+            brand = dlg.sensor_type or ""
+            if brand == "RBR Sensor" and ext != ".rsk":
+                QtWidgets.QMessageBox.warning(
+                    self, "File Type Mismatch",
+                    f"{os.path.basename(path)}: RBR Sensor files must be .rsk",
+                )
+                continue
+            if brand == "Star-Oddi Sensor" and ext not in (".dat", ".acc", ".txt"):
+                QtWidgets.QMessageBox.warning(
+                    self, "File Type Mismatch",
+                    f"{os.path.basename(path)}: Star-Oddi Sensor files must be "
+                    ".dat, .acc, or .txt",
+                )
+                continue
             try:
                 self.store.add_sensor_file(
-                    core["core_id"], path, sensor_location=loc,
-                    sensor_type=stype.strip() or None,
+                    core["core_id"], path, sensor_location=dlg.location,
+                    sensor_type=dlg.sensor_type, remarks=dlg.remarks or None,
                 )
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(self, "Import Error", f"{path}:\n{exc}")
@@ -483,7 +573,10 @@ class DataManagerPage(QtWidgets.QWidget):
     def _add_winch_file(self):
         cruise = self._current_cruise()
         if cruise is None:
-            QtWidgets.QMessageBox.information(self, "Select Cruise", "Select a cruise first.")
+            QtWidgets.QMessageBox.information(
+                self, "No Cruise Selected",
+                "Select a cruise from the dropdown before adding winch files.",
+            )
             return
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select Winch File", "",
