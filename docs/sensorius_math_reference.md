@@ -1,5 +1,7 @@
 # Sensorius — Mathematical Reference
 
+> **Word version:** `sensorius_math_reference.docx` in this folder uses native Word equations. Regenerate with `python docs/build_sensorius_math_docx.py`.
+
 This document describes the units, algorithms, and output definitions used in **Sensorius** (the standalone coring sensor analysis application). Each analysis mode is covered with a brief summary, step-by-step procedure, and formulas.
 
 **Scope:** Processing logic as implemented in `sensor_standalone/domain/processing/` and the analysis controller. Persistence refers to the portable SQLite project model.
