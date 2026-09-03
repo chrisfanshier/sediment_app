@@ -17,6 +17,8 @@ No PostgreSQL or Streamlit required. All data lives in a **portable project fold
 **Windows:** double-click `run_windows.bat`  
 **macOS/Linux:** `./run_mac_linux.sh`
 
+The launcher creates `sensor_standalone/venv/` on first run using whatever `python` / `py -3` is on **that** computer. Do **not** copy the `venv` folder to another PC (it embeds the original Python path). If you already did, delete `venv` and run the launcher again — recent launchers recreate it automatically when broken.
+
 Manual:
 
 ```bash
