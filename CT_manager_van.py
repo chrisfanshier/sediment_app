@@ -1206,6 +1206,8 @@ def main():
                 total = len(summary_df)
                 valid = len(summary_df[summary_df["Status"] == "[OK] Valid"])
                 invalid = len(summary_df[summary_df["Status"] == "[FAIL] Invalid"])
+                valid_record_count = sum(1 for val in validated if val["status"] == "valid")
+                invalid_record_count = sum(1 for val in validated if val["status"] != "valid")
 
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -1430,13 +1432,31 @@ def main():
                                 st.session_state.validated_records = validated
                                 st.rerun()
 
-                if invalid == 0:
+                if valid_record_count > 0:
                     st.markdown("---")
-                    st.success("All records validated! Ready to import.")
+                    if invalid_record_count > 0:
+                        st.warning(
+                            f"{invalid_record_count} invalid XML record(s) will be skipped. "
+                            "You can fix invalid records above and re-scan to import them later."
+                        )
+                        import_button_label = "Import Valid Records to Database"
+                    else:
+                        st.success("All records validated! Ready to import.")
+                        import_button_label = "Import to Database"
 
-                    if st.button("Import to Database", use_container_width=True, type="primary"):
+                    if st.button(import_button_label, use_container_width=True, type="primary"):
                         with st.spinner("Importing to database..."):
                             saved, skipped_path, skipped_fp, failed = import_to_database(validated)
+
+                        skipped_invalid = invalid_record_count
+                        import_errors = max(failed - skipped_invalid, 0)
+
+                        st.write("### Import Results")
+                        st.write(f"- Imported valid records: **{saved}**")
+                        st.write(f"- Skipped existing path: **{skipped_path}**")
+                        st.write(f"- Skipped duplicate fingerprint: **{skipped_fp}**")
+                        st.write(f"- Skipped invalid records: **{skipped_invalid}**")
+                        st.write(f"- Import errors (excluding invalid skips): **{import_errors}**")
 
                         if saved > 0:
                             st.success(f"Imported {saved} new XML files to database")
@@ -1445,8 +1465,8 @@ def main():
                         if skipped_fp > 0:
                             st.warning(f"Skipped {skipped_fp} files (same scan exists at different path)")
                             st.write("These files may have been moved. Use **Tab 3: Path Maintenance** to update their locations.")
-                        if failed > 0:
-                            st.error(f"{failed} files failed to import (check console for details)")
+                        if import_errors > 0:
+                            st.error(f"{import_errors} file(s) failed to import (check console for details)")
 
                         if "validated_records" in st.session_state:
                             del st.session_state.validated_records
