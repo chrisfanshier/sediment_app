@@ -194,8 +194,8 @@ class WinchPanel(BaseModePanel):
         self.use_auto_radio.toggled.connect(self._on_source_mode_changed)
         self.use_manual_radio.toggled.connect(self._on_source_mode_changed)
         self.winch_file_list.itemSelectionChanged.connect(self.reload_requested.emit)
-        self.column1_combo.currentTextChanged.connect(self.plot_settings_changed.emit)
-        self.column2_combo.currentTextChanged.connect(self.plot_settings_changed.emit)
+        self.column1_combo.currentTextChanged.connect(self._on_plot_column_changed)
+        self.column2_combo.currentTextChanged.connect(self._on_plot_column_changed)
         self.second_window_check.toggled.connect(self._on_second_window_toggled)
         self.detect_trip_btn.clicked.connect(self.detect_winch_trip_requested.emit)
         self.align_btn.clicked.connect(self.align_winch_requested.emit)
@@ -308,6 +308,10 @@ class WinchPanel(BaseModePanel):
         manual = self.uses_manual_selection()
         self.winch_file_list.setEnabled(manual)
         self.reload_requested.emit()
+
+    def _on_plot_column_changed(self, _text: str = '') -> None:
+        """Re-emit plot_settings_changed without forwarding combo text."""
+        self.plot_settings_changed.emit()
 
     def _on_second_window_toggled(self, checked: bool) -> None:
         self.column2_combo.setEnabled(checked)
