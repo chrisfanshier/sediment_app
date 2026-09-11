@@ -1188,8 +1188,8 @@ def main():
         **Workflow for active scanning:**
         1. Scan directory for new XML files
         2. Validate Core-ID and Section-ID against database
-        3. Fix any mismatches (if needed)
-        4. Import directly to database
+        3. Import valid records — invalid records are skipped automatically
+        4. Optionally fix any mismatches and re-scan to import them
         """)
 
         if st.button("Scan Directory", use_container_width=True, type="primary"):
@@ -1220,7 +1220,10 @@ def main():
                 if invalid > 0:
                     st.markdown("---")
                     st.subheader("Fix Invalid Records")
-                    st.warning(f"Fix {invalid} core/section combinations before importing")
+                    st.warning(
+                        f"{invalid} core/section combination(s) could not be matched in the "
+                        "database and will be skipped on import"
+                    )
 
                     invalid_df = summary_df[summary_df["Status"] == "[FAIL] Invalid"]
                     edit_data = {}
@@ -1430,13 +1433,21 @@ def main():
                                 st.session_state.validated_records = validated
                                 st.rerun()
 
-                if invalid == 0:
+                if valid > 0:
                     st.markdown("---")
-                    st.success("All records validated! Ready to import.")
+                    if invalid == 0:
+                        st.success("All records validated! Ready to import.")
+                    else:
+                        st.warning(
+                            f"{invalid} invalid record(s) will be skipped. "
+                            f"{valid} valid record(s) are ready to import."
+                        )
 
-                    if st.button("Import to Database", use_container_width=True, type="primary"):
+                    if st.button("Import Valid Records to Database", use_container_width=True, type="primary"):
                         with st.spinner("Importing to database..."):
                             saved, skipped_path, skipped_fp, failed = import_to_database(validated)
+                        invalid_skipped = sum(1 for v in validated if v["status"] != "valid")
+                        actual_errors = failed - invalid_skipped
 
                         if saved > 0:
                             st.success(f"Imported {saved} new XML files to database")
@@ -1445,8 +1456,13 @@ def main():
                         if skipped_fp > 0:
                             st.warning(f"Skipped {skipped_fp} files (same scan exists at different path)")
                             st.write("These files may have been moved. Use **Tab 3: Path Maintenance** to update their locations.")
-                        if failed > 0:
-                            st.error(f"{failed} files failed to import (check console for details)")
+                        if invalid_skipped > 0:
+                            st.info(
+                                f"Skipped {invalid_skipped} invalid record(s) — "
+                                "fix them above and re-scan to import"
+                            )
+                        if actual_errors > 0:
+                            st.error(f"{actual_errors} record(s) failed to import (check console for details)")
 
                         if "validated_records" in st.session_state:
                             del st.session_state.validated_records
