@@ -35,6 +35,7 @@ from ..gui.views.calculation_plot_view import CalculationPlotView
 from ..gui.views.calibration_plot_view import CalibrationPlotView
 from ..gui.views.piston_analysis_view import PistonAnalysisView
 from ..gui.views.winch_plot_view import WinchPlotView
+from ..gui.views.predict_plot_view import PredictPlotView
 from ..gui.panels.view_data_panel import ViewDataPanel
 from ..gui.panels.depth_offset_panel import DepthOffsetPanel
 from ..gui.panels.time_offset_panel import TimeOffsetPanel
@@ -45,11 +46,12 @@ from ..gui.panels.calculate_panel import CalculatePanel
 from ..gui.panels.alter_panel import AlterPanel
 from ..gui.panels.piston_analysis_panel import PistonAnalysisPanel
 from ..gui.panels.winch_panel import WinchPanel
+from ..gui.panels.predict_panel import PredictPanel
 from ..controllers.analysis_controller import AnalysisController
 
 MODES = ['View Data', 'Depth Offset', 'Time Offset', 'Create Calibration',
          'Trip Detector', 'Piston Position', 'Winch', 'Calculate', 'Alter',
-         'Piston Analysis']
+         'Piston Analysis', 'Predict']
 
 
 class AnalysisWindow(QMainWindow):
@@ -176,6 +178,9 @@ class AnalysisWindow(QMainWindow):
         self.piston_analysis_panel = PistonAnalysisPanel()
         self.panel_stack.addWidget(self.piston_analysis_panel)  # 9
 
+        self.predict_panel = PredictPanel()
+        self.panel_stack.addWidget(self.predict_panel)  # 10
+
         self.panel_stack.setMinimumWidth(400)
         self.panel_stack.setMaximumWidth(550)
 
@@ -201,6 +206,9 @@ class AnalysisWindow(QMainWindow):
 
         self.winch_plot_view = WinchPlotView()
         self.secondary_stack.addWidget(self.winch_plot_view)       # 6
+
+        self.predict_plot_view = PredictPlotView()
+        self.secondary_stack.addWidget(self.predict_plot_view)     # 7
         self.secondary_stack.setVisible(False)
 
         # -- Right splitter (main plot + secondary) --
@@ -238,6 +246,8 @@ class AnalysisWindow(QMainWindow):
         self.controller.piston_analysis_view = self.piston_analysis_view
         self.controller.winch_panel = self.winch_panel
         self.controller.winch_plot_view = self.winch_plot_view
+        self.controller.predict_panel = self.predict_panel
+        self.controller.predict_plot_view = self.predict_plot_view
 
     def _build_status_bar(self):
         self.statusBar().showMessage("Ready")
@@ -290,6 +300,8 @@ class AnalysisWindow(QMainWindow):
             self.secondary_stack.setCurrentIndex(5)
         elif view_type == 'winch':
             self.secondary_stack.setCurrentIndex(6)
+        elif view_type == 'predict':
+            self.secondary_stack.setCurrentIndex(7)
         self.secondary_stack.setVisible(True)
 
     def hide_secondary_view(self):

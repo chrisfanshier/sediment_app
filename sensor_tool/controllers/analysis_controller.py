@@ -17,6 +17,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats as sp_stats
 
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from ..domain.models.sensor_data import SensorData, CorrectionRecord
@@ -40,6 +41,9 @@ from ..domain.processing.winch_trip_detection import WinchTripDetectionProcessor
 from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
+from ..persistence.recoil_calibration_io import RecoilCalibrationIO
+from ..domain.models.recoil_calibration import RecoilCalibration
+from ..domain.processing.predict import run_prediction, training_warnings
 from ..persistence.database_loader import DatabaseLoader
 from ..persistence.winch_loader import WinchLoader, get_winch_parameters, datetime_to_epoch, timestamp_to_epoch
 from ..persistence.analysis_results_io import insert_result, update_result
@@ -110,6 +114,11 @@ class AnalysisController:
         self.alter_panel = None
         self.piston_analysis_panel = None
         self.winch_panel = None
+        self.predict_panel = None
+        self.predict_plot_view = None
+        self.recoil_calibration: Optional[RecoilCalibration] = None
+        self._last_predict_result = None
+        self._predict_settings = QSettings("Sensorius", "sensor_tool")
 
         # Alter mode state
         self._alter_core_info: Optional[dict] = None
@@ -248,6 +257,13 @@ class AnalysisController:
             self.piston_analysis_panel.analyze_requested.connect(
                 self.run_piston_analysis
             )
+
+        # Predict panel
+        if self.predict_panel is not None:
+            self.predict_panel.load_calibration_requested.connect(
+                self._prompt_load_recoil_calibration
+            )
+            self.predict_panel.predict_requested.connect(self.run_predict)
 
         # Winch panel
         if self.winch_panel is not None:
@@ -3465,6 +3481,12 @@ class AnalysisController:
                 if self.winch_plot_view is not None and self.main_plot is not None:
                     self.winch_plot_view.set_x_link(self.main_plot.plot_item)
                 self.reload_winch_data()
+        elif mode_name == 'Predict':
+            self.main_window.show_secondary_view('predict')
+            if self.recoil_calibration is None:
+                self._prompt_load_recoil_calibration()
+            elif self._last_predict_result is not None:
+                self._refresh_predict_plot()
         else:
             self.main_window.hide_secondary_view()
 
@@ -4463,6 +4485,105 @@ class AnalysisController:
             self.calculate_panel.log_widget.log(msg)
         elif mode == 'Piston Analysis' and self.piston_analysis_panel is not None:
             self.piston_analysis_panel.log_widget.log(msg)
+        elif mode == 'Predict' and self.predict_panel is not None:
+            self.predict_panel.log.log(msg)
+
+    # ==================================================================
+    # Predict mode
+    # ==================================================================
+
+    def _prompt_load_recoil_calibration(self) -> None:
+        """Open file picker for recoil calibration JSON (remembers last path)."""
+        last_path = self._predict_settings.value("predict/last_calibration_path", "")
+        start_dir = str(Path(last_path).parent) if last_path else ""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.main_window,
+            "Load Recoil Calibration",
+            start_dir,
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if file_path:
+            self.load_recoil_calibration(file_path)
+
+    def load_recoil_calibration(self, file_path: str) -> None:
+        try:
+            self.recoil_calibration = RecoilCalibrationIO.load(file_path)
+            self._predict_settings.setValue("predict/last_calibration_path", file_path)
+            filename = Path(file_path).name
+            if self.predict_panel is not None:
+                self.predict_panel.update_calibration_info(
+                    filename,
+                    self.recoil_calibration.summary_lines(),
+                )
+            self._log_predict(f"Recoil calibration loaded: {filename}")
+        except Exception as e:
+            self._show_error("Calibration Error", str(e))
+            self._log_predict(f"ERROR loading recoil calibration: {e}")
+
+    def run_predict(self) -> None:
+        if self.predict_panel is None or self.predict_plot_view is None:
+            return
+        if self.recoil_calibration is None:
+            self._show_warning("Load a recoil calibration JSON file first.")
+            self._prompt_load_recoil_calibration()
+            return
+
+        log = self.predict_panel.log
+        try:
+            inputs = self.predict_panel.get_inputs()
+            if inputs.v0_min_ms > inputs.v0_max_ms:
+                self._show_error("Invalid inputs", "v0 min must be <= v0 max.")
+                return
+
+            cal = self.recoil_calibration.body
+            for warning in training_warnings(inputs, cal):
+                log.log(f"WARNING: {warning}")
+
+            log.log("Running forward prediction…")
+            result = run_prediction(inputs, cal)
+            self._last_predict_result = result
+
+            log.log(
+                f"Seafloor estimate: {result['seafloor_m']:.2f} m "
+                f"(rel. corer trip {result['seafloor_relative_m']:+.2f} m)"
+            )
+            log.log(
+                f"Corer depth at trip: {result['corer_depth_at_trip_m']:.2f} m | "
+                f"Release depth at trip: {result['release_depth_at_trip_m']:.2f} m"
+            )
+
+            summary = result["event_summary"]
+            for _, row in summary.iterrows():
+                curve = row["curve_type"]
+                log.log(
+                    f"{curve}: start_core t={row['start_core_time_median_s']:.3f}s, "
+                    f"piston alt={row['piston_alt_start_core_median_m']:.2f} m | "
+                    f"start_pen t={row['start_pen_time_median_s']:.3f}s, "
+                    f"piston alt={row['piston_alt_start_pen_median_m']:.2f} m"
+                )
+
+            self._refresh_predict_plot()
+            log.log("Prediction complete.")
+        except Exception as e:
+            self._show_error("Prediction Error", str(e))
+            log.log(f"ERROR: {e}")
+
+    def _refresh_predict_plot(self) -> None:
+        if (
+            self.predict_panel is None
+            or self.predict_plot_view is None
+            or self._last_predict_result is None
+        ):
+            return
+        self.predict_plot_view.show_prediction(
+            self._last_predict_result,
+            self.predict_panel.get_selected_curves(),
+            self.predict_panel.show_piston(),
+        )
+
+    def _log_predict(self, msg: str) -> None:
+        if self.predict_panel is not None:
+            self.predict_panel.log.log(msg)
 
     def _show_error(self, title: str, msg: str):
         if self.main_window:

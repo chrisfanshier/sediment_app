@@ -60,6 +60,13 @@ def t_window_title():
     assert window.windowTitle() == "Sensorius", window.windowTitle()
 
 
+def t_predict_mode_registered():
+    assert "Predict" in MODES, MODES
+    assert window.predict_panel is not None
+    assert window.predict_plot_view is not None
+    assert ctrl.predict_panel is window.predict_panel
+
+
 def t_winch_mode_registered():
     assert "Winch" in MODES, MODES
     assert window.winch_panel is not None
@@ -77,6 +84,7 @@ def t_panel_stack_indices():
         "Calculate": window.calculate_panel,
         "Alter": window.alter_panel,
         "Piston Analysis": window.piston_analysis_panel,
+        "Predict": window.predict_panel,
         "Trip Detector": window.trip_panel,
         "Piston Position": window.piston_panel,
     }
@@ -98,6 +106,8 @@ def t_secondary_view_indices():
     assert window.secondary_stack.currentWidget() is window.calibration_plot
     window.show_secondary_view("trip")
     assert window.secondary_stack.currentWidget() is window.trip_plot
+    window.show_secondary_view("predict")
+    assert window.secondary_stack.currentWidget() is window.predict_plot_view
 
 
 def t_mode_cycle():
@@ -380,6 +390,7 @@ def t_migration_example_present():
 
 
 check("window title preserved (Sensorius)", t_window_title)
+check("Predict mode wired into main window", t_predict_mode_registered)
 check("Winch mode wired into main window", t_winch_mode_registered)
 check("panel stack index mapping intact", t_panel_stack_indices)
 check("secondary view index mapping intact", t_secondary_view_indices)
