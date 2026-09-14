@@ -3164,6 +3164,7 @@ class AnalysisController:
                 "result_piston_alt":     r.piston_alt,
                 "result_pen_deficit":    r.pen_deficit,
                 "result_freefall_est":   r.freefall_est,
+                "result_eff_trig_line":  r.eff_trig_line_ft,
                 "trigger_pen_m":         inp.get("trigger_pen"),
             }
             flat_data.update({k: v for k, v in calc_flat.items() if v is not None})
@@ -3352,6 +3353,7 @@ class AnalysisController:
             "result_piston_alt":     r.piston_alt,
             "result_pen_deficit":    r.pen_deficit,
             "result_freefall_est":   r.freefall_est,
+            "result_eff_trig_line":  r.eff_trig_line_ft,
             "trigger_pen_m":         inp.get("trigger_pen"),
         }
         # Drop None floats so we don't overwrite already-set columns with NULL

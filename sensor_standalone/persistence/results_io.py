@@ -14,7 +14,8 @@ _FLAT_COLUMNS = frozenset({
     "result_recoil_max", "result_recoil_time_s", "result_fall_dist", "result_suck_in",
     "result_recoil_start", "result_freefall_start", "result_piston_suck",
     "result_seafloor", "result_piston_alt", "result_pen_deficit", "result_freefall_est",
-    "trigger_pen_m", "winch_trip_index", "winch_trip_datetime", "winch_time_offset_sec",
+    "result_eff_trig_line", "trigger_pen_m", "winch_trip_index", "winch_trip_datetime",
+    "winch_time_offset_sec",
 })
 
 

@@ -53,6 +53,7 @@ All `result_*` columns are in **metres (m)**.
 | `result_piston_alt` | float | Alternative piston position estimate. `NULL` if not calculable. |
 | `result_pen_deficit` | float | Penetration deficit — difference between expected and actual core penetration. Negative = core penetrated less than expected. `NULL` if not calculable. |
 | `result_freefall_est` | float | Estimated free-fall distance based on trigger core length and geometry, used as a cross-check against `result_fall_dist`. |
+| `result_eff_trig_line` | float | Measured effective trigger line length at trip, in **feet**: `(trigger_depth − weight_stand_depth) / FT_TO_M` at `trip_index`. Compare to planned `cores.trigger_line_length`. `NULL` if no Trigger Core/Weight sensor or trip not set. |
 | `trigger_pen_m` | float | User-supplied estimate of how deep the trigger core penetrated, in metres. Used as an input to seafloor and penetration calculations. |
 
 #### Sync & Provenance

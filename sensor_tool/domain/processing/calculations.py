@@ -49,6 +49,9 @@ class CalculationResults:
     pen_deficit: Optional[float] = None
     freefall_est: Optional[float] = None
 
+    # Trigger line geometry at trip (feet) — needs trip_idx + trigger + weight stand
+    eff_trig_line_ft: Optional[float] = None
+
     # Auxiliary info
     notes: list[str] = field(default_factory=list)
 
@@ -191,6 +194,13 @@ def compute_calculations(
 
         # fall_dist: |weight_stand[trip] - weight_stand[end_pen]|
         res.fall_dist = abs(float(weight_stand[trip_idx] - weight_stand[idx_ep]))
+
+        # eff_trig_line_ft: measured trigger line at trip (trigger − WS), in feet
+        if trigger_core is not None:
+            trig_at_trip = float(trigger_core[trip_idx])
+            ws_at_trip = float(weight_stand[trip_idx])
+            if np.isfinite(trig_at_trip) and np.isfinite(ws_at_trip):
+                res.eff_trig_line_ft = (trig_at_trip - ws_at_trip) / FT_TO_M
 
         # suck_in: |weight_stand[end_pen] - max(weight_stand)|
         ws_max = np.nanmax(weight_stand)
@@ -353,6 +363,10 @@ def format_results(res: CalculationResults) -> str:
     lines.append("")
     lines.append("--- Piston Metrics ---")
     lines.append(_fmt("Piston Suck:", res.piston_suck))
+
+    lines.append("")
+    lines.append("--- Trigger Line ---")
+    lines.append(_fmt("Effective Trigger Line:", res.eff_trig_line_ft, "ft"))
 
     lines.append("")
     lines.append("--- Seafloor Metrics ---")

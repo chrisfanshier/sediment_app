@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS analysis_results (
     result_piston_alt       REAL,
     result_pen_deficit      REAL,
     result_freefall_est     REAL,
+    result_eff_trig_line    REAL,
     trigger_pen_m           REAL,
     winch_trip_index        INTEGER,
     winch_trip_datetime     TEXT,

@@ -288,6 +288,8 @@ def t_persisted_columns():
     ctrl_src = open(ctrl_mod.__file__).read()
     assert ctrl_src.count('"result_recoil_time_s"') == 2, (
         "integration-side result_recoil_time_s save paths not intact")
+    assert ctrl_src.count('"result_eff_trig_line"') == 2, (
+        "integration-side result_eff_trig_line save paths not intact")
     for col in ("winch_trip_index", "winch_time_offset_sec"):
         assert col in ctrl_src, f"{col} missing from analysis_controller"
 
