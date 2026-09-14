@@ -11,10 +11,10 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QVBoxLayout, QWidget, QLabel
 
 from ...domain.processing.predict import CURVE_LABELS
+from ...domain.processing.predict_overlay import ActualOverlay
 
 
-def _brush(hex_color: str, alpha: int) -> pg.QtGui.QBrush:
-    from PySide6.QtGui import QColor
+def _brush(hex_color: str, alpha: int) -> pg.mkBrush:
     c = QColor(hex_color)
     c.setAlpha(alpha)
     return pg.mkBrush(c)
@@ -54,9 +54,10 @@ class PredictPlotView(QWidget):
         result: dict,
         selected_curves: list[str],
         show_piston: bool,
+        overlay: ActualOverlay | None = None,
     ) -> None:
         self._graphics.clear()
-        self._update_metrics_label(result, selected_curves)
+        self._update_metrics_label(result, selected_curves, overlay)
 
         time = result["time"]
         corer = result["corer_bands"]
@@ -104,25 +105,37 @@ class PredictPlotView(QWidget):
                 self._add_band(plot, time, piston[10], piston[90], "#756bb1", 35)
                 plot.plot(time, piston[50], pen=_pen("#756bb1", 2.2))
 
-            plot.addItem(pg.InfiniteLine(0.0, angle=90, pen=_pen("#000000", 1.0, style=pg.QtCore.Qt.DashLine)))
+            if overlay is not None:
+                self._plot_actual_overlay(plot, overlay, show_piston)
+
+            plot.addItem(pg.InfiniteLine(0.0, angle=90, pen=_pen("#000000", 1.0, style=Qt.DashLine)))
             plot.addItem(
-                pg.InfiniteLine(seafloor_rel, angle=0, pen=_pen("#444444", 1.5, style=pg.QtCore.Qt.DotLine))
+                pg.InfiniteLine(seafloor_rel, angle=0, pen=_pen("#444444", 1.5, style=Qt.DotLine))
             )
 
-            if curve in event_summary.index:
-                ev = event_summary.loc[curve]
-                sc_t = ev["start_core_time_median_s"]
-                sp_t = ev["start_pen_time_median_s"]
+            ev_row = event_summary.loc[curve] if curve in event_summary.index else None
+            if ev_row is not None:
+                sc_t = ev_row["start_core_time_median_s"]
+                sp_t = ev_row["start_pen_time_median_s"]
                 if np.isfinite(sc_t):
                     plot.addItem(
-                        pg.InfiniteLine(float(sc_t), angle=90, pen=_pen("#2ca02c", 1.7, style=pg.QtCore.Qt.DashDotLine))
+                        pg.InfiniteLine(float(sc_t), angle=90, pen=_pen("#2ca02c", 1.7, style=Qt.DashDotLine))
                     )
                 if np.isfinite(sp_t):
                     plot.addItem(
-                        pg.InfiniteLine(float(sp_t), angle=90, pen=_pen("#984ea3", 1.7, style=pg.QtCore.Qt.DashLine))
+                        pg.InfiniteLine(float(sp_t), angle=90, pen=_pen("#984ea3", 1.7, style=Qt.DashDotLine))
                     )
 
-            self._annotate_panel_events(plot, ev if curve in event_summary.index else None)
+            self._annotate_panel_events(plot, ev_row)
+
+    @staticmethod
+    def _plot_actual_overlay(plot, overlay: ActualOverlay, show_piston: bool) -> None:
+        t = overlay.time
+        actual_pen = _pen("#000000", 2.2, style=Qt.DashLine)
+        plot.plot(t, overlay.corer_rel, pen=actual_pen, name="Actual WS")
+        plot.plot(t, overlay.release_rel, pen=_pen("#08519c", 2.2, style=Qt.DashLine))
+        if show_piston and overlay.piston_rel is not None:
+            plot.plot(t, overlay.piston_rel, pen=_pen("#54278f", 2.0, style=Qt.DashLine))
 
     @staticmethod
     def _add_band(plot, x, y_low, y_high, color: str, alpha: int) -> None:
@@ -156,14 +169,21 @@ class PredictPlotView(QWidget):
         text.setPos(plot.getViewBox().viewRange()[0][0], plot.getViewBox().viewRange()[1][0])
         plot.addItem(text)
 
-    def _update_metrics_label(self, result: dict, selected_curves: list[str]) -> None:
+    def _update_metrics_label(
+        self,
+        result: dict,
+        selected_curves: list[str],
+        overlay: ActualOverlay | None = None,
+    ) -> None:
         summary = result["event_summary"].set_index("curve_type")
         seafloor = float(result["seafloor_m"])
         lines = [
             f"<b>Estimated seafloor:</b> {seafloor:.2f} m abs "
             f"({result['seafloor_relative_m']:+.2f} m rel. corer @ trip)",
-            "",
         ]
+        if overlay is not None:
+            lines.append(self._trigger_line_html(result, overlay))
+        lines.append("")
 
         if len(selected_curves) == 1:
             curve = selected_curves[0]
@@ -197,6 +217,25 @@ class PredictPlotView(QWidget):
             )
         lines.append("</table>")
         self.metrics_label.setText("".join(lines))
+
+    @staticmethod
+    def _trigger_line_html(result: dict, overlay: ActualOverlay) -> str:
+        model_ft = float(result["inputs"].trigger_line_length_ft)
+        planned = overlay.planned_trigger_line_ft
+        effective = overlay.effective_trigger_line_ft
+        parts = [f"<b>Trigger line (ft):</b> model input {model_ft:.2f}"]
+        if planned is not None and np.isfinite(planned):
+            parts.append(f"planned {planned:.2f}")
+        if effective is not None and np.isfinite(effective):
+            parts.append(f"measured {effective:.2f}")
+            if planned is not None and np.isfinite(planned):
+                delta = effective - planned
+                parts.append(f"Δ(meas−plan) {delta:+.2f}")
+            delta_model = effective - model_ft
+            parts.append(f"Δ(meas−model) {delta_model:+.2f}")
+        else:
+            parts.append("measured — (no trigger sensor at trip)")
+        return " | ".join(parts)
 
     @staticmethod
     def _metrics_html(row) -> str:

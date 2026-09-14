@@ -44,6 +44,7 @@ from ..persistence.calibration_io import CalibrationIO
 from ..persistence.recoil_calibration_io import RecoilCalibrationIO
 from ..domain.models.recoil_calibration import RecoilCalibration
 from ..domain.processing.predict import run_prediction, training_warnings
+from ..domain.processing.predict_overlay import build_actual_overlay
 from ..persistence.database_loader import DatabaseLoader
 from ..persistence.winch_loader import WinchLoader, get_winch_parameters, datetime_to_epoch, timestamp_to_epoch
 from ..persistence.analysis_results_io import insert_result, update_result
@@ -119,6 +120,7 @@ class AnalysisController:
         self.recoil_calibration: Optional[RecoilCalibration] = None
         self._last_predict_result = None
         self._predict_settings = QSettings("Sensorius", "sensor_tool")
+        self._loaded_core_info: Optional[dict] = None
 
         # Alter mode state
         self._alter_core_info: Optional[dict] = None
@@ -264,6 +266,7 @@ class AnalysisController:
                 self._prompt_load_recoil_calibration
             )
             self.predict_panel.predict_requested.connect(self.run_predict)
+            self.predict_panel.overlay_changed.connect(self._on_predict_overlay_changed)
 
         # Winch panel
         if self.winch_panel is not None:
@@ -307,6 +310,7 @@ class AnalysisController:
             self._loaded_file_path = file_path
             self._loaded_core_id = None  # CSV has no DB context
             self._loaded_cruise_id = None
+            self._loaded_core_info = None
 
             self._reset_analysis_state()
             self._update_all_panels_file_info()
@@ -333,6 +337,8 @@ class AnalysisController:
             self._loaded_file_path = None  # no CSV on disk
             self._loaded_core_id = core_id
             self._loaded_cruise_id = cruise_id
+            self._loaded_core_info = dict(core_info)
+            self._alter_core_info = dict(core_info)
 
             self._reset_analysis_state()
             self._update_all_panels_file_info()
@@ -1266,6 +1272,14 @@ class AnalysisController:
             )
             return
 
+        if mode == 'Predict':
+            self._update_predict_trigger_line_display()
+            if self._last_predict_result is not None:
+                self._refresh_predict_plot()
+            if self.predict_panel is not None:
+                self._log_predict(f"Trip line moved to index {new_idx}")
+            return
+
         # If piston has already been calculated, recalculate with new trip gate
         if mode != 'Piston Position' or self._piston_start_core_idx is None:
             return
@@ -1621,6 +1635,24 @@ class AnalysisController:
             }
 
             panel.log_widget.log(format_results(results))
+
+            planned_trig = md.get("trigger_line_length")
+            if results.eff_trig_line_ft is not None:
+                eff = results.eff_trig_line_ft
+                panel.log_widget.log(
+                    f"Trigger line — measured: {eff:.2f} ft"
+                )
+                if planned_trig is not None:
+                    panel.log_widget.log(
+                        f"Trigger line — planned (core): {float(planned_trig):.2f} ft, "
+                        f"Δ(meas−plan): {eff - float(planned_trig):+.2f} ft"
+                    )
+                if self.predict_panel is not None:
+                    pred_ft = self.predict_panel.get_inputs().trigger_line_length_ft
+                    panel.log_widget.log(
+                        f"Trigger line — predict model input: {pred_ft:.2f} ft, "
+                        f"Δ(meas−model): {eff - pred_ft:+.2f} ft"
+                    )
 
             # Show smoothed traces on the plot if smoothing is enabled
             if panel.get_smoothing_enabled():
@@ -3485,16 +3517,21 @@ class AnalysisController:
                 self.reload_winch_data()
         elif mode_name == 'Predict':
             self.main_window.show_secondary_view('predict')
+            if self.sensor_data is not None:
+                self._populate_predict_panel_from_session()
+                self._plot_predict_mode()
             if self.recoil_calibration is None:
                 self._prompt_load_recoil_calibration()
             elif self._last_predict_result is not None:
                 self._refresh_predict_plot()
+            self._update_predict_trigger_line_display()
         else:
             self.main_window.hide_secondary_view()
 
         # Clean up piston overlays when leaving overlay-preserving modes
         if mode_name not in (
             'Piston Position', 'Calculate', 'Alter', 'Piston Analysis', 'Winch',
+            'Predict',
         ):
             self.main_plot.remove_piston_trace()
             self.main_plot.remove_start_core_line()
@@ -4577,10 +4614,142 @@ class AnalysisController:
             or self._last_predict_result is None
         ):
             return
+        curves = self.predict_panel.get_selected_curves()
+        overlay = None
+        if self.predict_panel.overlay_actual_enabled():
+            try:
+                overlay = self._build_predict_overlay(self._last_predict_result)
+                curves = [curves[0]] if curves else curves
+            except Exception as e:
+                self._log_predict(f"Overlay skipped: {e}")
         self.predict_plot_view.show_prediction(
             self._last_predict_result,
-            self.predict_panel.get_selected_curves(),
+            curves,
             self.predict_panel.show_piston(),
+            overlay=overlay,
+        )
+        self._update_predict_trigger_line_display(overlay)
+
+    def _on_predict_overlay_changed(self) -> None:
+        if self._last_predict_result is not None:
+            self._refresh_predict_plot()
+        else:
+            self._update_predict_trigger_line_display()
+
+    def _populate_predict_panel_from_session(self) -> None:
+        if self.predict_panel is None or self.sensor_data is None:
+            return
+        md = dict(self.sensor_data.metadata or {})
+        if self._loaded_core_info:
+            for key in (
+                "scope", "core_length", "trigger_core_length",
+                "trigger_line_length",
+            ):
+                val = self._loaded_core_info.get(key)
+                if val is not None:
+                    md[key] = val
+        self.predict_panel.populate_from_metadata(md)
+        self._sync_trip_to_calculate_panel()
+
+    def _plot_predict_mode(self) -> None:
+        """Main depth plot with draggable trip line for overlay alignment."""
+        if self.sensor_data is None:
+            return
+        self.plot_depths()
+        trip_idx = self._resolve_calc_trip_index()
+        if trip_idx is not None:
+            self.main_plot.add_trip_line(trip_idx)
+        if self._calc_start_core_idx is not None:
+            self.main_plot.add_start_core_line(self._calc_start_core_idx)
+        if self._piston_values is not None:
+            x = self.sensor_data.get_timestamps_epoch()
+            self.main_plot.add_piston_trace(x, self._piston_values)
+
+    def _build_predict_overlay(self, result: dict):
+        if self.sensor_data is None or self.calculate_panel is None:
+            raise ValueError("Load sensor data and configure Calculate sensors first")
+        ws_col = self.calculate_panel.get_weight_stand_col()
+        rel_col = self.calculate_panel.get_release_col()
+        trig_col = self.calculate_panel.get_trigger_col()
+        if ws_col is None or rel_col is None:
+            raise ValueError("Select weight stand and release sensors in Calculate mode")
+
+        trip_idx = self._resolve_calc_trip_index()
+        if trip_idx is None:
+            raise ValueError("Set trip time (Calculate panel or trip detector)")
+
+        ws_vals = (
+            self.sensor_data.df[ws_col]
+            .interpolate().ffill().bfill().values
+        )
+        rel_vals = (
+            self.sensor_data.df[rel_col]
+            .interpolate().ffill().bfill().values
+        )
+        trig_vals = None
+        if trig_col and trig_col in self.sensor_data.df.columns:
+            trig_vals = (
+                self.sensor_data.df[trig_col]
+                .interpolate().ffill().bfill().values
+            )
+
+        panel = self.calculate_panel
+        if panel.get_smoothing_enabled():
+            sg_win, sg_poly = panel.get_sg_params()
+            ws_vals = apply_savgol(ws_vals, sg_win, sg_poly)
+            rel_vals = apply_savgol(rel_vals, sg_win, sg_poly)
+            if trig_vals is not None:
+                trig_vals = apply_savgol(trig_vals, sg_win, sg_poly)
+
+        piston = self._piston_values
+        if piston is not None and panel.get_smoothing_enabled():
+            sg_win, sg_poly = panel.get_sg_params()
+            piston = apply_savgol(piston, sg_win, sg_poly)
+
+        md = self.sensor_data.metadata or {}
+        planned = md.get("trigger_line_length")
+        if self._loaded_core_info and self._loaded_core_info.get("trigger_line_length"):
+            planned = self._loaded_core_info.get("trigger_line_length")
+
+        inputs = result["inputs"]
+        return build_actual_overlay(
+            weight_stand=ws_vals,
+            release=rel_vals,
+            timestamps_epoch=self.sensor_data.get_timestamps_epoch(),
+            trip_idx=trip_idx,
+            time_grid=result["time"],
+            release_above_corer_m=inputs.release_above_corer_m,
+            piston=piston,
+            trigger_core=trig_vals,
+            planned_trigger_line_ft=float(planned) if planned is not None else None,
+        )
+
+    def _update_predict_trigger_line_display(self, overlay=None) -> None:
+        if self.predict_panel is None:
+            return
+        model_ft = None
+        if self._last_predict_result is not None:
+            model_ft = float(self._last_predict_result["inputs"].trigger_line_length_ft)
+        else:
+            model_ft = self.predict_panel.get_inputs().trigger_line_length_ft
+
+        effective_ft = None
+        planned_ft = None
+        if overlay is not None:
+            effective_ft = overlay.effective_trigger_line_ft
+            planned_ft = overlay.planned_trigger_line_ft
+        elif self._last_calc_results is not None:
+            effective_ft = self._last_calc_results.eff_trig_line_ft
+        if planned_ft is None and self.sensor_data is not None:
+            md = self.sensor_data.metadata or {}
+            planned = md.get("trigger_line_length")
+            if planned is None and self._loaded_core_info:
+                planned = self._loaded_core_info.get("trigger_line_length")
+            if planned is not None:
+                planned_ft = float(planned)
+
+        self.predict_panel.update_trigger_line_comparison(
+            planned_ft, effective_ft, model_ft,
         )
 
     def _log_predict(self, msg: str) -> None:

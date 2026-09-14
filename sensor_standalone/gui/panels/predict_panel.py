@@ -24,6 +24,7 @@ from ...domain.processing.predict import CURVE_LABELS, CURVE_TYPES, Inputs, defa
 class PredictPanel(BaseModePanel):
     load_calibration_requested = Signal()
     predict_requested = Signal()
+    overlay_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,6 +146,17 @@ class PredictPanel(BaseModePanel):
         self.show_piston_check = QCheckBox("Show piston trajectory")
         self.show_piston_check.setChecked(True)
         plot_layout.addWidget(self.show_piston_check)
+        self.overlay_actual_check = QCheckBox("Overlay actual sensor data")
+        self.overlay_actual_check.setToolTip(
+            "Plot measured weight stand, release, and piston on the model "
+            "(single curve panel). Drag the trip line on the main plot to realign."
+        )
+        self.overlay_actual_check.toggled.connect(self.overlay_changed.emit)
+        plot_layout.addWidget(self.overlay_actual_check)
+        self.trigger_line_label = QLabel("")
+        self.trigger_line_label.setWordWrap(True)
+        self.trigger_line_label.setStyleSheet("QLabel { color: #333; }")
+        plot_layout.addWidget(self.trigger_line_label)
         plot_group.setLayout(plot_layout)
         self._layout.addWidget(plot_group)
 
@@ -197,6 +209,47 @@ class PredictPanel(BaseModePanel):
 
     def show_piston(self) -> bool:
         return self.show_piston_check.isChecked()
+
+    def overlay_actual_enabled(self) -> bool:
+        return self.overlay_actual_check.isChecked()
+
+    def populate_from_metadata(self, metadata: dict) -> None:
+        """Fill geometry spinboxes from loaded core / CSV metadata."""
+        if not metadata:
+            return
+        scope = metadata.get("scope")
+        if scope is not None:
+            self.scope_spin.setValue(float(scope))
+        core_len = metadata.get("core_length")
+        if core_len is not None:
+            self.main_core_len_spin.setValue(float(core_len))
+        trig_len = metadata.get("trigger_core_length")
+        if trig_len is not None:
+            self.trigger_core_len_spin.setValue(float(trig_len))
+        trig_line = metadata.get("trigger_line_length")
+        if trig_line is not None:
+            self.trigger_line_spin.setValue(float(trig_line))
+
+    def update_trigger_line_comparison(
+        self,
+        planned_ft: float | None,
+        effective_ft: float | None,
+        model_ft: float | None,
+    ) -> None:
+        parts = []
+        if model_ft is not None:
+            parts.append(f"Model input: {model_ft:.2f} ft")
+        if planned_ft is not None:
+            parts.append(f"Planned (core): {planned_ft:.2f} ft")
+        if effective_ft is not None:
+            parts.append(f"Measured @ trip: {effective_ft:.2f} ft")
+            if planned_ft is not None:
+                parts.append(f"Δ(meas−plan): {effective_ft - planned_ft:+.2f} ft")
+            if model_ft is not None:
+                parts.append(f"Δ(meas−model): {effective_ft - model_ft:+.2f} ft")
+        elif self.overlay_actual_check.isChecked():
+            parts.append("Measured @ trip: — (select trigger sensor in Calculate)")
+        self.trigger_line_label.setText(" | ".join(parts))
 
     @staticmethod
     def _depth_spin(value: float) -> QDoubleSpinBox:
