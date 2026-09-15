@@ -57,7 +57,6 @@ class Inputs:
     release_above_corer_m: float
     displaced_volume_m3: float
     added_mass_coefficient: float
-    barrel_length_m: float
     barrel_diameter_in: float
     lead_flow_diameter_in: float
     lead_drag_coefficient: float
@@ -196,15 +195,21 @@ def make_v0_scenarios(inputs: Inputs) -> np.ndarray:
     return values
 
 
+def barrel_length_m(inputs: Inputs) -> float:
+    """Core barrel length for freefall drag (same as main core length, metres)."""
+    return inputs.main_core_length_ft * FT_TO_M
+
+
 def corer_acceleration_factory(inputs: Inputs):
     rho_w = 1025.0
     g = 9.81
     mu = 1.065e-3
     mass_kg = inputs.corer_lbs * 0.453592
     barrel_dia_m = inputs.barrel_diameter_in * 0.0254
+    barrel_len_m = barrel_length_m(inputs)
     lead_dia_m = inputs.lead_flow_diameter_in * 0.0254
     lead_area = math.pi * ((lead_dia_m / 2.0) ** 2 - (barrel_dia_m / 2.0) ** 2)
-    barrel_wet_area = math.pi * barrel_dia_m * inputs.barrel_length_m
+    barrel_wet_area = math.pi * barrel_dia_m * barrel_len_m
     added_mass = inputs.added_mass_coefficient * rho_w * inputs.displaced_volume_m3
     effective_mass = mass_kg + added_mass
     drive_force = mass_kg * g - rho_w * inputs.displaced_volume_m3 * g
@@ -213,7 +218,7 @@ def corer_acceleration_factory(inputs: Inputs):
         speed = abs(float(speed))
         if speed < 0.001:
             return 0.003
-        reynolds = rho_w * speed * inputs.barrel_length_m / mu
+        reynolds = rho_w * speed * barrel_len_m / mu
         return 0.455 / (math.log10(reynolds) ** 2.58) if reynolds > 1e5 else 0.003
 
     def accel(v: float) -> float:
@@ -581,7 +586,6 @@ def default_inputs() -> Inputs:
         release_above_corer_m=0.50,
         displaced_volume_m3=0.347,
         added_mass_coefficient=0.0,
-        barrel_length_m=10.0,
         barrel_diameter_in=5.0,
         lead_flow_diameter_in=24.0,
         lead_drag_coefficient=1.10,

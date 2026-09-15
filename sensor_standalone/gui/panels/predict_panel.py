@@ -84,8 +84,6 @@ class PredictPanel(BaseModePanel):
         corer_form.addRow("Displaced volume (m³):", self.displaced_vol_spin)
         self.added_mass_spin = self._small_spin(defaults.added_mass_coefficient, 0.0, 5.0, 2)
         corer_form.addRow("Added mass coefficient:", self.added_mass_spin)
-        self.barrel_len_spin = self._small_spin(defaults.barrel_length_m, 0.1, 50.0, 2)
-        corer_form.addRow("Barrel length (m):", self.barrel_len_spin)
         self.barrel_dia_spin = self._small_spin(defaults.barrel_diameter_in, 0.1, 50.0, 2)
         corer_form.addRow("Barrel diameter (in):", self.barrel_dia_spin)
         self.lead_flow_spin = self._small_spin(defaults.lead_flow_diameter_in, 0.1, 50.0, 2)
@@ -196,7 +194,6 @@ class PredictPanel(BaseModePanel):
             release_above_corer_m=self.release_above_spin.value(),
             displaced_volume_m3=self.displaced_vol_spin.value(),
             added_mass_coefficient=self.added_mass_spin.value(),
-            barrel_length_m=self.barrel_len_spin.value(),
             barrel_diameter_in=self.barrel_dia_spin.value(),
             lead_flow_diameter_in=self.lead_flow_spin.value(),
             lead_drag_coefficient=self.lead_drag_spin.value(),
