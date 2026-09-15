@@ -316,12 +316,21 @@ def trigger_offset_m(inputs: Inputs) -> float:
     return inputs.trigger_line_length_ft * FT_TO_M
 
 
-def compute_trigger_bands(
-    corer_bands: dict[int, np.ndarray],
+def build_trigger_paths(
+    corer_paths: np.ndarray,
+    time: np.ndarray,
     trigger_line_m: float,
-) -> dict[int, np.ndarray]:
-    """Trigger core/weight rides with corer, offset by planned trigger line length."""
-    return {q: corer_bands[q] + trigger_line_m for q in corer_bands}
+) -> np.ndarray:
+    """
+    Trigger core/weight depth relative to corer @ trip.
+
+    Pre-trip: rigidly offset below corer by planned trigger line length.
+    From trip onward: frozen at trip depth (decoupled from corer/release motion).
+    """
+    post_mask = time >= 0.0
+    trigger_paths = corer_paths + trigger_line_m
+    trigger_paths[:, post_mask] = trigger_line_m
+    return trigger_paths
 
 
 def run_prediction(

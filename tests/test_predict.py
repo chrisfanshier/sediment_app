@@ -41,7 +41,11 @@ def test_run_prediction_produces_finite_bands():
     assert set(result["corer_bands"]) == {10, 50, 90}
     assert set(result["trigger_bands"]) == {10, 50, 90}
     offset = result["trigger_line_m"]
-    assert np.allclose(result["trigger_bands"][50], result["corer_bands"][50] + offset)
+    time = result["time"]
+    pre = time < 0.0
+    post = time >= 0.0
+    assert np.allclose(result["trigger_bands"][50][pre], result["corer_bands"][50][pre] + offset)
+    assert np.allclose(result["trigger_bands"][50][post], offset)
     for curve, bands in result["release_bands"].items():
         assert np.all(np.isfinite(bands[50]))
     assert len(result["event_summary"]) == 6

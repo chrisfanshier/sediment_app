@@ -316,12 +316,21 @@ def trigger_offset_m(inputs: Inputs) -> float:
     return inputs.trigger_line_length_ft * FT_TO_M
 
 
-def compute_trigger_bands(
-    corer_bands: dict[int, np.ndarray],
+def build_trigger_paths(
+    corer_paths: np.ndarray,
+    time: np.ndarray,
     trigger_line_m: float,
-) -> dict[int, np.ndarray]:
-    """Trigger core/weight rides with corer, offset by planned trigger line length."""
-    return {q: corer_bands[q] + trigger_line_m for q in corer_bands}
+) -> np.ndarray:
+    """
+    Trigger core/weight depth relative to corer @ trip.
+
+    Pre-trip: rigidly offset below corer by planned trigger line length.
+    From trip onward: frozen at trip depth (decoupled from corer/release motion).
+    """
+    post_mask = time >= 0.0
+    trigger_paths = corer_paths + trigger_line_m
+    trigger_paths[:, post_mask] = trigger_line_m
+    return trigger_paths
 
 
 def run_prediction(
@@ -368,7 +377,7 @@ def run_prediction(
     corer_paths = np.vstack(corer_paths)
     release_paths = {curve: np.vstack(paths) for curve, paths in release_paths.items()}
     trigger_line_m = trigger_offset_m(inputs)
-    trigger_paths = corer_paths + trigger_line_m
+    trigger_paths = build_trigger_paths(corer_paths, time, trigger_line_m)
 
     release_depth_at_trip = inputs.depth_m
     release_rel_at_trip = -inputs.release_above_corer_m
@@ -461,7 +470,7 @@ def run_prediction(
         "piston_paths": piston_paths,
         "trigger_paths": trigger_paths,
         "corer_bands": bands(corer_paths),
-        "trigger_bands": compute_trigger_bands(bands(corer_paths), trigger_line_m),
+        "trigger_bands": bands(trigger_paths),
         "release_bands": {curve: bands(paths) for curve, paths in release_paths.items()},
         "piston_bands": {curve: bands(paths) for curve, paths in piston_paths.items()},
         "trigger_line_m": trigger_line_m,
