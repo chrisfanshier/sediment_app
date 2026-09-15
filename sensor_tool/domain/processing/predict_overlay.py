@@ -16,6 +16,7 @@ class ActualOverlay:
     time: np.ndarray
     corer_rel: np.ndarray
     release_rel: np.ndarray
+    trigger_rel: Optional[np.ndarray]
     piston_rel: Optional[np.ndarray]
     trip_index: int
     effective_trigger_line_ft: Optional[float]
@@ -88,6 +89,9 @@ def build_actual_overlay(
 
     corer_rel = weight_stand - ws_trip
     release_rel = (release - rel_trip) - release_above_corer_m
+    trigger_rel = None
+    if trigger_core is not None and len(trigger_core) == n:
+        trigger_rel = trigger_core - ws_trip
     piston_rel = None
     if piston is not None and len(piston) == n:
         piston_rel = piston - ws_trip
@@ -100,6 +104,10 @@ def build_actual_overlay(
         time=time_grid.copy(),
         corer_rel=_resample_to_grid(t_rel, corer_rel, time_grid),
         release_rel=_resample_to_grid(t_rel, release_rel, time_grid),
+        trigger_rel=(
+            _resample_to_grid(t_rel, trigger_rel, time_grid)
+            if trigger_rel is not None else None
+        ),
         piston_rel=(
             _resample_to_grid(t_rel, piston_rel, time_grid)
             if piston_rel is not None else None

@@ -306,6 +306,19 @@ def bands(matrix: np.ndarray) -> dict[int, np.ndarray]:
     return {q: np.percentile(matrix, q, axis=0) for q in (10, 50, 90)}
 
 
+def trigger_offset_m(inputs: Inputs) -> float:
+    """Planned trigger-line offset below corer at trip (metres, depth-positive)."""
+    return inputs.trigger_line_length_ft * FT_TO_M
+
+
+def compute_trigger_bands(
+    corer_bands: dict[int, np.ndarray],
+    trigger_line_m: float,
+) -> dict[int, np.ndarray]:
+    """Trigger core/weight rides with corer, offset by planned trigger line length."""
+    return {q: corer_bands[q] + trigger_line_m for q in corer_bands}
+
+
 def run_prediction(
     inputs: Inputs | dict[str, Any],
     calibration: dict[str, Any],
@@ -349,6 +362,8 @@ def run_prediction(
 
     corer_paths = np.vstack(corer_paths)
     release_paths = {curve: np.vstack(paths) for curve, paths in release_paths.items()}
+    trigger_line_m = trigger_offset_m(inputs)
+    trigger_paths = corer_paths + trigger_line_m
 
     release_depth_at_trip = inputs.depth_m
     release_rel_at_trip = -inputs.release_above_corer_m
@@ -439,9 +454,12 @@ def run_prediction(
         "corer_paths": corer_paths,
         "release_paths": release_paths,
         "piston_paths": piston_paths,
+        "trigger_paths": trigger_paths,
         "corer_bands": bands(corer_paths),
+        "trigger_bands": compute_trigger_bands(bands(corer_paths), trigger_line_m),
         "release_bands": {curve: bands(paths) for curve, paths in release_paths.items()},
         "piston_bands": {curve: bands(paths) for curve, paths in piston_paths.items()},
+        "trigger_line_m": trigger_line_m,
         "parameter_table": parameter_table,
         "event_summary": pd.DataFrame(summary_rows),
         "seafloor_relative_m": seafloor_relative_m,
@@ -456,9 +474,11 @@ def draw_curve(
     result: dict[str, Any],
     selected_curves: list[str],
     show_piston: bool,
+    show_trigger: bool = True,
 ) -> plt.Figure:
     time = result["time"]
     corer = result["corer_bands"]
+    trigger = result.get("trigger_bands")
     event_summary = result["event_summary"].set_index("curve_type")
     seafloor_rel = result["seafloor_relative_m"]
 
@@ -468,6 +488,8 @@ def draw_curve(
     fig, axes = plt.subplots(rows, cols, figsize=(10 * cols, 5.8 * rows), sharex=True, squeeze=False)
 
     y_values = [corer[10].min(), corer[90].max(), seafloor_rel]
+    if show_trigger and trigger is not None:
+        y_values.extend([trigger[10].min(), trigger[90].max()])
     for curve in selected_curves:
         rel = result["release_bands"][curve]
         y_values.extend([rel[10].min(), rel[90].max()])
@@ -481,6 +503,9 @@ def draw_curve(
         release = result["release_bands"][curve]
         ax.fill_between(time, corer[10], corer[90], color="#e6550d", alpha=0.16, label="Corer 10-90%")
         ax.plot(time, corer[50], color="#e6550d", lw=2.6, label="Corer median")
+        if show_trigger and trigger is not None:
+            ax.fill_between(time, trigger[10], trigger[90], color="#41ab5d", alpha=0.14, label="Trigger 10-90%")
+            ax.plot(time, trigger[50], color="#238b45", lw=2.2, label="Trigger median")
         ax.fill_between(time, release[10], release[90], color="#3182bd", alpha=0.18, label="Release 10-90%")
         ax.plot(time, release[50], color="#3182bd", lw=2.4, label="Release median")
 

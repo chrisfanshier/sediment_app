@@ -54,6 +54,7 @@ class PredictPlotView(QWidget):
         result: dict,
         selected_curves: list[str],
         show_piston: bool,
+        show_trigger: bool = True,
         overlay: ActualOverlay | None = None,
     ) -> None:
         self._graphics.clear()
@@ -68,7 +69,10 @@ class PredictPlotView(QWidget):
         cols = 2 if n > 1 else 1
         rows = int(math.ceil(n / cols))
 
+        trigger = result.get("trigger_bands")
         y_values = [corer[10].min(), corer[90].max(), seafloor_rel]
+        if show_trigger and trigger is not None:
+            y_values.extend([trigger[10].min(), trigger[90].max()])
         for curve in selected_curves:
             rel = result["release_bands"][curve]
             y_values.extend([rel[10].min(), rel[90].max()])
@@ -96,6 +100,10 @@ class PredictPlotView(QWidget):
             self._add_band(plot, time, corer[10], corer[90], "#e6550d", 40)
             plot.plot(time, corer[50], pen=_pen("#e6550d", 2.6))
 
+            if show_trigger and trigger is not None:
+                self._add_band(plot, time, trigger[10], trigger[90], "#41ab5d", 35)
+                plot.plot(time, trigger[50], pen=_pen("#238b45", 2.2))
+
             release = result["release_bands"][curve]
             self._add_band(plot, time, release[10], release[90], "#3182bd", 45)
             plot.plot(time, release[50], pen=_pen("#3182bd", 2.4))
@@ -106,7 +114,7 @@ class PredictPlotView(QWidget):
                 plot.plot(time, piston[50], pen=_pen("#756bb1", 2.2))
 
             if overlay is not None:
-                self._plot_actual_overlay(plot, overlay, show_piston)
+                self._plot_actual_overlay(plot, overlay, show_piston, show_trigger)
 
             plot.addItem(pg.InfiniteLine(0.0, angle=90, pen=_pen("#000000", 1.0, style=Qt.DashLine)))
             plot.addItem(
@@ -129,11 +137,18 @@ class PredictPlotView(QWidget):
             self._annotate_panel_events(plot, ev_row)
 
     @staticmethod
-    def _plot_actual_overlay(plot, overlay: ActualOverlay, show_piston: bool) -> None:
+    def _plot_actual_overlay(
+        plot,
+        overlay: ActualOverlay,
+        show_piston: bool,
+        show_trigger: bool,
+    ) -> None:
         t = overlay.time
         actual_pen = _pen("#000000", 2.2, style=Qt.DashLine)
         plot.plot(t, overlay.corer_rel, pen=actual_pen, name="Actual WS")
         plot.plot(t, overlay.release_rel, pen=_pen("#08519c", 2.2, style=Qt.DashLine))
+        if show_trigger and overlay.trigger_rel is not None:
+            plot.plot(t, overlay.trigger_rel, pen=_pen("#006d2c", 2.2, style=Qt.DashLine))
         if show_piston and overlay.piston_rel is not None:
             plot.plot(t, overlay.piston_rel, pen=_pen("#54278f", 2.0, style=Qt.DashLine))
 

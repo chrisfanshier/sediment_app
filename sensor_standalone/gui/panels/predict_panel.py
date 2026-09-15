@@ -145,7 +145,12 @@ class PredictPanel(BaseModePanel):
         plot_layout.addWidget(self.curve_combo)
         self.show_piston_check = QCheckBox("Show piston trajectory")
         self.show_piston_check.setChecked(True)
+        self.show_piston_check.toggled.connect(self.overlay_changed.emit)
         plot_layout.addWidget(self.show_piston_check)
+        self.show_trigger_check = QCheckBox("Show trigger core/weight")
+        self.show_trigger_check.setChecked(True)
+        self.show_trigger_check.toggled.connect(self.overlay_changed.emit)
+        plot_layout.addWidget(self.show_trigger_check)
         self.overlay_actual_check = QCheckBox("Overlay actual sensor data")
         self.overlay_actual_check.setToolTip(
             "Plot measured weight stand, release, and piston on the model "
@@ -209,6 +214,9 @@ class PredictPanel(BaseModePanel):
 
     def show_piston(self) -> bool:
         return self.show_piston_check.isChecked()
+
+    def show_trigger(self) -> bool:
+        return self.show_trigger_check.isChecked()
 
     def overlay_actual_enabled(self) -> bool:
         return self.overlay_actual_check.isChecked()

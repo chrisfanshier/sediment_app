@@ -4631,6 +4631,7 @@ class AnalysisController:
             self._last_predict_result,
             curves,
             self.predict_panel.show_piston(),
+            show_trigger=self.predict_panel.show_trigger(),
             overlay=overlay,
         )
         self._update_predict_trigger_line_display(overlay)
