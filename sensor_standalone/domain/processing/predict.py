@@ -14,11 +14,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from .calculations import DEFAULT_PISTON_OFFSET_M, DEFAULT_WEIGHT_STAND_LENGTH_M
 from .piston_position import compute_piston_position, detect_start_core
 
 FT_TO_M = 1.0 / 3.28
-WEIGHT_STAND_LENGTH_M = 1.5
-PISTON_OFFSET_M = 1.25
+WEIGHT_STAND_LENGTH_M = DEFAULT_WEIGHT_STAND_LENGTH_M
+PISTON_OFFSET_M = DEFAULT_PISTON_OFFSET_M
 
 CURVE_TYPES = [
     "physics",
@@ -377,7 +378,7 @@ def run_prediction(
     corer_paths = np.vstack(corer_paths)
     release_paths = {curve: np.vstack(paths) for curve, paths in release_paths.items()}
     trigger_line_m = trigger_offset_m(inputs)
-    trigger_paths = corer_paths + trigger_line_m
+    trigger_paths = build_trigger_paths(corer_paths, time, trigger_line_m)
 
     release_depth_at_trip = inputs.depth_m
     release_rel_at_trip = -inputs.release_above_corer_m
@@ -470,7 +471,7 @@ def run_prediction(
         "piston_paths": piston_paths,
         "trigger_paths": trigger_paths,
         "corer_bands": bands(corer_paths),
-        "trigger_bands": compute_trigger_bands(bands(corer_paths), trigger_line_m),
+        "trigger_bands": bands(trigger_paths),
         "release_bands": {curve: bands(paths) for curve, paths in release_paths.items()},
         "piston_bands": {curve: bands(paths) for curve, paths in piston_paths.items()},
         "trigger_line_m": trigger_line_m,

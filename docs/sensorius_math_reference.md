@@ -22,7 +22,7 @@ This document describes the units, algorithms, and output definitions used in **
 | Sampling rate | hertz (Hz) | \(f_s = 1 / \Delta t_\mathrm{median}\) |
 | Frequencies (time-offset filter) | hertz (Hz) | hertz |
 | Winch tension / payout | file units (often N, m) | as read; trip detection uses column values directly |
-| Fixed weight-stand length | — | **1.5 m** (`WEIGHT_LENGTH`) |
+| Weight-stand length | metres (m) | Calculate panel input (default **1.5 m**) |
 | Piston offset constant | metres (m) | default **1.25 m** (user-adjustable in Piston Position mode) |
 
 **Depth sign:** Increasing depth means deeper below the surface (standard oceanographic convention).
@@ -382,7 +382,7 @@ where \(L_{\mathrm{TC,m}} = \mathrm{trigger\_core\_length\_ft}/3.28\) and \(p_\m
 Core tip depth:
 
 \[
-d_\mathrm{tip}[n] = d_\mathrm{WS}[n] + 1.5 + L_{\mathrm{core,m}}
+d_\mathrm{tip}[n] = d_\mathrm{WS}[n] + L_\mathrm{WS} + L_{\mathrm{core,m}}
 \]
 
 \[
@@ -407,11 +407,11 @@ All depths in **metres** unless noted.
 
 | Output | Formula | Requires |
 |--------|---------|----------|
-| **pen_deficit** | \(d_\mathrm{seafloor} - \max_n d_\mathrm{WS}[n]\) | seafloor |
+| **pen_deficit** | \(d_\mathrm{seafloor} - \max_n d_\mathrm{WS}[n] - L_\mathrm{WS}\) | seafloor |
 | **piston_alt** | \(d_\mathrm{seafloor} - d_\mathrm{piston}[\texttt{start\_core}]\) | seafloor + piston + start_core |
-| **freefall_est** | \(\|d_\mathrm{WS}[\texttt{trip}] + 1.5 + L_{\mathrm{core,m}} - d_\mathrm{seafloor}\|\) | seafloor + core length |
+| **freefall_est** | \(\|d_\mathrm{WS}[\texttt{trip}] + L_\mathrm{WS} + L_{\mathrm{core,m}} - d_\mathrm{seafloor}\|\) | seafloor + core length |
 
-The constant **1.5 m** is the fixed weight-stand length (`WEIGHT_LENGTH`).
+\(L_\mathrm{WS}\) is the weight-stand length from the Calculate panel (default 1.5 m). Positive = barrel stopped short of full penetration (weight-stand base above seafloor); negative = beyond.
 
 #### 3.8.5 Algorithm
 

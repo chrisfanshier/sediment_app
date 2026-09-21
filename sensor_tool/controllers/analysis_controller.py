@@ -32,13 +32,16 @@ from ..domain.processing.piston_position import (
     compute_piston_position, detect_start_core,
 )
 from ..domain.processing.calculations import (
-    compute_calculations, format_results, apply_savgol,
+    compute_calculations,
+    format_results,
+    apply_savgol,
+    DEFAULT_WEIGHT_STAND_LENGTH_M,
 )
 from ..domain.processing.piston_analysis import (
     PistonAnalysisProcessor,
 )
 from ..domain.processing.winch_trip_detection import WinchTripDetectionProcessor
-from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
+from ..gui.views.calculation_plot_view import GeometryInput
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
 from ..persistence.recoil_calibration_io import RecoilCalibrationIO
@@ -1415,7 +1418,7 @@ class AnalysisController:
         self._update_start_pen_line(trip_idx)
 
     def _estimate_seafloor_from_trip(self):
-        """Fill the seafloor spinbox with WS[trip] + core_length + 1.5 + scope."""
+        """Fill the seafloor spinbox with WS[trip] + core_length + L_WS + scope."""
         if self.sensor_data is None or self.calculate_panel is None:
             return
         trip_idx = self._resolve_calc_trip_index()
@@ -1435,15 +1438,16 @@ class AnalysisController:
         FT_TO_M_local = 1.0 / 3.28
         core_length_ft = md.get('core_length') or 0.0
         scope_ft = md.get('scope') or 0.0
+        ws_len_m = panel.get_weight_stand_length_m()
         estimate = (
             float(ws_vals[trip_idx])
             + core_length_ft * FT_TO_M_local
-            + 1.5
+            + ws_len_m
             + scope_ft * FT_TO_M_local
         )
         panel.set_seafloor_override(estimate)
         panel.log_widget.log(
-            f"Seafloor estimate (WS[trip]+core+1.5+scope): {estimate:.2f} m  "
+            f"Seafloor estimate (WS[trip]+core+L_WS+scope): {estimate:.2f} m  "
             f"[upper bound — actual seafloor is shallower by freefall distance]"
         )
 
@@ -1532,6 +1536,7 @@ class AnalysisController:
             trigger_core_length_ft = md.get('trigger_core_length')
             core_length_ft = md.get('core_length')
             trigger_pen = panel.get_trigger_pen()
+            weight_stand_length_m = panel.get_weight_stand_length_m()
 
             panel.log_widget.log("")
 
@@ -1615,6 +1620,7 @@ class AnalysisController:
                 end_pen_idx=end_pen_idx,
                 pullout_idx=pullout_idx,
                 seafloor_override=self._manual_seafloor,
+                weight_stand_length_m=weight_stand_length_m,
             )
 
             # Store results & inputs for export
@@ -1632,6 +1638,7 @@ class AnalysisController:
                 'trigger_core_length_ft': trigger_core_length_ft,
                 'core_length_ft': core_length_ft,
                 'trigger_pen': trigger_pen,
+                'weight_stand_length_m': weight_stand_length_m,
             }
 
             panel.log_widget.log(format_results(results))
@@ -1729,7 +1736,12 @@ class AnalysisController:
         piston_at_sp = None
         piston_alt_sp = None
         pen_before_core = False
-        core_tip_series = ws_vals + WEIGHT_LENGTH + core_length_m
+        ws_len_m = (
+            self.calculate_panel.get_weight_stand_length_m()
+            if self.calculate_panel is not None
+            else DEFAULT_WEIGHT_STAND_LENGTH_M
+        )
+        core_tip_series = ws_vals + ws_len_m + core_length_m
         after_search = core_tip_series[trip_idx:]
         pen_candidates = np.where(after_search >= results.seafloor)[0]
         if len(pen_candidates) > 0:
@@ -1761,6 +1773,7 @@ class AnalysisController:
             seafloor=results.seafloor,
             core_length_m=core_length_m,
             freefall_est=freefall_est,
+            weight_stand_length_m=ws_len_m,
             ws_at_start_core=ws_at_sc,
             piston_at_start_core=piston_at_sc,
             piston_alt_at_start_core=piston_alt_sc,
@@ -2452,7 +2465,8 @@ class AnalysisController:
         movable = self._manual_seafloor is not None
         self.main_plot.add_seafloor_line(sf, movable=movable)
         # Add start_pen line
-        core_tip = ws_vals + WEIGHT_LENGTH + core_length_m
+        ws_len_m = panel.get_weight_stand_length_m()
+        core_tip = ws_vals + ws_len_m + core_length_m
         search_from = trip_idx
         after = core_tip[search_from:]
         candidates = np.where(after >= sf)[0]
@@ -3206,6 +3220,7 @@ class AnalysisController:
                 "trigger_pen_m":          inp.get("trigger_pen"),
                 "core_length_ft":         inp.get("core_length_ft"),
                 "trigger_core_length_ft": inp.get("trigger_core_length_ft"),
+                "weight_stand_length_m":  inp.get("weight_stand_length_m"),
                 "seafloor_manual":        self._manual_seafloor,
             }
             params_section["calc_notes"] = list(r.notes)
@@ -3399,6 +3414,7 @@ class AnalysisController:
                 "trigger_pen_m":           inp.get("trigger_pen"),
                 "core_length_ft":          inp.get("core_length_ft"),
                 "trigger_core_length_ft":  inp.get("trigger_core_length_ft"),
+                "weight_stand_length_m":   inp.get("weight_stand_length_m"),
                 "seafloor_manual":         self._manual_seafloor,
             },
             "calc_notes": list(r.notes),
@@ -3770,6 +3786,7 @@ class AnalysisController:
             trigger_pen = self.alter_panel.get_trigger_pen()
 
             # Re-run calculations
+            ws_len_m = self.calculate_panel.get_weight_stand_length_m()
             results = compute_calculations(
                 weight_stand=ws_mod,
                 release=rel_mod,
@@ -3783,6 +3800,7 @@ class AnalysisController:
                 core_length_ft=core_length_ft,
                 end_pen_idx=self._end_pen_idx,
                 pullout_idx=self._pullout_idx,
+                weight_stand_length_m=ws_len_m,
             )
 
             log.log(format_results(results))
@@ -4399,6 +4417,9 @@ class AnalysisController:
             sg_p = calc_params.get('sg_poly')
             if trigger_pen is not None:
                 self.calculate_panel.set_trigger_pen(float(trigger_pen))
+            ws_len = calc_params.get("weight_stand_length_m")
+            if ws_len is not None:
+                self.calculate_panel.set_weight_stand_length_m(float(ws_len))
             if sg_w is not None and sg_p is not None:
                 self.calculate_panel.set_sg_params(int(sg_w), int(sg_p))
 

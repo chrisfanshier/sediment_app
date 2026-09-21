@@ -51,7 +51,7 @@ All `result_*` columns are in **metres (m)**.
 | `result_piston_suck` | float | Depth value associated with the piston suck-in crossing event on the release device sensor. `NULL` when suck-in is not applicable. |
 | `result_seafloor` | float | Estimated seafloor depth, derived from the Trigger Core/Weight sensor profile. `NULL` if no Trigger Core/Weight sensor was available. |
 | `result_piston_alt` | float | Alternative piston position estimate. `NULL` if not calculable. |
-| `result_pen_deficit` | float | Penetration deficit — difference between expected and actual core penetration. Negative = core penetrated less than expected. `NULL` if not calculable. |
+| `result_pen_deficit` | float | Penetration deficit (m): how far the weight-stand **base** stopped short of the estimated seafloor at deepest penetration: `seafloor − (max WS depth + weight_stand_length_m)`. Positive = stopped short of full burial; negative = base below seafloor. Uses weight stand length from `params.calc_inputs.weight_stand_length_m` (default 1.5 m). `NULL` if not calculable. |
 | `result_freefall_est` | float | Estimated free-fall distance based on trigger core length and geometry, used as a cross-check against `result_fall_dist`. |
 | `result_eff_trig_line` | float | Measured effective trigger line length at trip, in **feet**: `(trigger_depth − weight_stand_depth) / FT_TO_M` at `trip_index`. Compare to planned `cores.trigger_line_length`. `NULL` if no Trigger Core/Weight sensor or trip not set. |
 | `trigger_pen_m` | float | User-supplied estimate of how deep the trigger core penetrated, in metres. Used as an input to seafloor and penetration calculations. |
@@ -249,6 +249,7 @@ Written when a full calculation is run. `calc_inputs` records every index and pa
 | `weight_stand_col` | string | Full column name of the Weight Stand sensor used. |
 | `release_col` | string | Full column name of the Release Device sensor used. |
 | `trigger_pen_m` | float | Trigger penetration depth in metres as used in this calculation. |
+| `weight_stand_length_m` | float | Weight-stand length in metres (default 1.5). Used for core-tip depth, freefall estimate, and penetration deficit. |
 | `core_length_ft` | float or null | Core barrel length in feet. `null` for some legacy deployments. |
 | `trigger_core_length_ft` | float or null | Trigger core length in feet. |
 | `seafloor_manual` | float or null | Manually specified seafloor depth override in metres. `null` when not used. |

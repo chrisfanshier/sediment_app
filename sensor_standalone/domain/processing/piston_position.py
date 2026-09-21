@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from .calculations import DEFAULT_PISTON_OFFSET_M
+
 FT_TO_M = 1.0 / 3.28
 
 
@@ -29,7 +31,7 @@ def compute_piston_position(
     scope_ft: float,
     core_length_ft: float,
     start_core_idx: int,
-    offset_constant: float = 1.25,
+    offset_constant: float = 1.25,  # default = weight stand length − 0.25 m
 ) -> np.ndarray:
     """Return the estimated piston position depth (metres).
 

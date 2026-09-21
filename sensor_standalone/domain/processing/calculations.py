@@ -22,6 +22,20 @@ from scipy import signal as sp_signal
 
 
 FT_TO_M = 1.0 / 3.28
+DEFAULT_WEIGHT_STAND_LENGTH_M = 1.5
+DEFAULT_PISTON_OFFSET_M = DEFAULT_WEIGHT_STAND_LENGTH_M - 0.25
+
+
+def penetration_deficit(
+    seafloor_m: float,
+    ws_max_depth: float,
+    weight_stand_length_m: float,
+) -> float:
+    """Distance the weight-stand base stopped short of seafloor (metres).
+
+    Positive = barrel stopped short of full penetration; negative = beyond.
+    """
+    return seafloor_m - (ws_max_depth + weight_stand_length_m)
 
 
 @dataclass
@@ -124,6 +138,7 @@ def compute_calculations(
     end_pen_idx: Optional[int] = None,
     pullout_idx: Optional[int] = None,
     seafloor_override: Optional[float] = None,
+    weight_stand_length_m: float = DEFAULT_WEIGHT_STAND_LENGTH_M,
 ) -> CalculationResults:
     """Compute coring analysis values.
 
@@ -279,7 +294,9 @@ def compute_calculations(
             sf = float(seafloor_override)
             res.seafloor = sf
             ws_max_depth = float(np.nanmax(weight_stand))
-            res.pen_deficit = sf - ws_max_depth
+            res.pen_deficit = penetration_deficit(
+                sf, ws_max_depth, weight_stand_length_m,
+            )
             if (piston is not None
                     and start_core_idx is not None
                     and 0 <= start_core_idx < n):
@@ -288,7 +305,7 @@ def compute_calculations(
                 core_length_m = core_length_ft * FT_TO_M
                 res.freefall_est = abs(
                     float(weight_stand[trip_idx])
-                    + 1.5
+                    + weight_stand_length_m
                     + core_length_m
                     - sf
                 )
@@ -301,9 +318,10 @@ def compute_calculations(
             sf = float(trigger_core[trip_idx]) + tc_length_m - trigger_pen
             res.seafloor = sf
 
-            # pen_deficit = seafloor - max(weight_stand)
             ws_max_depth = float(np.nanmax(weight_stand))
-            res.pen_deficit = sf - ws_max_depth
+            res.pen_deficit = penetration_deficit(
+                sf, ws_max_depth, weight_stand_length_m,
+            )
 
             # piston_alt = seafloor - piston[start_core]
             if (piston is not None
@@ -311,12 +329,12 @@ def compute_calculations(
                     and 0 <= start_core_idx < n):
                 res.piston_alt = sf - float(piston[start_core_idx])
 
-            # freefall_est = |ws[trip] + 1.5 + core_length_m - seafloor|
+            # freefall_est = |ws[trip] + L_WS + core_length_m - seafloor|
             if core_length_ft is not None and core_length_ft > 0:
                 core_length_m = core_length_ft * FT_TO_M
                 res.freefall_est = abs(
                     float(weight_stand[trip_idx])
-                    + 1.5
+                    + weight_stand_length_m
                     + core_length_m
                     - sf
                 )

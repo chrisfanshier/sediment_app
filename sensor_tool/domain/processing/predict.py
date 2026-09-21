@@ -14,11 +14,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from .calculations import DEFAULT_PISTON_OFFSET_M, DEFAULT_WEIGHT_STAND_LENGTH_M
 from .piston_position import compute_piston_position, detect_start_core
 
 FT_TO_M = 1.0 / 3.28
-WEIGHT_STAND_LENGTH_M = 1.5
-PISTON_OFFSET_M = 1.25
+WEIGHT_STAND_LENGTH_M = DEFAULT_WEIGHT_STAND_LENGTH_M
+PISTON_OFFSET_M = DEFAULT_PISTON_OFFSET_M
 
 CURVE_TYPES = [
     "physics",

@@ -5,10 +5,10 @@ Displays a stacked-box diagram comparing core-barrel geometry at two
 timestamps:
 
   Left column  — @ Trip:
-    weight (1.5 m) + core barrel + freefall estimate → seafloor
+    weight stand + core barrel + freefall estimate → seafloor
 
   Right column — @ Start Penetration:
-    weight (1.5 m) + core barrel (tip at seafloor) + piston altitude
+    weight stand + core barrel (tip at seafloor) + piston altitude
 
 All values are in metres on an inverted (depth-downward) y-axis.
 """
@@ -24,9 +24,11 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 
+from ...domain.processing.calculations import DEFAULT_WEIGHT_STAND_LENGTH_M
+
 
 FT_TO_M = 1.0 / 3.28
-WEIGHT_LENGTH = 1.5  # metres – length of the weight stand
+WEIGHT_LENGTH = DEFAULT_WEIGHT_STAND_LENGTH_M  # backwards-compatible alias
 
 
 @dataclass
@@ -36,6 +38,7 @@ class GeometryInput:
     seafloor: float
     core_length_m: float
     freefall_est: float
+    weight_stand_length_m: float = DEFAULT_WEIGHT_STAND_LENGTH_M
     # Start-core values (None if unavailable)
     ws_at_start_core: Optional[float] = None
     piston_at_start_core: Optional[float] = None
@@ -98,13 +101,14 @@ class CalculationPlotView(QWidget):
         x = 0.0
 
         # -- GROUP 1: @ Trip --
-        self._draw_box(x, geo.ws_at_trip, WEIGHT_LENGTH,
+        ws_len = geo.weight_stand_length_m
+        self._draw_box(x, geo.ws_at_trip, ws_len,
                        '#3498db', 'Weight')
-        self._draw_box(x, geo.ws_at_trip + WEIGHT_LENGTH,
+        self._draw_box(x, geo.ws_at_trip + ws_len,
                        geo.core_length_m, '#2ecc71', 'Core Barrel')
         self._draw_box(
             x,
-            geo.ws_at_trip + WEIGHT_LENGTH + geo.core_length_m,
+            geo.ws_at_trip + ws_len + geo.core_length_m,
             geo.freefall_est, '#e74c3c', 'Freefall\nEstimate',
         )
         self._add_group_label(x, geo.ws_at_trip, '@ Trip')
@@ -132,8 +136,8 @@ class CalculationPlotView(QWidget):
         if geo.start_pen_before_start_core and len(_groups_23) == 2:
             _groups_23 = list(reversed(_groups_23))
         for _ws, _piston, _piston_alt, _label in _groups_23:
-            self._draw_box(x, _ws, WEIGHT_LENGTH, '#3498db', 'Weight')
-            self._draw_box(x, _ws + WEIGHT_LENGTH,
+            self._draw_box(x, _ws, ws_len, '#3498db', 'Weight')
+            self._draw_box(x, _ws + ws_len,
                            geo.core_length_m, '#2ecc71', 'Core Barrel')
             self._draw_piston_alt(x, _piston, _piston_alt, geo.seafloor)
             self._add_group_label(x, _ws, _label)
@@ -143,8 +147,8 @@ class CalculationPlotView(QWidget):
         # -- GROUP 4: @ End of Initial Penetration --
         if geo.ws_at_end_pen is not None:
             ws = geo.ws_at_end_pen
-            self._draw_box(x, ws, WEIGHT_LENGTH, '#3498db', 'Weight')
-            self._draw_box(x, ws + WEIGHT_LENGTH,
+            self._draw_box(x, ws, ws_len, '#3498db', 'Weight')
+            self._draw_box(x, ws + ws_len,
                            geo.core_length_m, '#2ecc71', 'Core Barrel')
             self._add_group_label(x, ws, '@ End Pen')
             positions.append(x)
@@ -153,8 +157,8 @@ class CalculationPlotView(QWidget):
         # -- GROUP 5: @ Pullout --
         if geo.ws_at_pullout is not None:
             ws = geo.ws_at_pullout
-            self._draw_box(x, ws, WEIGHT_LENGTH, '#3498db', 'Weight')
-            self._draw_box(x, ws + WEIGHT_LENGTH,
+            self._draw_box(x, ws, ws_len, '#3498db', 'Weight')
+            self._draw_box(x, ws + ws_len,
                            geo.core_length_m, '#2ecc71', 'Core Barrel')
             if geo.piston_at_pullout is not None:
                 piston_alt = geo.seafloor - geo.piston_at_pullout
@@ -198,7 +202,7 @@ class CalculationPlotView(QWidget):
                        geo.ws_at_end_pen, geo.ws_at_pullout):
             if ws_val is not None:
                 deepest_ws = max(deepest_ws, ws_val)
-        y_max = max(geo.seafloor, deepest_ws + WEIGHT_LENGTH + geo.core_length_m) + 2
+        y_max = max(geo.seafloor, deepest_ws + ws_len + geo.core_length_m) + 2
         # Extend if any piston is below seafloor
         for piston_alt in (geo.piston_alt_at_start_core,
                            geo.piston_alt_at_start_pen):
