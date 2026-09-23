@@ -133,6 +133,7 @@ class PredictPlotView(QWidget):
                     plot.addItem(
                         pg.InfiniteLine(float(sp_t), angle=90, pen=_pen("#984ea3", 1.7, style=Qt.DashDotLine))
                     )
+                self._add_event_line_legend(plot, ev_row)
 
             self._annotate_panel_events(plot, ev_row)
 
@@ -161,6 +162,24 @@ class PredictPlotView(QWidget):
         plot.addItem(pg.FillBetweenItem(low, high, brush=_brush(color, alpha)))
 
     @staticmethod
+    def _add_event_line_legend(plot, ev_row) -> None:
+        sc_t = ev_row.get("start_core_time_median_s", np.nan)
+        sp_t = ev_row.get("start_pen_time_median_s", np.nan)
+        if not (np.isfinite(sc_t) or np.isfinite(sp_t)):
+            return
+        legend = plot.addLegend(offset=(8, 8))
+        if np.isfinite(sc_t):
+            legend.addItem(
+                pg.PlotCurveItem([], [], pen=_pen("#2ca02c", 1.7, style=Qt.DashDotLine)),
+                "Start core",
+            )
+        if np.isfinite(sp_t):
+            legend.addItem(
+                pg.PlotCurveItem([], [], pen=_pen("#984ea3", 1.7, style=Qt.DashDotLine)),
+                "Start pen",
+            )
+
+    @staticmethod
     def _annotate_panel_events(plot, ev_row) -> None:
         if ev_row is None:
             return
@@ -181,7 +200,10 @@ class PredictPlotView(QWidget):
             color="#333333",
             fill=pg.mkBrush(255, 255, 255, 200),
         )
-        text.setPos(plot.getViewBox().viewRange()[0][0], plot.getViewBox().viewRange()[1][0])
+        x_range, y_range = plot.getViewBox().viewRange()
+        y_span = y_range[1] - y_range[0]
+        # Sit below the event-line legend in the top-left corner.
+        text.setPos(x_range[0], y_range[0] + 0.12 * y_span)
         plot.addItem(text)
 
     def _update_metrics_label(
