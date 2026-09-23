@@ -24,8 +24,10 @@ from PySide6.QtWidgets import (
     QToolBar, QLabel, QFileDialog, QSizePolicy, QVBoxLayout,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QAction
+
+import pyqtgraph as pg
 
 from ..gui.views.sensor_plot_view import SensorPlotView
 from ..gui.views.velocity_plot_view import HeavePlotView
@@ -303,6 +305,19 @@ class AnalysisWindow(QMainWindow):
         elif view_type == 'predict':
             self.secondary_stack.setCurrentIndex(7)
         self.secondary_stack.setVisible(True)
+        QTimer.singleShot(0, self._refresh_secondary_view)
+
+    def _refresh_secondary_view(self):
+        """Repaint secondary pyqtgraph widgets after show in stacked layout."""
+        self.secondary_stack.updateGeometry()
+        widget = self.secondary_stack.currentWidget()
+        if widget is None:
+            return
+        widget.updateGeometry()
+        for plot in widget.findChildren(pg.PlotWidget):
+            plot.update()
+        for graphics in widget.findChildren(pg.GraphicsLayoutWidget):
+            graphics.update()
 
     def hide_secondary_view(self):
         self.secondary_stack.setVisible(False)
