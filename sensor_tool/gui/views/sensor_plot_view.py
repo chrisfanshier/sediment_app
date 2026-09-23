@@ -82,7 +82,9 @@ class SensorPlotView(QWidget):
         )
         layout.addWidget(self.info_label)
 
-        pg.setConfigOptions(antialias=True, useOpenGL=True)
+        # OpenGL only on the main plot; a global useOpenGL=True breaks secondary
+        # PlotWidgets hidden in QStackedWidget until first show (solid black).
+        pg.setConfigOptions(antialias=True)
         if self._use_datetime_axis:
             date_axis = pg.graphicsItems.DateAxisItem.DateAxisItem(orientation='bottom')
             self.plot_widget = pg.PlotWidget(
