@@ -27,8 +27,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QAction
 
-import pyqtgraph as pg
-
 from ..gui.views.sensor_plot_view import SensorPlotView
 from ..gui.views.velocity_plot_view import HeavePlotView
 from ..gui.views.statistics_table import StatisticsTableView
@@ -308,16 +306,15 @@ class AnalysisWindow(QMainWindow):
         QTimer.singleShot(0, self._refresh_secondary_view)
 
     def _refresh_secondary_view(self):
-        """Repaint secondary pyqtgraph widgets after show in stacked layout."""
+        """Repaint the visible secondary view after show in stacked layout."""
         self.secondary_stack.updateGeometry()
         widget = self.secondary_stack.currentWidget()
         if widget is None:
             return
         widget.updateGeometry()
-        for plot in widget.findChildren(pg.PlotWidget):
-            plot.update()
-        for graphics in widget.findChildren(pg.GraphicsLayoutWidget):
-            graphics.update()
+        # Update the pane once. Calling update() on every nested PlotWidget
+        # can hang Trip Detector (X-linked divergence/derivative plots).
+        widget.update()
 
     def hide_secondary_view(self):
         self.secondary_stack.setVisible(False)

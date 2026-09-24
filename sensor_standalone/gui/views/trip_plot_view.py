@@ -199,6 +199,7 @@ class TripPlotView(QWidget):
     # ------------------------------------------------------------------
 
     def _clear_plots(self):
+        self.derivatives_plot.setXLink(None)
         for pw in (self.divergence_plot, self.derivatives_plot):
             pw.setUpdatesEnabled(False)
             try:
