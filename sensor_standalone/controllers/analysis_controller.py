@@ -4501,6 +4501,21 @@ class AnalysisController:
         if sp_manual is not None:
             self._manual_start_pen = int(sp_manual)
 
+        # Restore panel column picks before re-running; without them
+        # _update_start_pen_line cannot draw the restored start_pen line.
+        if self.calculate_panel is not None and self.sensor_data is not None:
+            ws_col = calc_params.get('weight_stand_col')
+            rel_col = calc_params.get('release_col')
+            trig_col = calc_params.get('trigger_col')
+            if ws_col or rel_col or trig_col:
+                columns_and_names = [
+                    (col, SensorData.get_location_name(col))
+                    for col in self.sensor_data.depth_columns
+                ]
+                self.calculate_panel.populate_sensor_combos(
+                    columns_and_names, ws_col, rel_col, trig_col,
+                )
+
         # Restore panel numeric params
         if self.calculate_panel is not None:
             trigger_pen = calc_params.get('trigger_pen_m')
