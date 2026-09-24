@@ -143,18 +143,18 @@ class PredictPanel(BaseModePanel):
         plot_layout.addWidget(self.curve_combo)
         self.show_piston_check = QCheckBox("Show piston trajectory")
         self.show_piston_check.setChecked(True)
-        self.show_piston_check.toggled.connect(self.overlay_changed.emit)
+        self.show_piston_check.toggled.connect(self._on_plot_option_toggled)
         plot_layout.addWidget(self.show_piston_check)
         self.show_trigger_check = QCheckBox("Show trigger core/weight")
         self.show_trigger_check.setChecked(True)
-        self.show_trigger_check.toggled.connect(self.overlay_changed.emit)
+        self.show_trigger_check.toggled.connect(self._on_plot_option_toggled)
         plot_layout.addWidget(self.show_trigger_check)
         self.overlay_actual_check = QCheckBox("Overlay actual sensor data")
         self.overlay_actual_check.setToolTip(
             "Plot measured weight stand, release, and piston on the model "
             "(single curve panel). Drag the trip line on the main plot to realign."
         )
-        self.overlay_actual_check.toggled.connect(self.overlay_changed.emit)
+        self.overlay_actual_check.toggled.connect(self._on_plot_option_toggled)
         plot_layout.addWidget(self.overlay_actual_check)
         self.trigger_line_label = QLabel("")
         self.trigger_line_label.setWordWrap(True)
@@ -171,6 +171,10 @@ class PredictPanel(BaseModePanel):
         self._layout.addWidget(self.log)
 
         self._finish_layout()
+
+    def _on_plot_option_toggled(self, _checked: bool) -> None:
+        """Drop the checkbox state; overlay_changed carries no arguments."""
+        self.overlay_changed.emit()
 
     def update_calibration_info(self, filename: str, info_lines: list[str]) -> None:
         lines = [f"Loaded: {filename}"] + info_lines
