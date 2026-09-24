@@ -81,6 +81,9 @@ class AnalysisController:
         self._piston_start_core_idx: Optional[int] = None
         self._piston_values: Optional[np.ndarray] = None
         self._start_pen_idx: Optional[int] = None
+        # Set when the user drags the start-pen line; suppresses the automatic
+        # core-tip/seafloor intersection so the drag is not recomputed away.
+        self._manual_start_pen: Optional[int] = None
 
         # GUI references (set by main_window after construction)
         self.main_window = None
@@ -371,6 +374,7 @@ class AnalysisController:
         self._piston_start_core_idx = None
         self._piston_values = None
         self._start_pen_idx = None
+        self._manual_start_pen = None
         self._calc_start_core_idx = None
         self._end_pen_idx = None
         self._pullout_idx = None
@@ -1395,6 +1399,12 @@ class AnalysisController:
         if self.sensor_data is None:
             return
         self._start_pen_idx = new_idx
+        self._manual_start_pen = new_idx
+        if self.calculate_panel is not None:
+            self.calculate_panel.log_widget.log(
+                f"Start pen moved to index {new_idx} (manual override; "
+                "reload the core to go back to the computed position)"
+            )
 
     def _on_seafloor_dragged(self, depth: float):
         """Handle the user dragging the seafloor line on the main plot."""
@@ -2470,6 +2480,16 @@ class AnalysisController:
         # Add seafloor line (movable when using manual override)
         movable = self._manual_seafloor is not None
         self.main_plot.add_seafloor_line(sf, movable=movable)
+        # A dragged start_pen wins over the computed intersection, otherwise
+        # every recompute (seafloor edit, calculate re-run, restore) would
+        # silently undo the drag.
+        if self._manual_start_pen is not None:
+            if 0 <= self._manual_start_pen < len(x):
+                self._start_pen_idx = self._manual_start_pen
+                self.main_plot.add_start_pen_line(
+                    float(x[self._manual_start_pen])
+                )
+                return
         # Add start_pen line
         ws_len_m = panel.get_weight_stand_length_m()
         core_tip = ws_vals + ws_len_m + core_length_m
@@ -3224,6 +3244,8 @@ class AnalysisController:
                 "start_core_idx":         inp.get("start_core_idx"),
                 "end_pen_idx":            self._end_pen_idx,
                 "pullout_idx":            self._pullout_idx,
+                "start_pen_idx":          self._start_pen_idx,
+                "start_pen_manual":       self._manual_start_pen,
                 "trigger_pen_m":          inp.get("trigger_pen"),
                 "core_length_ft":         inp.get("core_length_ft"),
                 "trigger_core_length_ft": inp.get("trigger_core_length_ft"),
@@ -3418,6 +3440,8 @@ class AnalysisController:
                 "start_core_idx":          inp.get("start_core_idx"),
                 "end_pen_idx":             self._end_pen_idx,
                 "pullout_idx":             self._pullout_idx,
+                "start_pen_idx":           self._start_pen_idx,
+                "start_pen_manual":        self._manual_start_pen,
                 "trigger_pen_m":           inp.get("trigger_pen"),
                 "core_length_ft":          inp.get("core_length_ft"),
                 "trigger_core_length_ft":  inp.get("trigger_core_length_ft"),
@@ -4417,6 +4441,8 @@ class AnalysisController:
         pullout = calc_params.get('pullout_idx')
         sc = calc_params.get('start_core_idx')
         sf = calc_params.get('seafloor_manual')
+        sp = calc_params.get('start_pen_idx')
+        sp_manual = calc_params.get('start_pen_manual')
 
         if end_pen is not None:
             self._end_pen_idx = int(end_pen)
@@ -4426,6 +4452,14 @@ class AnalysisController:
             self._calc_start_core_idx = int(sc)
         if sf is not None:
             self._manual_seafloor = float(sf)
+            if self.calculate_panel is not None:
+                self.calculate_panel.show_seafloor_override(self._manual_seafloor)
+        if sp is not None:
+            self._start_pen_idx = int(sp)
+        # Only a dragged start_pen is pinned on restore; an auto-computed one
+        # is left to recompute so it tracks the restored inputs.
+        if sp_manual is not None:
+            self._manual_start_pen = int(sp_manual)
 
         # Restore panel numeric params
         if self.calculate_panel is not None:

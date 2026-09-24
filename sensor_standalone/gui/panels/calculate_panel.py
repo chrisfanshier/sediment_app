@@ -501,3 +501,19 @@ class CalculatePanel(BaseModePanel):
     def set_seafloor_override(self, depth: float):
         """Set the spinbox value (does not check the checkbox)."""
         self.seafloor_spin.setValue(depth)
+
+    def show_seafloor_override(self, depth: float | None):
+        """Display a restored override without re-emitting it.
+
+        The caller already holds the value. Emitting would let the checkbox
+        push the spinbox's stale 0.0 back out and wipe the restored depth.
+        """
+        self.seafloor_check.blockSignals(True)
+        self.seafloor_spin.blockSignals(True)
+        self.seafloor_check.setChecked(depth is not None)
+        if depth is not None:
+            self.seafloor_spin.setValue(float(depth))
+        self.seafloor_check.blockSignals(False)
+        self.seafloor_spin.blockSignals(False)
+        self.seafloor_spin.setEnabled(depth is not None)
+        self.seafloor_estimate_btn.setEnabled(depth is not None)
