@@ -1243,29 +1243,29 @@ class AnalysisController:
         if self.sensor_data is None:
             return
 
-        # Update stored trip index in detection result (if available)
+        dt_col = self.sensor_data.datetime_col
+        new_ts = None
+        if (dt_col in self.sensor_data.df.columns
+                and 0 <= new_idx < len(self.sensor_data.df)):
+            ts = self.sensor_data.df[dt_col].iloc[new_idx]
+            if pd.notna(ts):
+                new_ts = pd.Timestamp(ts)
+
+        # Update stored trip index in detection result (if available). The
+        # datetime has to move with it: both are persisted, and a stale
+        # datetime would disagree with the index in the saved row.
         if self.trip_detection_result is not None:
             self.trip_detection_result.trip_index = new_idx
+            if new_ts is not None:
+                self.trip_detection_result.trip_datetime = new_ts
 
-        # Update the trip time widget on the piston panel
-        if self.piston_panel is not None:
-            dt_col = self.sensor_data.datetime_col
-            if (dt_col in self.sensor_data.df.columns
-                    and 0 <= new_idx < len(self.sensor_data.df)):
-                ts = self.sensor_data.df[dt_col].iloc[new_idx]
-                if pd.notna(ts):
-                    self.piston_panel.set_trip_time(str(ts), source='plot drag')
-
-        # Update the trip time widget on the calculate panel
-        if self.calculate_panel is not None:
-            dt_col = self.sensor_data.datetime_col
-            if (dt_col in self.sensor_data.df.columns
-                    and 0 <= new_idx < len(self.sensor_data.df)):
-                ts = self.sensor_data.df[dt_col].iloc[new_idx]
-                if pd.notna(ts):
-                    self.calculate_panel.set_trip_time(
-                        str(ts), source='plot drag',
-                    )
+        if new_ts is not None:
+            if self.piston_panel is not None:
+                self.piston_panel.set_trip_time(str(new_ts), source='plot drag')
+            if self.calculate_panel is not None:
+                self.calculate_panel.set_trip_time(
+                    str(new_ts), source='plot drag',
+                )
 
         mode = (
             self.main_window.get_current_mode() if self.main_window else None
