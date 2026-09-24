@@ -17,7 +17,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats as sp_stats
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from ..domain.models.sensor_data import SensorData, CorrectionRecord
@@ -982,14 +982,18 @@ class AnalysisController:
                     str(result.trip_datetime), source='trip detector',
                 )
 
-            # Show trip line on the main depth plot
+            if self.main_window is not None:
+                self.main_window.show_secondary_view('trip')
+
+            # Main plot first; defer trip derivative plots so the lower pane
+            # has layout and we avoid re-entrant repaints on the UI thread.
             self.plot_depths()
             self.main_plot.add_trip_line(result.trip_index)
 
-            # Show derivative plots on secondary view
             if self.trip_plot is not None:
-                self.trip_plot.plot_trip_result(result)
-                self.main_window.show_secondary_view('trip')
+                QTimer.singleShot(
+                    0, lambda r=result: self.trip_plot.plot_trip_result(r)
+                )
 
             panel.log_widget.log("Trip detection complete!")
 

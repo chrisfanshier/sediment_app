@@ -219,6 +219,7 @@ class MainWindow(QMainWindow):
         self.right_splitter.addWidget(self.secondary_stack)
         self.right_splitter.setStretchFactor(0, 3)
         self.right_splitter.setStretchFactor(1, 1)
+        self.right_splitter.setSizes([750, 250])
 
         # -- Main splitter (panels + plots) --
         self.main_splitter = QSplitter(Qt.Horizontal)
@@ -305,18 +306,16 @@ class MainWindow(QMainWindow):
         elif view_type == 'predict':
             self.secondary_stack.setCurrentIndex(7)
         self.secondary_stack.setVisible(True)
-        QTimer.singleShot(0, self._refresh_secondary_view)
+        self._ensure_secondary_pane_layout()
+        QTimer.singleShot(0, self._ensure_secondary_pane_layout)
 
-    def _refresh_secondary_view(self):
-        """Repaint the visible secondary view after show in stacked layout."""
+    def _ensure_secondary_pane_layout(self):
+        """Give the lower pane real height before pyqtgraph paints."""
         self.secondary_stack.updateGeometry()
-        widget = self.secondary_stack.currentWidget()
-        if widget is None:
-            return
-        widget.updateGeometry()
-        # Update the pane once. Calling update() on every nested PlotWidget
-        # can hang Trip Detector (X-linked divergence/derivative plots).
-        widget.update()
+        sizes = self.right_splitter.sizes()
+        total = max(sum(sizes), self.right_splitter.height(), 1)
+        if len(sizes) >= 2 and sizes[1] < 80:
+            self.right_splitter.setSizes([int(total * 0.72), int(total * 0.28)])
 
     def hide_secondary_view(self):
         self.secondary_stack.setVisible(False)

@@ -82,16 +82,16 @@ class SensorPlotView(QWidget):
         )
         layout.addWidget(self.info_label)
 
-        # OpenGL only on the main plot; a global useOpenGL=True breaks secondary
-        # PlotWidgets hidden in QStackedWidget until first show (solid black).
+        # Avoid OpenGL: hidden stacked secondary plots go black, and mixing an
+        # OpenGL main plot with non-OpenGL secondary plots can hang on repaint.
         pg.setConfigOptions(antialias=True)
         if self._use_datetime_axis:
             date_axis = pg.graphicsItems.DateAxisItem.DateAxisItem(orientation='bottom')
             self.plot_widget = pg.PlotWidget(
-                axisItems={'bottom': date_axis}, useOpenGL=True
+                axisItems={'bottom': date_axis}, useOpenGL=False
             )
         else:
-            self.plot_widget = pg.PlotWidget(useOpenGL=True)
+            self.plot_widget = pg.PlotWidget(useOpenGL=False)
 
         self.plot_widget.setBackground('w')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)

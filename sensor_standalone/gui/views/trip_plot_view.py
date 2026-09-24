@@ -13,7 +13,8 @@ import numpy as np
 import pyqtgraph as pg
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSplitter
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QShowEvent
 
 from ...domain.models.sensor_data import SensorData
 from ...domain.processing.trip_detection import TripDetectionResult
@@ -147,8 +148,6 @@ class TripPlotView(QWidget):
         )
         self.divergence_plot.addItem(trip_line_div)
 
-        self.divergence_plot.autoRange()
-
         # ---- Bottom plot: individual derivatives ----
         self.derivatives_plot.setTitle(
             f'Individual Sensor {result.derivative_label}'
@@ -180,8 +179,17 @@ class TripPlotView(QWidget):
         )
         self.derivatives_plot.addItem(trip_line_der)
 
-        self.derivatives_plot.autoRange()
         self.derivatives_plot.setXLink(self.divergence_plot)
+        self.divergence_plot.autoRange()
+        prof_vals = np.concatenate(
+            [result.derivative_profiles[col] for col in result.depth_columns]
+        )
+        y_pad = 0.05 * max(float(np.nanmax(prof_vals) - np.nanmin(prof_vals)), 1e-6)
+        self.derivatives_plot.setYRange(
+            float(np.nanmin(prof_vals)) - y_pad,
+            float(np.nanmax(prof_vals)) + y_pad,
+            padding=0,
+        )
 
         self.info_label.setText(
             f"Trip detected at sample {trip_idx}  |  "
@@ -193,6 +201,15 @@ class TripPlotView(QWidget):
         self._clear_plots()
         self.info_label.setText('')
         self._n_samples = 0
+
+    def showEvent(self, event: QShowEvent):
+        super().showEvent(event)
+        if self._n_samples > 0:
+            QTimer.singleShot(0, self._repaint_after_show)
+
+    def _repaint_after_show(self):
+        for pw in (self.divergence_plot, self.derivatives_plot):
+            pw.repaint()
 
     # ------------------------------------------------------------------
     # Private
