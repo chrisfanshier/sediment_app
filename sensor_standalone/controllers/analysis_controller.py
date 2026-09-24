@@ -4219,7 +4219,18 @@ class AnalysisController:
         import numpy as np
         from ..domain.processing.trip_detection import TripDetectionResult
 
+        # The saved index is exact, the saved datetime may not be. Calculate and
+        # Piston modes re-derive the trip index from their panel time widget, so
+        # that widget has to agree with trip_index to the sample or the restored
+        # trip lands on a neighbouring sample.
         ts = pd.Timestamp(trip_datetime)
+        dt_col = self.sensor_data.datetime_col
+        if (dt_col in self.sensor_data.df.columns
+                and 0 <= trip_index < len(self.sensor_data.df)):
+            sample_ts = self.sensor_data.df[dt_col].iloc[trip_index]
+            if pd.notna(sample_ts):
+                ts = pd.Timestamp(sample_ts)
+
         n = self.sensor_data.row_count
         depth_cols = self.sensor_data.depth_columns
 

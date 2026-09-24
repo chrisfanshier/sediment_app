@@ -7,7 +7,7 @@ from typing import Optional
 
 import numpy as np
 
-from .project import ProjectStore
+from .project import ProjectStore, _iso
 
 _FLAT_COLUMNS = frozenset({
     "trip_index", "trip_datetime", "start_core_index", "start_core_datetime",
@@ -66,7 +66,7 @@ def insert_result(
             continue
         cols.append(key)
         if key.endswith("_datetime") and val is not None:
-            vals.append(str(val)[:19])
+            vals.append(_iso(val))
         else:
             vals.append(val)
 
@@ -98,7 +98,7 @@ def update_result(
                 continue
             parts.append(f"{key} = ?")
             if key.endswith("_datetime") and val is not None:
-                vals.append(str(val)[:19])
+                vals.append(_iso(val))
             else:
                 vals.append(val)
         if parts:
