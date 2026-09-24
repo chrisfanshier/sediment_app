@@ -57,6 +57,30 @@ from db_util import get_connection, add_sync_tracking  # noqa: E402
 from sqlalchemy import text                            # noqa: E402
 
 
+def _is_blank(val) -> bool:
+    """True for values that must never overwrite a stored one.
+
+    ``None`` writes a NULL. A non-finite float is worse: PostgreSQL accepts
+    NaN in a double precision column, so it would be stored and then read back
+    as a real result. Either way a previously saved number is lost, which is
+    the one thing a single-row-per-core layout cannot afford.
+    """
+    if val is None:
+        return True
+    if isinstance(val, float) and not math.isfinite(val):
+        return True
+    if isinstance(val, np.floating) and not math.isfinite(float(val)):
+        return True
+    return False
+
+
+def _writable_flat(flat_data: Optional[dict]) -> dict:
+    """Keep only the columns carrying a value worth writing."""
+    return {
+        k: v for k, v in (flat_data or {}).items() if not _is_blank(v)
+    }
+
+
 def insert_result(core_id: int,
                   flat_data: Optional[dict] = None,
                   params_section: Optional[dict] = None) -> int:
@@ -77,7 +101,7 @@ def insert_result(core_id: int,
     int
         The new result_id.
     """
-    data: dict = dict(flat_data or {})
+    data: dict = _writable_flat(flat_data)
     data["core_id"] = core_id
 
     if params_section is not None:
@@ -118,10 +142,14 @@ def update_result(result_id: int,
     params_section : dict, optional
         Dict whose top-level keys are merged into the existing params JSONB.
     """
-    data: dict = dict(flat_data or {})
+    data: dict = _writable_flat(flat_data)
     data = add_sync_tracking(data, is_update=True)
 
     set_parts: list[str] = [f"{k} = :{k}" for k in data.keys()]
+    # analyzed_at is only defaulted on insert, and with one row per core the
+    # row is updated for the rest of its life, so bump it here or it would
+    # report when the core was first touched rather than last saved.
+    set_parts.append("analyzed_at = CURRENT_TIMESTAMP")
 
     if params_section is not None:
         # Merge into existing JSONB: COALESCE handles NULL initial value.
@@ -142,6 +170,39 @@ def update_result(result_id: int,
     with get_connection() as conn:
         conn.execute(text(sql), data)
         conn.commit()
+
+
+def latest_result_id(core_id: int) -> Optional[int]:
+    """Return the analysis row for *core_id*, or None if it has never been saved.
+
+    A core has one analysis row. Older databases can hold several from when
+    each save forked a new one; the highest result_id is the most recently
+    inserted (result_id is SERIAL, so the sequence only moves forward), which
+    is the one those databases were already restoring from.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            text("SELECT MAX(result_id) AS rid FROM sensor_analysis_results "
+                 "WHERE core_id = :cid"),
+            {'cid': core_id},
+        ).fetchone()
+    if row is None or row.rid is None:
+        return None
+    return int(row.rid)
+
+
+def upsert_result(core_id: int,
+                  flat_data: Optional[dict] = None,
+                  params_section: Optional[dict] = None) -> tuple[int, bool]:
+    """Write into the core's analysis row, creating it on first save.
+
+    Returns ``(result_id, created)``.
+    """
+    result_id = latest_result_id(core_id)
+    if result_id is None:
+        return insert_result(core_id, flat_data, params_section), True
+    update_result(result_id, flat_data, params_section)
+    return result_id, False
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +235,12 @@ def fetch_results_for_core(core_id: int) -> list[dict]:
             d['params'] = json.loads(d['params'])
         results.append(d)
     return results
+
+
+def fetch_latest_result(core_id: int) -> dict | None:
+    """Return the core's analysis row in full, or None if never saved."""
+    result_id = latest_result_id(core_id)
+    return None if result_id is None else fetch_result_by_id(result_id)
 
 
 def fetch_result_by_id(result_id: int) -> dict | None:

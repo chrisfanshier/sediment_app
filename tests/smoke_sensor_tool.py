@@ -45,7 +45,6 @@ def t_imports():
     import sensor_tool.domain.processing.winch_trip_detection  # noqa: F401
     import sensor_tool.gui.panels.winch_panel  # noqa: F401
     import sensor_tool.gui.views.winch_plot_view  # noqa: F401
-    import sensor_tool.gui.dialogs.restore_results_dialog  # noqa: F401
 
 
 check("all sensor_tool modules import", t_imports)

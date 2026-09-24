@@ -50,7 +50,7 @@ from ..domain.processing.predict import run_prediction, training_warnings
 from ..domain.processing.predict_overlay import build_actual_overlay
 from ..persistence.database_loader import DatabaseLoader
 from ..persistence.winch_loader import WinchLoader, get_winch_parameters, datetime_to_epoch, timestamp_to_epoch
-from ..persistence.analysis_results_io import insert_result, update_result
+from ..persistence.analysis_results_io import upsert_result
 
 
 class AnalysisController:
@@ -68,7 +68,6 @@ class AnalysisController:
         self._loaded_file_path: Optional[str] = None        # Full path to loaded file
         self._loaded_core_id: Optional[int] = None           # core_id when loaded from DB
         self._loaded_cruise_id: Optional[int] = None         # cruise_id when loaded from DB
-        self._current_db_result_id: Optional[int] = None     # active sensor_analysis_results row
         self.calibration: Optional[DepthCalibration] = None
         self.generated_calibration: Optional[DepthCalibration] = None
         self.time_offset_results: Optional[list[TimeOffsetResult]] = None
@@ -382,7 +381,6 @@ class AnalysisController:
         self._last_calc_results = None
         self._last_calc_inputs = None
         self._manual_seafloor = None
-        self._current_db_result_id = None  # new analysis session
         self._heave_profiles = None
         self._heave_sel = None
         self._reset_winch_state()
@@ -3062,12 +3060,11 @@ class AnalysisController:
                                  flat_data: Optional[dict] = None,
                                  params_section: Optional[dict] = None) -> None:
         """
-        Insert a new result row or update the current session row.
+        Write into this core's single analysis result row.
 
-        Creates a new row (and caches its result_id) on the first call
-        after a core is loaded or analysis is reset.  Subsequent calls
-        within the same session update that same row so each panel
-        contributes to one consolidated record.
+        Each core has one row, created on its first save and updated by every
+        later save, so each panel contributes to one consolidated record
+        regardless of which session it was saved from.
         """
         if self._loaded_core_id is None:
             self._show_warning(
@@ -3078,22 +3075,11 @@ class AnalysisController:
             return
 
         try:
-            if self._current_db_result_id is None:
-                self._current_db_result_id = insert_result(
-                    self._loaded_core_id, flat_data, params_section
-                )
-                msg = (
-                    f"Analysis result saved to DB "
-                    f"(result_id={self._current_db_result_id})"
-                )
-            else:
-                update_result(
-                    self._current_db_result_id, flat_data, params_section
-                )
-                msg = (
-                    f"Analysis result updated in DB "
-                    f"(result_id={self._current_db_result_id})"
-                )
+            result_id, created = upsert_result(
+                self._loaded_core_id, flat_data, params_section
+            )
+            verb = "saved to" if created else "updated in"
+            msg = f"Analysis result {verb} DB (result_id={result_id})"
 
             self._log_active(msg)
             if self.main_window:
@@ -3120,21 +3106,31 @@ class AnalysisController:
         skipped: list = []
 
         # --- Depth offset ---
-        if self.sensor_data is not None:
+        # Every section here replaces its stored counterpart wholesale, so an
+        # empty panel must be skipped rather than written: a save from a
+        # session that never visited this mode would otherwise blank a
+        # calibration saved earlier.
+        if self.sensor_data is None:
+            skipped.append("depth offset (no data)")
+        else:
             panel = self.depth_panel
             calib_json = self.calibration.to_dict() if self.calibration is not None else None
-            params_section["depth_offset"] = {
+            depth_section = {
                 "calib_json": calib_json,
                 "label_mapping": panel.get_calibration_mapping(),
                 "reference_sensor": panel.get_ref_sensor(),
                 "manual_offsets": panel.get_manual_offsets(),
             }
-            saved.append("depth offset")
-        else:
-            skipped.append("depth offset (no data)")
+            if any(depth_section.values()):
+                params_section["depth_offset"] = depth_section
+                saved.append("depth offset")
+            else:
+                skipped.append("depth offset (nothing set)")
 
         # --- Time offset ---
-        if self.sensor_data is not None:
+        if self.sensor_data is None:
+            skipped.append("time offset (no data)")
+        else:
             panel = self.time_panel
             low_hz, high_hz, order = panel.get_filter_params()
             offsets_data = []
@@ -3146,15 +3142,21 @@ class AnalysisController:
                         "rms_value": r.rms_value,
                         "is_reference": r.is_reference,
                     })
-            params_section["time_offset"] = {
-                "reference_col": panel.get_ref_col(),
-                "filter_low_hz": low_hz,
-                "filter_high_hz": high_hz,
-                "filter_order": order,
-                "manual_offsets": panel.get_manual_offsets(),
-                "offsets": offsets_data,
-            }
-            saved.append("time offset")
+            manual_time_offsets = panel.get_manual_offsets()
+            # The filter settings alone are just spinbox defaults; only a
+            # computed or hand-entered offset counts as real content.
+            if offsets_data or manual_time_offsets:
+                params_section["time_offset"] = {
+                    "reference_col": panel.get_ref_col(),
+                    "filter_low_hz": low_hz,
+                    "filter_high_hz": high_hz,
+                    "filter_order": order,
+                    "manual_offsets": manual_time_offsets,
+                    "offsets": offsets_data,
+                }
+                saved.append("time offset")
+            else:
+                skipped.append("time offset (nothing set)")
 
         # --- Trip detection ---
         if self.trip_detection_result is not None:
@@ -3262,6 +3264,9 @@ class AnalysisController:
         else:
             skipped.append("winch alignment (not aligned)")
 
+        # Read the stored row before writing over it.
+        stale_note = self._stale_calc_warning(saved)
+
         self._upsert_analysis_result(
             flat_data=flat_data if flat_data else None,
             params_section=params_section if params_section else None,
@@ -3273,6 +3278,52 @@ class AnalysisController:
         if skipped:
             parts.append(f"Skipped: {', '.join(skipped)}")
         self._log_active("Save All — " + " | ".join(parts))
+        if stale_note:
+            self._log_active(stale_note)
+            self._show_warning(stale_note)
+
+    # Flat columns produced only by Calculate mode.
+    _CALC_RESULT_COLUMNS = (
+        "result_recoil_max", "result_recoil_time_s", "result_fall_dist",
+        "result_suck_in", "result_recoil_start", "result_freefall_start",
+        "result_piston_suck", "result_seafloor", "result_piston_alt",
+        "result_pen_deficit", "result_freefall_est", "result_eff_trig_line",
+    )
+
+    def _stale_calc_warning(self, saved: list) -> Optional[str]:
+        """Warn when a save leaves stored calculations behind their inputs.
+
+        With one row per core, re-saving part of the analysis keeps whatever
+        calculation results were already stored. Those were derived from the
+        inputs as they stood at the time, so the row stops being internally
+        consistent until Calculate is re-run. Nothing is lost either way, but
+        the mismatch is invisible unless we say so.
+
+        Returns the warning text, or None when the row is consistent.
+        """
+        if "calculations" in saved:
+            return None
+        upstream = [s for s in saved if s != "winch alignment"]
+        if not upstream:
+            return None
+        if self._loaded_core_id is None:
+            return None
+        try:
+            from ..persistence.analysis_results_io import fetch_latest_result
+            existing = fetch_latest_result(self._loaded_core_id)
+        except Exception:
+            return None
+        if existing is None:
+            return None
+        if not any(existing.get(c) is not None
+                   for c in self._CALC_RESULT_COLUMNS):
+            return None
+        return (
+            "Saved calculation results for this core are now out of date.\n\n"
+            f"This save updated {', '.join(upstream)}, but the stored "
+            "calculations were computed from the earlier values.\n\n"
+            "Run Calculate and save again to bring them back in step."
+        )
 
     def save_depth_offset_to_db(self):
         """Save depth offset correction parameters to the DB."""
@@ -3971,9 +4022,7 @@ class AnalysisController:
 
     def _on_restore_results(self) -> None:
         """Handle the 'Restore Results' toolbar action."""
-        from ..persistence.analysis_results_io import fetch_results_for_core
-        from ..gui.dialogs.restore_results_dialog import RestoreResultsDialog
-        from PySide6.QtWidgets import QDialog
+        from ..persistence.analysis_results_io import latest_result_id
 
         if self._loaded_core_id is None:
             self._show_warning(
@@ -3983,24 +4032,14 @@ class AnalysisController:
             return
 
         try:
-            results = fetch_results_for_core(self._loaded_core_id)
+            result_id = latest_result_id(self._loaded_core_id)
         except Exception as e:
             self._show_error("Restore Error", f"Could not query saved results:\n{e}")
             return
 
-        if not results:
+        if result_id is None:
             self._show_warning("No saved analysis results found for this core.")
             return
-
-        if len(results) == 1:
-            result_id = results[0]['result_id']
-        else:
-            dialog = RestoreResultsDialog(results, parent=self.main_window)
-            if dialog.exec() != QDialog.Accepted:
-                return
-            result_id = dialog.selected_result_id()
-            if result_id is None:
-                return
 
         self.restore_from_db(result_id)
 
