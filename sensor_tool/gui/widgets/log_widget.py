@@ -3,7 +3,7 @@ LogWidget - Reusable log output text area.
 """
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QGroupBox, QPushButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit, QGroupBox, QPushButton, QApplication
 
 
 class LogWidget(QWidget):
@@ -35,6 +35,7 @@ class LogWidget(QWidget):
         self.text_edit.verticalScrollBar().setValue(
             self.text_edit.verticalScrollBar().maximum()
         )
+        QApplication.processEvents()
 
     def clear(self):
         self.text_edit.clear()

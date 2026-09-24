@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QToolBar, QLabel, QFileDialog, QSizePolicy, QVBoxLayout,
     QMessageBox,
 )
-from PySide6.QtCore import Qt, QSize, QTimer
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QAction
 
 from ..gui.views.sensor_plot_view import SensorPlotView
@@ -306,15 +306,13 @@ class MainWindow(QMainWindow):
         elif view_type == 'predict':
             self.secondary_stack.setCurrentIndex(7)
         self.secondary_stack.setVisible(True)
-        self._ensure_secondary_pane_layout()
-        QTimer.singleShot(0, self._ensure_secondary_pane_layout)
+        self._ensure_secondary_pane_height()
 
-    def _ensure_secondary_pane_layout(self):
-        """Give the lower pane real height before pyqtgraph paints."""
-        self.secondary_stack.updateGeometry()
+    def _ensure_secondary_pane_height(self):
+        """Give the lower pane real height so its plot does not paint black."""
         sizes = self.right_splitter.sizes()
-        total = max(sum(sizes), self.right_splitter.height(), 1)
         if len(sizes) >= 2 and sizes[1] < 80:
+            total = max(sum(sizes), self.right_splitter.height(), 1)
             self.right_splitter.setSizes([int(total * 0.72), int(total * 0.28)])
 
     def hide_secondary_view(self):
