@@ -82,14 +82,16 @@ class SensorPlotView(QWidget):
         )
         layout.addWidget(self.info_label)
 
-        pg.setConfigOptions(antialias=True, useOpenGL=True)
+        # No OpenGL: secondary plots hidden in a QStackedWidget render as solid
+        # black on first show. Antialiasing is left off because these traces can
+        # be hundreds of thousands of samples, where antialiased software
+        # rendering costs seconds per repaint.
+        pg.setConfigOptions(antialias=False)
         if self._use_datetime_axis:
             date_axis = pg.graphicsItems.DateAxisItem.DateAxisItem(orientation='bottom')
-            self.plot_widget = pg.PlotWidget(
-                axisItems={'bottom': date_axis}, useOpenGL=True
-            )
+            self.plot_widget = pg.PlotWidget(axisItems={'bottom': date_axis})
         else:
-            self.plot_widget = pg.PlotWidget(useOpenGL=True)
+            self.plot_widget = pg.PlotWidget()
 
         self.plot_widget.setBackground('w')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
@@ -303,16 +305,37 @@ class SensorPlotView(QWidget):
                 pass
             self._trip_line = None
 
-    def _on_trip_line_moved(self):
-        if self._trip_line is None or self._sensor_data is None:
-            return
-        x_pos = self._trip_line.value()
+    def _snap_to_sample(self, line):
+        """Move *line* onto the nearest sample and return that sample index.
+
+        Only the index is persisted, so a line left between samples would be
+        redrawn up to half a sample away from where the user dropped it the
+        next time the analysis is restored. Snapping makes the position you
+        see the position that gets saved.
+
+        Safe to call from a sigPositionChangeFinished handler: setPos only
+        emits sigPositionChanged, so this cannot re-enter.
+        """
+        if line is None or self._sensor_data is None:
+            return None
+        x_pos = line.value()
         if self._use_datetime_axis:
             timestamps = self._sensor_data.get_timestamps_epoch()
+            if len(timestamps) == 0:
+                return None
             idx = int(np.argmin(np.abs(timestamps - x_pos)))
+            snapped = float(timestamps[idx])
         else:
             idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
-        self.trip_line_changed.emit(idx)
+            snapped = float(idx)
+        if snapped != x_pos:
+            line.setValue(snapped)
+        return idx
+
+    def _on_trip_line_moved(self):
+        idx = self._snap_to_sample(self._trip_line)
+        if idx is not None:
+            self.trip_line_changed.emit(idx)
 
     # ------------------------------------------------------------------
     # Piston position helpers
@@ -426,18 +449,12 @@ class SensorPlotView(QWidget):
             self._start_core_line = None
 
     def _on_start_core_moved(self):
-        if self._start_core_line is None or self._sensor_data is None:
-            return
-        x_pos = self._start_core_line.value()
-        if self._use_datetime_axis:
-            timestamps = self._sensor_data.get_timestamps_epoch()
-            idx = int(np.argmin(np.abs(timestamps - x_pos)))
-        else:
-            idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
-        self.start_core_changed.emit(idx)
+        idx = self._snap_to_sample(self._start_core_line)
+        if idx is not None:
+            self.start_core_changed.emit(idx)
 
     # ------------------------------------------------------------------
-    # Start-penetration line (non-draggable, auto-computed)
+    # Start-penetration line (auto-computed, draggable to override)
     # ------------------------------------------------------------------
 
     def add_start_pen_line(self, x_pos: float):
@@ -469,15 +486,9 @@ class SensorPlotView(QWidget):
             self._start_pen_line = None
 
     def _on_start_pen_moved(self):
-        if self._start_pen_line is None or self._sensor_data is None:
-            return
-        x_pos = self._start_pen_line.value()
-        if self._use_datetime_axis:
-            timestamps = self._sensor_data.get_timestamps_epoch()
-            idx = int(np.argmin(np.abs(timestamps - x_pos)))
-        else:
-            idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
-        self.start_pen_changed.emit(idx)
+        idx = self._snap_to_sample(self._start_pen_line)
+        if idx is not None:
+            self.start_pen_changed.emit(idx)
 
     # ------------------------------------------------------------------
     # Seafloor line (horizontal, non-draggable)
@@ -555,15 +566,9 @@ class SensorPlotView(QWidget):
             self._end_pen_line = None
 
     def _on_end_pen_moved(self):
-        if self._end_pen_line is None or self._sensor_data is None:
-            return
-        x_pos = self._end_pen_line.value()
-        if self._use_datetime_axis:
-            timestamps = self._sensor_data.get_timestamps_epoch()
-            idx = int(np.argmin(np.abs(timestamps - x_pos)))
-        else:
-            idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
-        self.end_pen_changed.emit(idx)
+        idx = self._snap_to_sample(self._end_pen_line)
+        if idx is not None:
+            self.end_pen_changed.emit(idx)
 
     # ------------------------------------------------------------------
     # Pullout line
@@ -599,15 +604,9 @@ class SensorPlotView(QWidget):
             self._pullout_line = None
 
     def _on_pullout_moved(self):
-        if self._pullout_line is None or self._sensor_data is None:
-            return
-        x_pos = self._pullout_line.value()
-        if self._use_datetime_axis:
-            timestamps = self._sensor_data.get_timestamps_epoch()
-            idx = int(np.argmin(np.abs(timestamps - x_pos)))
-        else:
-            idx = max(0, min(int(round(x_pos)), len(self._sensor_data.df) - 1))
-        self.pullout_changed.emit(idx)
+        idx = self._snap_to_sample(self._pullout_line)
+        if idx is not None:
+            self.pullout_changed.emit(idx)
 
     # ------------------------------------------------------------------
     # Selection mode

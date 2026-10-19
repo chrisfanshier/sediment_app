@@ -50,6 +50,8 @@ class HeavePlotView(QWidget):
         self.plot_widget.addLegend()
         self.plot_widget.setLabel('left', 'Heave (m)')
         self.plot_widget.setLabel('bottom', 'Sample')
+        self.plot_widget.setDownsampling(auto=True, mode='peak')
+        self.plot_widget.setClipToView(True)
 
         self._vline = pg.InfiniteLine(
             angle=90, movable=False,
