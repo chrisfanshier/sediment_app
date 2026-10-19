@@ -27,7 +27,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QListWidget, QListWidgetItem, QLabel,
     QScrollArea, QCheckBox, QComboBox, QSlider, QLineEdit,
-    QGroupBox, QStatusBar, QMessageBox, QSizePolicy, QFileDialog)
+    QGroupBox, QStatusBar, QMessageBox, QSizePolicy, QFileDialog,
+    QGridLayout)
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QImage, QWheelEvent, QPainter, QColor, QPen
 
@@ -717,14 +718,15 @@ class CoreCorrelatorApp(QMainWindow):
         self.sec_scroll = QScrollArea()
         self.sec_scroll.setWidget(self._sec_inner)
         self.sec_scroll.setWidgetResizable(True)
-        self.sec_scroll.setMinimumHeight(200)
-        gl.addWidget(self.sec_scroll, 1)
+        self.sec_scroll.setMinimumHeight(160)
+        self.sec_scroll.setMaximumHeight(280)
+        gl.addWidget(self.sec_scroll)
 
         # { core_name: { section_num: {"check": QCheckBox, "combo": QComboBox,
         #                               "files": [row_dict, ...]} } }
         self._section_widgets = {}
 
-        lv.addWidget(grp, 1)   # stretch so it fills available space
+        lv.addWidget(grp)
 
         # ── MSCL ──────────────────────────────────────────────────────
         grp = QGroupBox("MSCL Data")
@@ -762,16 +764,21 @@ class CoreCorrelatorApp(QMainWindow):
         wr.addWidget(self.slider_mscl_w)
         gl.addLayout(wr)
 
-        gl.addWidget(QLabel("Columns (check  min  max):"))
-        self._mscl_inner   = QWidget()
-        self._mscl_vlayout = QVBoxLayout(self._mscl_inner)
-        self._mscl_vlayout.setContentsMargins(2, 2, 2, 2)
-        self._mscl_vlayout.setSpacing(2)
-        self.mscl_col_area = QScrollArea()
-        self.mscl_col_area.setWidget(self._mscl_inner)
-        self.mscl_col_area.setWidgetResizable(True)
-        self.mscl_col_area.setMaximumHeight(180)
-        gl.addWidget(self.mscl_col_area)
+        gl.addWidget(QLabel("Columns:"))
+        self._mscl_cols_widget = QWidget()
+        self._mscl_cols_layout = QGridLayout(self._mscl_cols_widget)
+        self._mscl_cols_layout.setContentsMargins(0, 0, 0, 0)
+        self._mscl_cols_layout.setHorizontalSpacing(6)
+        self._mscl_cols_layout.setVerticalSpacing(4)
+        self._mscl_cols_layout.setColumnStretch(0, 1)
+        self._mscl_cols_layout.addWidget(QLabel("Column"), 0, 0)
+        min_hdr = QLabel("Min")
+        min_hdr.setAlignment(Qt.AlignCenter)
+        self._mscl_cols_layout.addWidget(min_hdr, 0, 1)
+        max_hdr = QLabel("Max")
+        max_hdr.setAlignment(Qt.AlignCenter)
+        self._mscl_cols_layout.addWidget(max_hdr, 0, 2)
+        gl.addWidget(self._mscl_cols_widget)
         lv.addWidget(grp)
 
         # ── Display options ────────────────────────────────────────────
@@ -1119,41 +1126,38 @@ class CoreCorrelatorApp(QMainWindow):
                 "mn":  row_widgets["min_edit"].text(),
                 "mx":  row_widgets["max_edit"].text()}
         self.mscl_col_rows = {}
-        while self._mscl_vlayout.count():
-            child = self._mscl_vlayout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        self._clear_mscl_col_rows()
 
-        for col in all_cols:
-            rw = QWidget()
-            rl = QHBoxLayout(rw)
-            rl.setContentsMargins(0, 0, 0, 0)
-            rl.setSpacing(4)
+        for row_idx, col in enumerate(all_cols, start=1):
             chk = QCheckBox(col)
             chk.setChecked(old[col]["chk"] if col in old else col == "Den1")
             chk.stateChanged.connect(self.refresh_display)
             mn = QLineEdit()
             mn.setPlaceholderText("auto")
-            mn.setFixedWidth(52)
+            mn.setFixedWidth(56)
             if col in old and old[col]["mn"]:
                 mn.setText(old[col]["mn"])
             mn.editingFinished.connect(self.refresh_display)
             mx = QLineEdit()
             mx.setPlaceholderText("auto")
-            mx.setFixedWidth(52)
+            mx.setFixedWidth(56)
             if col in old and old[col]["mx"]:
                 mx.setText(old[col]["mx"])
             mx.editingFinished.connect(self.refresh_display)
-            rl.addWidget(chk)
-            rl.addStretch()
-            rl.addWidget(QLabel("min"))
-            rl.addWidget(mn)
-            rl.addWidget(QLabel("max"))
-            rl.addWidget(mx)
-            self._mscl_vlayout.addWidget(rw)
+            self._mscl_cols_layout.addWidget(chk, row_idx, 0)
+            self._mscl_cols_layout.addWidget(mn, row_idx, 1)
+            self._mscl_cols_layout.addWidget(mx, row_idx, 2)
             self.mscl_col_rows[col] = {
                 "check": chk, "min_edit": mn, "max_edit": mx}
-        self._mscl_vlayout.addStretch()
+
+    def _clear_mscl_col_rows(self):
+        """Remove dynamic MSCL column rows, keeping the header row."""
+        for row in range(self._mscl_cols_layout.rowCount() - 1, 0, -1):
+            for col in range(self._mscl_cols_layout.columnCount()):
+                item = self._mscl_cols_layout.itemAtPosition(row, col)
+                if item and item.widget():
+                    item.widget().deleteLater()
+            self._mscl_cols_layout.removeRow(row)
 
     def _selected_mscl_cols(self):
         return [c for c, r in self.mscl_col_rows.items()
