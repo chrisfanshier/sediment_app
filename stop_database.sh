@@ -10,12 +10,12 @@ echo
 PG_BIN_DIR="/usr/local/bin"
 PG_DATA_DIR="/Users/Shared/ShipsideDB/data"
 
-cd "$PG_BIN_DIR" || { echo "Error: Bin directory not found"; exit 1; } [cite: 1]
+cd "$PG_BIN_DIR" || { echo "Error: Bin directory not found"; exit 1; }
 
-# Stop the database [cite: 1]
+# Stop the database
 ./pg_ctl -D "$PG_DATA_DIR" stop
 
 echo
-echo "Database stopped safely." [cite: 2]
+echo "Database stopped safely."
 echo
 read -p "Press [Enter] to continue..."

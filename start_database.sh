@@ -13,15 +13,14 @@ PG_BIN_DIR="/usr/local/bin"
 PG_DATA_DIR="/Users/Shared/ShipsideDB/data"
 PG_LOG_DIR="/Users/Shared/ShipsideDB/logs"
 
-# Navigate to bin directory [cite: 4]
 cd "$PG_BIN_DIR" || { echo "Error: Could not find PG bin directory"; exit 1; }
 
-# Create logs directory if needed [cite: 4]
+# Create logs directory if needed
 if [ ! -d "$PG_LOG_DIR" ]; then
     mkdir -p "$PG_LOG_DIR"
 fi
 
-# Start PostgreSQL [cite: 4]
+# Start PostgreSQL
 echo "Starting PostgreSQL on port 5432..."
 ./pg_ctl -D "$PG_DATA_DIR" -l "$PG_LOG_DIR/postgres.log" start
 
@@ -41,4 +40,4 @@ else
 fi
 
 echo
-read -p "Press [Enter] to continue..." [cite: 5]
+read -p "Press [Enter] to continue..."
