@@ -7,7 +7,8 @@ from db_util import fetch_cruise_options
 from datetime import date, time
 from sqlalchemy import text
 import re
-from utils import custom_time_input
+from utils import utc_datetime_input
+from elog_widget import elog_fill_widget
 
 # Custom CSS to reduce blank space
 st.markdown(
@@ -175,7 +176,6 @@ if cruise_id != dredge_data.cruise_id:
 # --- Other Meta Data Fields ---
 leg = st.text_input("Leg", value=dredge_data.leg or "")
 station = st.text_input("Station", value=dredge_data.station or "")
-date_field = st.date_input("Date*", value=dredge_data.date if dredge_data.date else date.today())
 
 # Observer
 observer = st.text_input("Observer", value=dredge_data.observer or "", placeholder="Enter observer name")
@@ -338,7 +338,8 @@ col1, col2 = st.columns(2)
 with col1:
     latitude_input = st.text_input("Start Latitude", 
                                   value=str(dredge_data.latitude) if dredge_data.latitude is not None else "", 
-                                  placeholder="Enter latitude or leave blank for NULL")
+                                  placeholder="Enter latitude or leave blank for NULL",
+                                  key=f"lat_input_{selected_dredge_id}")
     if latitude_input.strip() == "":
         latitude = None
     else:
@@ -351,7 +352,8 @@ with col1:
 with col2:
     longitude_input = st.text_input("Start Longitude", 
                                    value=str(dredge_data.longitude) if dredge_data.longitude is not None else "", 
-                                   placeholder="Enter longitude or leave blank for NULL")
+                                   placeholder="Enter longitude or leave blank for NULL",
+                                   key=f"lon_input_{selected_dredge_id}")
     if longitude_input.strip() == "":
         longitude = None
     else:
@@ -380,7 +382,8 @@ col1, col2 = st.columns(2)
 with col1:
     latitude_end_input = st.text_input("End Latitude", 
                                       value=str(dredge_data.latitude_end) if dredge_data.latitude_end is not None else "", 
-                                      placeholder="Enter latitude or leave blank for NULL")
+                                      placeholder="Enter latitude or leave blank for NULL",
+                                      key=f"lat_end_input_{selected_dredge_id}")
     if latitude_end_input.strip() == "":
         latitude_end = None
     else:
@@ -393,7 +396,8 @@ with col1:
 with col2:
     longitude_end_input = st.text_input("End Longitude", 
                                        value=str(dredge_data.longitude_end) if dredge_data.longitude_end is not None else "", 
-                                       placeholder="Enter longitude or leave blank for NULL")
+                                       placeholder="Enter longitude or leave blank for NULL",
+                                       key=f"lon_end_input_{selected_dredge_id}")
     if longitude_end_input.strip() == "":
         longitude_end = None
     else:
@@ -419,15 +423,20 @@ else:
 st.subheader("Deployment Details")
 
 # Time Fields
-time_launched_str = dredge_data.time_launched.strftime("%H:%M") if dredge_data.time_launched else ""
-time_on_bottom_str = dredge_data.time_on_bottom.strftime("%H:%M") if dredge_data.time_on_bottom else ""
-time_off_bottom_str = dredge_data.time_off_bottom.strftime("%H:%M") if dredge_data.time_off_bottom else ""
-time_recovered_str = dredge_data.time_recovered.strftime("%H:%M") if dredge_data.time_recovered else ""
+# Keys include the dredge id so values don't carry over when a different dredge is selected
+_k = lambda name: f"{name}_{selected_dredge_id}"
+deploy_utc = utc_datetime_input("Deploy", key=_k("deploy_utc_input"), default=dredge_data.deploy_utc)
+bottom_utc = utc_datetime_input("Bottom", key=_k("bottom_utc_input"), default=dredge_data.bottom_utc)
+pullout_utc = utc_datetime_input("Pullout", key=_k("pullout_utc_input"), default=dredge_data.pullout_utc)
+recover_utc = utc_datetime_input("Recover", key=_k("recover_utc_input"), default=dredge_data.recover_utc)
 
-time_launched = custom_time_input("Time Launched", default=time_launched_str)
-time_on_bottom = custom_time_input("Time on Bottom", default=time_on_bottom_str)
-time_off_bottom = custom_time_input("Time off Bottom", default=time_off_bottom_str)
-time_recovered = custom_time_input("Time Recovered", default=time_recovered_str)
+# Placed after the inputs so the preview can show their current values
+elog_fill_widget(_k("edit_dredge"), core_name, "dredge", {
+    "deploy_utc": _k("deploy_utc_input"), "bottom_utc": _k("bottom_utc_input"),
+    "pullout_utc": _k("pullout_utc_input"), "recover_utc": _k("recover_utc_input"),
+    "latitude": _k("lat_input"), "longitude": _k("lon_input"),
+    "latitude_end": _k("lat_end_input"), "longitude_end": _k("lon_end_input"),
+})
 
 # Numeric fields with existing values
 def create_numeric_field(label, current_value, placeholder):
@@ -462,8 +471,8 @@ if st.button("Update Dredge"):
         missing_fields.append("Dredge Name")
     if cruise_choice == "Select Cruise":
         missing_fields.append("Cruise")
-    if not date_field:
-        missing_fields.append("Date")
+    if not deploy_utc:
+        missing_fields.append("Deploy (UTC)")
 
     if missing_fields:
         st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
@@ -490,10 +499,9 @@ if st.session_state.show_confirmation_edit_dredge:
     if depth_end is None: null_values.append("End Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
     if wire_type_id is None: null_values.append("Wire Type")
-    if time_launched is None: null_values.append("Time Launched")
-    if time_on_bottom is None: null_values.append("Time on Bottom")
-    if time_off_bottom is None: null_values.append("Time off Bottom")
-    if time_recovered is None: null_values.append("Time Recovered")
+    if bottom_utc is None: null_values.append("Bottom (UTC)")
+    if pullout_utc is None: null_values.append("Pullout (UTC)")
+    if recover_utc is None: null_values.append("Recover (UTC)")
     if wire_out_on_bottom is None: null_values.append("Wire Out on Bottom")
     if max_wire_out is None: null_values.append("Max Wire Out")
     if tension_at_surface is None: null_values.append("Tension at Surface")
@@ -545,8 +553,8 @@ if st.session_state.show_confirmation_edit_dredge:
                             date = :date, station = :station, water_depth_m = :water_depth_m, 
                             latitude = :latitude, longitude = :longitude,
                             latitude_end = :latitude_end, longitude_end = :longitude_end, depth_end = :depth_end,
-                            observer = :observer, time_launched = :time_launched, 
-                            time_on_bottom = :time_on_bottom, time_off_bottom = :time_off_bottom, time_recovered = :time_recovered,
+                            observer = :observer, deploy_utc = :deploy_utc, 
+                            bottom_utc = :bottom_utc, pullout_utc = :pullout_utc, recover_utc = :recover_utc,
                             wire_out_on_bottom = :wire_out_on_bottom, max_wire_out = :max_wire_out,
                             tension_at_surface = :tension_at_surface, tension_near_bottom = :tension_near_bottom,
                             tension_on_bottom = :tension_on_bottom, pullout_tension = :pullout_tension,
@@ -564,7 +572,7 @@ if st.session_state.show_confirmation_edit_dredge:
                         "vessel_id": vessel_id,
                         "cruise_id": cruise_id,
                         "leg": leg or None,
-                        "date": date_field,
+                        "date": deploy_utc.date(),
                         "station": station or None,
                         "water_depth_m": water_depth,
                         "latitude": latitude,
@@ -573,10 +581,10 @@ if st.session_state.show_confirmation_edit_dredge:
                         "longitude_end": longitude_end,
                         "depth_end": depth_end,
                         "observer": observer or None,
-                        "time_launched": time_launched,
-                        "time_on_bottom": time_on_bottom,
-                        "time_off_bottom": time_off_bottom,
-                        "time_recovered": time_recovered,
+                        "deploy_utc": deploy_utc,
+                        "bottom_utc": bottom_utc,
+                        "pullout_utc": pullout_utc,
+                        "recover_utc": recover_utc,
                         "wire_out_on_bottom": wire_out_on_bottom,
                         "max_wire_out": max_wire_out,
                         "tension_at_surface": tension_at_surface,

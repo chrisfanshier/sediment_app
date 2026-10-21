@@ -6,7 +6,7 @@ from datetime import date
 DB_URL = "postgresql://postgres:madmaxfuryroad@localhost/shipside"
 
 # Create a SQLAlchemy engine
-engine = create_engine(DB_URL)
+engine = create_engine(DB_URL, connect_args={"options": "-c timezone=utc"})  # timestamptz columns read/write as UTC
 
 def get_connection():
     """Get a database connection."""
@@ -454,8 +454,9 @@ def get_mgr_export_data(cruise_name: str) -> list:
             c.core_name,
             ct.core_type_name AS recovery_method,
             regexp_replace(c.core_name, '^[A-Z0-9]+-([A-Z]+)\\d+.*$', '\\1') AS core_abbreviation,
-            c.date AS date_collected,
-            COALESCE(c.time_on_bottom, c.time_recovered, c.time_launched) AS time_collected_utc,
+            COALESCE((c.deploy_utc AT TIME ZONE 'UTC')::date, c.date) AS date_collected,
+            COALESCE((c.bottom_utc AT TIME ZONE 'UTC')::time, (c.recover_utc AT TIME ZONE 'UTC')::time, (c.deploy_utc AT TIME ZONE 'UTC')::time,
+                     c.time_on_bottom, c.time_recovered, c.time_launched) AS time_collected_utc,
             c.latitude, c.longitude, c.water_depth_m,
             se.section_number, se.working_archive,
             c.core_name || '-' || se.section_number || se.wa_suffix AS section_name,

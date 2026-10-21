@@ -8,7 +8,7 @@ from pyrsktools import RSK
 from db_util import get_connection
 from db_util import get_dynamic_fields_metadata
 from config import get_full_path  # Import the utility function for constructing full paths
-from datetime import time
+from datetime import time, datetime, timezone
 
 def parse_mscl_out_file(relative_path):
     """Parse an MSCL .out file and return a Pandas DataFrame."""
@@ -270,6 +270,42 @@ def custom_time_input(label, default=""):
         return time(hours, minutes)
     else:
         st.warning(f"Invalid time format for '{label}'. Please use HH:MM (e.g., 14:30).")
+        return None
+
+_UTC_DT_PATTERN = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$")
+
+def format_utc_datetime(dt):
+    """Format a datetime as 'YYYY-MM-DD HH:MM' (':SS' only when seconds are non-zero), in UTC."""
+    if dt is None or pd.isna(dt):
+        return ""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M:%S") if dt.second else dt.strftime("%Y-%m-%d %H:%M")
+
+def parse_utc_datetime(text_value):
+    """Parse 'YYYY-MM-DD HH:MM[:SS]' as UTC. Returns None if blank, raises ValueError if invalid."""
+    text_value = (text_value or "").strip()
+    if not text_value:
+        return None
+    m = _UTC_DT_PATTERN.match(text_value)
+    if not m:
+        raise ValueError(text_value)
+    y, mo, d, h, mi, s = m.groups()
+    return datetime(int(y), int(mo), int(d), int(h), int(mi), int(s or 0), tzinfo=timezone.utc)
+
+def utc_datetime_input(label, key, default=None):
+    """Text input for a UTC date-time. Returns a tz-aware UTC datetime, or None if blank/invalid.
+
+    The value lives in st.session_state[key] (a string), so it can be filled programmatically
+    (e.g. from an Elog import callback). `default` seeds the field the first time it is shown.
+    """
+    if key not in st.session_state:
+        st.session_state[key] = format_utc_datetime(default)
+    raw = st.text_input(f"{label} (UTC)", key=key, placeholder="YYYY-MM-DD HH:MM[:SS]")
+    try:
+        return parse_utc_datetime(raw)
+    except ValueError:
+        st.warning(f"Invalid date-time for '{label}'. Use YYYY-MM-DD HH:MM (e.g., 2026-10-21 18:30).")
         return None
     
 def parse_staroddi_dat(file_path):

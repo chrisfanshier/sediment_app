@@ -10,7 +10,8 @@ from utils import generate_liner_label
 from datetime import date, time
 from sqlalchemy import text
 import re
-from utils import custom_time_input
+from utils import utc_datetime_input
+from elog_widget import elog_fill_widget
 
 # Force wide layout for Streamlit
 # st.set_page_config(layout="wide")
@@ -161,9 +162,6 @@ if cruise_id != core_data.cruise_id:
 leg = st.text_input("Leg", value=core_data.leg or "")
 station = st.text_input("Station", value=core_data.station or "")
 
-# Date Field
-date_field = st.date_input("Date*", value=core_data.date if core_data.date else date.today())
-
 # Geographic Coordinates
 st.subheader("Geographic Coordinates")
 col1, col2 = st.columns(2)
@@ -171,7 +169,8 @@ col1, col2 = st.columns(2)
 with col1:
     latitude_input = st.text_input("Latitude", 
                                   value=str(core_data.latitude) if core_data.latitude is not None else "", 
-                                  placeholder="Enter latitude or leave blank for NULL")
+                                  placeholder="Enter latitude or leave blank for NULL",
+                                  key=f"lat_input_{selected_core_id}")
     if latitude_input.strip() == "":
         latitude = None
     else:
@@ -184,7 +183,8 @@ with col1:
 with col2:
     longitude_input = st.text_input("Longitude", 
                                    value=str(core_data.longitude) if core_data.longitude is not None else "", 
-                                   placeholder="Enter longitude or leave blank for NULL")
+                                   placeholder="Enter longitude or leave blank for NULL",
+                                   key=f"lon_input_{selected_core_id}")
     if longitude_input.strip() == "":
         longitude = None
     else:
@@ -344,14 +344,19 @@ st.subheader("Deployment Details")
 # Time Fields
 st.subheader("Deployment Times")
 
-# Convert time objects to strings for the input
-time_launched_str = core_data.time_launched.strftime("%H:%M") if core_data.time_launched else ""
-time_on_bottom_str = core_data.time_on_bottom.strftime("%H:%M") if core_data.time_on_bottom else ""
-time_recovered_str = core_data.time_recovered.strftime("%H:%M") if core_data.time_recovered else ""
+# Keys include the core id so values don't carry over when a different core is selected
+_k = lambda name: f"{name}_{selected_core_id}"
+deploy_utc = utc_datetime_input("Deploy", key=_k("deploy_utc_input"), default=core_data.deploy_utc)
+bottom_utc = utc_datetime_input("Bottom", key=_k("bottom_utc_input"), default=core_data.bottom_utc)
+pullout_utc = utc_datetime_input("Pullout", key=_k("pullout_utc_input"), default=core_data.pullout_utc)
+recover_utc = utc_datetime_input("Recover", key=_k("recover_utc_input"), default=core_data.recover_utc)
 
-time_launched = custom_time_input("Time Launched", default=time_launched_str)
-time_on_bottom = custom_time_input("Time on Bottom", default=time_on_bottom_str)
-time_recovered = custom_time_input("Time Recovered", default=time_recovered_str)
+# Placed after the inputs so the preview can show their current values
+elog_fill_widget(_k("edit_core"), core_name, "core", {
+    "deploy_utc": _k("deploy_utc_input"), "bottom_utc": _k("bottom_utc_input"),
+    "pullout_utc": _k("pullout_utc_input"), "recover_utc": _k("recover_utc_input"),
+    "latitude": _k("lat_input"), "longitude": _k("lon_input"),
+})
 
 # Numeric fields with existing values
 def create_numeric_field(label, current_value, placeholder):
@@ -392,8 +397,8 @@ if st.button("Update Core"):
         missing_fields.append("Cruise")
     if core_type_choice == "Select Core Type":
         missing_fields.append("Core Type")
-    if not date_field:
-        missing_fields.append("Date")
+    if not deploy_utc:
+        missing_fields.append("Deploy (UTC)")
 
     if missing_fields:
         st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
@@ -418,9 +423,9 @@ if st.session_state.show_confirmation:
     if water_depth is None: null_values.append("Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
     if wire_type_id is None: null_values.append("Wire Type")
-    if time_launched is None: null_values.append("Time Launched")
-    if time_on_bottom is None: null_values.append("Time on Bottom")
-    if time_recovered is None: null_values.append("Time Recovered")
+    if bottom_utc is None: null_values.append("Bottom (UTC)")
+    if pullout_utc is None: null_values.append("Pullout (UTC)")
+    if recover_utc is None: null_values.append("Recover (UTC)")
     if wire_out_on_bottom is None: null_values.append("Wire Out on Bottom")
     if max_wire_out is None: null_values.append("Max Wire Out")
     if impact_speed is None: null_values.append("Impact Speed")
@@ -469,8 +474,8 @@ if st.session_state.show_confirmation:
                             core_name = :core_name, vessel_id = :vessel_id, cruise_id = :cruise_id, leg = :leg, 
                             date = :date, station = :station, water_depth_m = :water_depth_m, 
                             latitude = :latitude, longitude = :longitude, observer = :observer, 
-                            core_type_id = :core_type_id, liner_config_id = :liner_config_id, time_launched = :time_launched, 
-                            time_on_bottom = :time_on_bottom, time_recovered = :time_recovered,
+                            core_type_id = :core_type_id, liner_config_id = :liner_config_id, deploy_utc = :deploy_utc, 
+                            bottom_utc = :bottom_utc, pullout_utc = :pullout_utc, recover_utc = :recover_utc,
                             wire_out_on_bottom = :wire_out_on_bottom, max_wire_out = :max_wire_out,
                             impact_speed = :impact_speed, tension_at_surface = :tension_at_surface,
                             tension_near_bottom = :tension_near_bottom, tension_on_bottom = :tension_on_bottom,
@@ -483,7 +488,7 @@ if st.session_state.show_confirmation:
                         "vessel_id": vessel_id,
                         "cruise_id": cruise_id,
                         "leg": leg or None,
-                        "date": date_field,
+                        "date": deploy_utc.date(),
                         "station": station or None,
                         "water_depth_m": water_depth,
                         "latitude": latitude,
@@ -491,9 +496,10 @@ if st.session_state.show_confirmation:
                         "observer": observer or None,
                         "core_type_id": core_type_id,
                         "liner_config_id": liner_config_id,
-                        "time_launched": time_launched,
-                        "time_on_bottom": time_on_bottom,
-                        "time_recovered": time_recovered,
+                        "deploy_utc": deploy_utc,
+                        "bottom_utc": bottom_utc,
+                        "pullout_utc": pullout_utc,
+                        "recover_utc": recover_utc,
                         "wire_out_on_bottom": wire_out_on_bottom,
                         "max_wire_out": max_wire_out,
                         "impact_speed": impact_speed,

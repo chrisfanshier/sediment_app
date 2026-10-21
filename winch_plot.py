@@ -11,6 +11,28 @@ from utils import parse_winch_dat
 import datetime
 
 
+def _core_window(df):
+    """Return (start, end) naive-UTC datetime Series for each core row.
+
+    Uses deploy_utc / recover_utc; falls back to the legacy date + time_launched / time_recovered
+    columns (with midnight rollover) for rows that were not backfilled.
+    """
+    def utc_naive(col):
+        if col not in df.columns:
+            return pd.Series(pd.NaT, index=df.index)
+        return pd.to_datetime(df[col], utc=True, errors="coerce").dt.tz_localize(None)
+
+    start, end = utc_naive("deploy_utc"), utc_naive("recover_utc")
+
+    if {"date", "time_launched", "time_recovered"} <= set(df.columns):
+        day = pd.to_datetime(df["date"], errors="coerce")
+        legacy_start = day + pd.to_timedelta(df["time_launched"].astype(str), errors="coerce")
+        legacy_end = day + pd.to_timedelta(df["time_recovered"].astype(str), errors="coerce")
+        legacy_end = legacy_end.where(~(legacy_end < legacy_start), legacy_end + pd.Timedelta(days=1))
+        start, end = start.fillna(legacy_start), end.fillna(legacy_end)
+    return start, end
+
+
 @st.cache_data
 def get_cores_with_winch(cruise_id):
     """Find all cores/dredges whose deployment window overlaps with at least one winch file."""
@@ -30,28 +52,13 @@ def get_cores_with_winch(cruise_id):
     if cores.empty or winch_files.empty:
         return pd.DataFrame()
 
-    # Detect column names
-    date_col = next((c for c in ("date", "core_date") if c in cores.columns), None)
-    launch_col = next((c for c in ("time_launched", "time_launch", "time_launched_utc") if c in cores.columns), None)
-    recover_col = next((c for c in ("time_recovered", "time_recover", "time_recovered_utc") if c in cores.columns), None)
-
-    if not (date_col and launch_col and recover_col):
-        return pd.DataFrame()
-
-    # Parse core start/end datetimes
     cores = cores.copy()
-    cores[launch_col] = cores[launch_col].astype(str)
-    cores[recover_col] = cores[recover_col].astype(str)
-    cores["start_datetime"] = pd.to_datetime(cores[date_col], errors="coerce") + pd.to_timedelta(cores[launch_col], errors="coerce")
-    cores["end_datetime"] = pd.to_datetime(cores[date_col], errors="coerce") + pd.to_timedelta(cores[recover_col], errors="coerce")
+    cores["start_datetime"], cores["end_datetime"] = _core_window(cores)
 
     # Drop rows with invalid times
     cores = cores.dropna(subset=["start_datetime", "end_datetime"])
     if cores.empty:
         return pd.DataFrame()
-
-    # Handle midnight rollover
-    cores.loc[cores["end_datetime"] < cores["start_datetime"], "end_datetime"] += pd.Timedelta(days=1)
 
     # Parse winch file times (strip timezone if present)
     def strip_tz(x):
@@ -90,14 +97,8 @@ def load_core_winch_data(core_id, cruise_id):
         )
 
     # Parse core deployment window
-    date_col = next((c for c in ("date", "core_date") if c in core_row.index), None)
-    launch_col = next((c for c in ("time_launched", "time_launch", "time_launched_utc") if c in core_row.index), None)
-    recover_col = next((c for c in ("time_recovered", "time_recover", "time_recovered_utc") if c in core_row.index), None)
-
-    core_start = pd.to_datetime(core_row[date_col]) + pd.to_timedelta(str(core_row[launch_col]))
-    core_end = pd.to_datetime(core_row[date_col]) + pd.to_timedelta(str(core_row[recover_col]))
-    if core_end < core_start:
-        core_end += pd.Timedelta(days=1)
+    starts, ends = _core_window(pd.DataFrame([core_row]))
+    core_start, core_end = starts.iloc[0], ends.iloc[0]
 
     # Strip timezone from winch file times
     def strip_tz(x):

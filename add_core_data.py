@@ -11,7 +11,8 @@ from utils import generate_liner_label
 from datetime import date, time
 from sqlalchemy import text
 import re
-from utils import custom_time_input
+from utils import utc_datetime_input
+from elog_widget import elog_fill_widget
 
 # Force wide layout for Streamlit
 #st.set_page_config(layout="wide")
@@ -123,18 +124,14 @@ st.text_input("Vessel", value=vessel_name, disabled=True,
 
 # Remove the old vessel and cruise input sections and continue with leg
 leg = st.text_input("Leg", value=last_record['leg'] if last_record else "")
-date_field = st.date_input("Date", 
-                          value=date.today(),
-                          min_value=date(1900, 1, 1),  # Allow dates back to 1900
-                          max_value=date(2050, 12, 31))  # Future limit
 station = st.text_input("Station", value=last_record['station'] if last_record else "")
 
 # Coordinate format selection
-coord_format = st.selectbox("Coordinate Format", ["Decimal Degrees", "Degrees and Decimal Minutes", "NULL entry"])
+coord_format = st.selectbox("Coordinate Format", ["Decimal Degrees", "Degrees and Decimal Minutes", "NULL entry"], key="coord_format")
 
 if coord_format == "Decimal Degrees":
-    lat_input = st.text_input("Latitude (decimal degrees)", value="", placeholder="Enter latitude or leave blank for NULL")
-    lon_input = st.text_input("Longitude (decimal degrees)", value="", placeholder="Enter longitude or leave blank for NULL")
+    lat_input = st.text_input("Latitude (decimal degrees)", value="", placeholder="Enter latitude or leave blank for NULL", key="lat_input")
+    lon_input = st.text_input("Longitude (decimal degrees)", value="", placeholder="Enter longitude or leave blank for NULL", key="lon_input")
     
     # Handle latitude (same pattern as water_depth)
     if lat_input.strip() == "":
@@ -266,14 +263,16 @@ st.subheader("Deployment Details")
 # Time Fields
 st.subheader("Deployment Times")
 
-# Time Launched
-time_launched = custom_time_input("Time Launched", default="")
+elog_fill_widget("add_core", core_name, "core", {
+    "deploy_utc": "deploy_utc_input", "bottom_utc": "bottom_utc_input",
+    "pullout_utc": "pullout_utc_input", "recover_utc": "recover_utc_input",
+    "latitude": "lat_input", "longitude": "lon_input", "coord_format": "coord_format",
+})
 
-# Time on Bottom
-time_on_bottom = custom_time_input("Time on Bottom", default="")
-
-# Time Recovered
-time_recovered = custom_time_input("Time Recovered", default="")
+deploy_utc = utc_datetime_input("Deploy", key="deploy_utc_input")
+bottom_utc = utc_datetime_input("Bottom", key="bottom_utc_input")
+pullout_utc = utc_datetime_input("Pullout", key="pullout_utc_input")
+recover_utc = utc_datetime_input("Recover", key="recover_utc_input")
 
 # Wire Out on Bottom
 wire_out_on_bottom = st.text_input("Wire Out on Bottom (meters)", value="", placeholder="Enter value or leave blank for NULL")
@@ -386,9 +385,9 @@ if st.button("Save Core"):
     if core_type_id in [6, 7, 12] and liner_config_id is None:
         missing_fields.append("Liner Configuration")
 
-    # Check if date is missing
-    if not date_field:
-        missing_fields.append("Date")
+    # Deploy date-time is required (it also provides the legacy "date" value)
+    if not deploy_utc:
+        missing_fields.append("Deploy (UTC)")
 
     # Display warning for missing fields
     if missing_fields:
@@ -421,9 +420,9 @@ if st.session_state.show_confirmation:
     if water_depth is None: null_values.append("Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
     if wire_type_id is None: null_values.append("Wire Type")  # ADD THIS LINE
-    if time_launched is None: null_values.append("Time Launched")
-    if time_on_bottom is None: null_values.append("Time on Bottom")
-    if time_recovered is None: null_values.append("Time Recovered")
+    if bottom_utc is None: null_values.append("Bottom (UTC)")
+    if pullout_utc is None: null_values.append("Pullout (UTC)")
+    if recover_utc is None: null_values.append("Recover (UTC)")
     if wire_out_on_bottom is None: null_values.append("Wire Out on Bottom")
     if max_wire_out is None: null_values.append("Max Wire Out")
     if impact_speed is None: null_values.append("Impact Speed")
@@ -490,15 +489,15 @@ if st.session_state.show_confirmation:
                         base_query = """
                             INSERT INTO cores (
                                 core_name, vessel_id, cruise_id, leg, date, station, water_depth_m, latitude, longitude, observer, core_type_id, liner_config_id, core_dredge,
-                                time_launched, time_on_bottom, time_recovered, wire_out_on_bottom, max_wire_out, impact_speed,
+                                deploy_utc, bottom_utc, pullout_utc, recover_utc, wire_out_on_bottom, max_wire_out, impact_speed,
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension, notes, wire_type_id, data_entry_remarks,
                                 created_on_ship, sync_status
                         """
 
                         base_values = [
-                            core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
-                            water_depth, latitude, longitude, observer or None, core_type_id, liner_config_id, 'core', time_launched, time_on_bottom, 
-                            time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
+                            core_name, vessel_id, cruise_id, leg or None, deploy_utc.date(), station or None, 
+                            water_depth, latitude, longitude, observer or None, core_type_id, liner_config_id, 'core', deploy_utc, bottom_utc, 
+                            pullout_utc, recover_utc, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
                             tension_at_bottom, pullout_tension, notes or None, wire_type_id, data_entry_remarks or None,
                             True, 'pending'
                         ]
@@ -530,9 +529,9 @@ if st.session_state.show_confirmation:
                             
                             # TC core values (same as JC but with different name, core_type, and NULL tensions)
                             tc_base_values = [
-                                tc_core_name, vessel_id, cruise_id, leg or None, date_field, station or None, 
-                                water_depth, latitude, longitude, observer or None, tc_core_type_id, liner_config_id, 'core', time_launched, time_on_bottom, 
-                                time_recovered, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
+                                tc_core_name, vessel_id, cruise_id, leg or None, deploy_utc.date(), station or None, 
+                                water_depth, latitude, longitude, observer or None, tc_core_type_id, liner_config_id, 'core', deploy_utc, bottom_utc, 
+                                pullout_utc, recover_utc, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
                                 None, None, notes or None, wire_type_id, data_entry_remarks or None,
                                 True, 'pending'
                             ]

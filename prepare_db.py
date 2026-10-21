@@ -48,6 +48,13 @@ def add_sync_tracking():
                 ADD COLUMN IF NOT EXISTS sync_status VARCHAR(20) DEFAULT 'synced',
                 ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP,
                 ADD COLUMN IF NOT EXISTS central_id INTEGER;
+
+            -- UTC event date-times for cores/dredges (see migration notes: backfilled from date + time_*)
+            ALTER TABLE cores
+                ADD COLUMN IF NOT EXISTS deploy_utc  TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS bottom_utc  TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS pullout_utc TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS recover_utc TIMESTAMPTZ;
             
             -- Add to sections
             ALTER TABLE sections 

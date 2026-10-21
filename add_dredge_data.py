@@ -8,7 +8,8 @@ from db_util import fetch_cruise_options
 from datetime import date, time
 from sqlalchemy import text
 import re
-from utils import custom_time_input
+from utils import utc_datetime_input
+from elog_widget import elog_fill_widget
 
 # Force wide layout for Streamlit
 #st.set_page_config(layout="wide")
@@ -120,10 +121,6 @@ st.text_input("Vessel", value=vessel_name, disabled=True,
 
 # Continue with leg and other fields
 leg = st.text_input("Leg", value=last_record['leg'] if last_record else "")
-date_field = st.date_input("Date", 
-                          value=date.today(),
-                          min_value=date(1900, 1, 1),
-                          max_value=date(2050, 12, 31))
 station = st.text_input("Station", value=last_record['station'] if last_record else "")
 
 # --- START POSITION COORDINATES ---
@@ -300,17 +297,17 @@ st.subheader("Deployment Details")
 # Time Fields
 st.subheader("Deployment Times")
 
-# Time Launched
-time_launched = custom_time_input("Time Launched", default="")
+elog_fill_widget("add_dredge", core_name, "dredge", {
+    "deploy_utc": "deploy_utc_input", "bottom_utc": "bottom_utc_input",
+    "pullout_utc": "pullout_utc_input", "recover_utc": "recover_utc_input",
+    "latitude": "start_lat", "longitude": "start_lon", "coord_format": "start_coord_format",
+    "latitude_end": "end_lat", "longitude_end": "end_lon", "coord_format_end": "end_coord_format",
+})
 
-# Time on Bottom
-time_on_bottom = custom_time_input("Time on Bottom", default="")
-
-# Time off Bottom
-time_off_bottom = custom_time_input("Time off Bottom", default="")
-
-# Time Recovered
-time_recovered = custom_time_input("Time Recovered", default="")
+deploy_utc = utc_datetime_input("Deploy", key="deploy_utc_input")
+bottom_utc = utc_datetime_input("Bottom", key="bottom_utc_input")
+pullout_utc = utc_datetime_input("Pullout", key="pullout_utc_input")
+recover_utc = utc_datetime_input("Recover", key="recover_utc_input")
 
 # Wire Out on Bottom
 wire_out_on_bottom = st.text_input("Wire Out on Bottom (meters)", value="", placeholder="Enter value or leave blank for NULL")
@@ -492,8 +489,8 @@ if st.button("Save Dredge"):
         missing_fields.append("Dredge Name")
     if cruise_choice == "Select Cruise":
         missing_fields.append("Cruise")
-    if not date_field:
-        missing_fields.append("Date")
+    if not deploy_utc:
+        missing_fields.append("Deploy (UTC)")
 
     if missing_fields:
         st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
@@ -518,10 +515,9 @@ if st.session_state.show_confirmation_dredge:
     if depth_end is None: null_values.append("End Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
     if wire_type_id is None: null_values.append("Wire Type")
-    if time_launched is None: null_values.append("Time Launched")
-    if time_on_bottom is None: null_values.append("Time on Bottom")
-    if time_off_bottom is None: null_values.append("Time off Bottom")
-    if time_recovered is None: null_values.append("Time Recovered")
+    if bottom_utc is None: null_values.append("Bottom (UTC)")
+    if pullout_utc is None: null_values.append("Pullout (UTC)")
+    if recover_utc is None: null_values.append("Recover (UTC)")
     if wire_out_on_bottom is None: null_values.append("Wire Out on Bottom")
     if max_wire_out is None: null_values.append("Max Wire Out")
     if tension_at_surface is None: null_values.append("Tension at Surface")
@@ -565,7 +561,7 @@ if st.session_state.show_confirmation_dredge:
                                 core_name, vessel_id, cruise_id, leg, date, station, water_depth_m, latitude, longitude,
                                 latitude_end, longitude_end, depth_end,
                                 observer, core_type_id, core_dredge,
-                                time_launched, time_on_bottom, time_off_bottom, time_recovered, 
+                                deploy_utc, bottom_utc, pullout_utc, recover_utc, 
                                 wire_out_on_bottom, max_wire_out,
                                 tension_at_surface, tension_near_bottom, tension_on_bottom, pullout_tension,
                                 active_passive, main_shear_pin_type_id, main_shear_pin_break,
@@ -577,7 +573,7 @@ if st.session_state.show_confirmation_dredge:
                                 :core_name, :vessel_id, :cruise_id, :leg, :date, :station, :water_depth, :latitude, :longitude,
                                 :latitude_end, :longitude_end, :depth_end,
                                 :observer, NULL, 'dredge',
-                                :time_launched, :time_on_bottom, :time_off_bottom, :time_recovered,
+                                :deploy_utc, :bottom_utc, :pullout_utc, :recover_utc,
                                 :wire_out_on_bottom, :max_wire_out,
                                 :tension_at_surface, :tension_near_bottom, :tension_at_bottom, :pullout_tension,
                                 :active_passive, :main_shear_pin_type_id, :main_shear_pin_break,
@@ -593,7 +589,7 @@ if st.session_state.show_confirmation_dredge:
                             "vessel_id": vessel_id,
                             "cruise_id": cruise_id,
                             "leg": leg or None,
-                            "date": date_field,
+                            "date": deploy_utc.date(),
                             "station": station or None,
                             "water_depth": water_depth,
                             "latitude": latitude,
@@ -602,10 +598,10 @@ if st.session_state.show_confirmation_dredge:
                             "longitude_end": longitude_end,
                             "depth_end": depth_end,
                             "observer": observer or None,
-                            "time_launched": time_launched,
-                            "time_on_bottom": time_on_bottom,
-                            "time_off_bottom": time_off_bottom,
-                            "time_recovered": time_recovered,
+                            "deploy_utc": deploy_utc,
+                            "bottom_utc": bottom_utc,
+                            "pullout_utc": pullout_utc,
+                            "recover_utc": recover_utc,
                             "wire_out_on_bottom": wire_out_on_bottom,
                             "max_wire_out": max_wire_out,
                             "tension_at_surface": tension_at_surface,
