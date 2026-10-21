@@ -11,7 +11,7 @@ from utils import generate_liner_label
 from datetime import date, time
 from sqlalchemy import text
 import re
-from utils import utc_datetime_input
+from utils import utc_datetime_input, legacy_date
 from elog_widget import elog_fill_widget
 
 # Force wide layout for Streamlit
@@ -385,10 +385,6 @@ if st.button("Save Core"):
     if core_type_id in [6, 7, 12] and liner_config_id is None:
         missing_fields.append("Liner Configuration")
 
-    # Deploy date-time is required (it also provides the legacy "date" value)
-    if not deploy_utc:
-        missing_fields.append("Deploy (UTC)")
-
     # Display warning for missing fields
     if missing_fields:
         st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
@@ -420,6 +416,7 @@ if st.session_state.show_confirmation:
     if water_depth is None: null_values.append("Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
     if wire_type_id is None: null_values.append("Wire Type")  # ADD THIS LINE
+    if deploy_utc is None: null_values.append("Deploy (UTC)")
     if bottom_utc is None: null_values.append("Bottom (UTC)")
     if pullout_utc is None: null_values.append("Pullout (UTC)")
     if recover_utc is None: null_values.append("Recover (UTC)")
@@ -495,7 +492,7 @@ if st.session_state.show_confirmation:
                         """
 
                         base_values = [
-                            core_name, vessel_id, cruise_id, leg or None, deploy_utc.date(), station or None, 
+                            core_name, vessel_id, cruise_id, leg or None, legacy_date(deploy_utc, bottom_utc, pullout_utc, recover_utc), station or None, 
                             water_depth, latitude, longitude, observer or None, core_type_id, liner_config_id, 'core', deploy_utc, bottom_utc, 
                             pullout_utc, recover_utc, wire_out_on_bottom, max_wire_out, impact_speed, tension_at_surface, tension_near_bottom, 
                             tension_at_bottom, pullout_tension, notes or None, wire_type_id, data_entry_remarks or None,
@@ -529,7 +526,7 @@ if st.session_state.show_confirmation:
                             
                             # TC core values (same as JC but with different name, core_type, and NULL tensions)
                             tc_base_values = [
-                                tc_core_name, vessel_id, cruise_id, leg or None, deploy_utc.date(), station or None, 
+                                tc_core_name, vessel_id, cruise_id, leg or None, legacy_date(deploy_utc, bottom_utc, pullout_utc, recover_utc), station or None, 
                                 water_depth, latitude, longitude, observer or None, tc_core_type_id, liner_config_id, 'core', deploy_utc, bottom_utc, 
                                 pullout_utc, recover_utc, wire_out_on_bottom, max_wire_out, impact_speed, None, None,  # tensions = NULL
                                 None, None, notes or None, wire_type_id, data_entry_remarks or None,

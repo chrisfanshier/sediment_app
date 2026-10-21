@@ -8,7 +8,7 @@ from db_util import fetch_cruise_options
 from datetime import date, time
 from sqlalchemy import text
 import re
-from utils import utc_datetime_input
+from utils import utc_datetime_input, legacy_date
 from elog_widget import elog_fill_widget
 
 # Force wide layout for Streamlit
@@ -489,8 +489,6 @@ if st.button("Save Dredge"):
         missing_fields.append("Dredge Name")
     if cruise_choice == "Select Cruise":
         missing_fields.append("Cruise")
-    if not deploy_utc:
-        missing_fields.append("Deploy (UTC)")
 
     if missing_fields:
         st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
@@ -515,6 +513,7 @@ if st.session_state.show_confirmation_dredge:
     if depth_end is None: null_values.append("End Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
     if wire_type_id is None: null_values.append("Wire Type")
+    if deploy_utc is None: null_values.append("Deploy (UTC)")
     if bottom_utc is None: null_values.append("Bottom (UTC)")
     if pullout_utc is None: null_values.append("Pullout (UTC)")
     if recover_utc is None: null_values.append("Recover (UTC)")
@@ -589,7 +588,7 @@ if st.session_state.show_confirmation_dredge:
                             "vessel_id": vessel_id,
                             "cruise_id": cruise_id,
                             "leg": leg or None,
-                            "date": deploy_utc.date(),
+                            "date": legacy_date(deploy_utc, bottom_utc, pullout_utc, recover_utc),
                             "station": station or None,
                             "water_depth": water_depth,
                             "latitude": latitude,

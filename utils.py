@@ -293,6 +293,13 @@ def parse_utc_datetime(text_value):
     y, mo, d, h, mi, s = m.groups()
     return datetime(int(y), int(mo), int(d), int(h), int(mi), int(s or 0), tzinfo=timezone.utc)
 
+def legacy_date(*event_times):
+    """Value for the legacy cores.date column: the UTC date of the first event time provided, else None."""
+    for dt in event_times:
+        if dt is not None:
+            return dt.date()
+    return None
+
 def utc_datetime_input(label, key, default=None):
     """Text input for a UTC date-time. Returns a tz-aware UTC datetime, or None if blank/invalid.
 

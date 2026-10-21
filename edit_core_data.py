@@ -10,7 +10,7 @@ from utils import generate_liner_label
 from datetime import date, time
 from sqlalchemy import text
 import re
-from utils import utc_datetime_input
+from utils import utc_datetime_input, legacy_date
 from elog_widget import elog_fill_widget
 
 # Force wide layout for Streamlit
@@ -397,8 +397,6 @@ if st.button("Update Core"):
         missing_fields.append("Cruise")
     if core_type_choice == "Select Core Type":
         missing_fields.append("Core Type")
-    if not deploy_utc:
-        missing_fields.append("Deploy (UTC)")
 
     if missing_fields:
         st.warning(f"The following fields are missing or incomplete: {', '.join(missing_fields)}")
@@ -423,6 +421,7 @@ if st.session_state.show_confirmation:
     if water_depth is None: null_values.append("Water Depth")
     if not observer or not observer.strip(): null_values.append("Observer")
     if wire_type_id is None: null_values.append("Wire Type")
+    if deploy_utc is None: null_values.append("Deploy (UTC)")
     if bottom_utc is None: null_values.append("Bottom (UTC)")
     if pullout_utc is None: null_values.append("Pullout (UTC)")
     if recover_utc is None: null_values.append("Recover (UTC)")
@@ -488,7 +487,7 @@ if st.session_state.show_confirmation:
                         "vessel_id": vessel_id,
                         "cruise_id": cruise_id,
                         "leg": leg or None,
-                        "date": deploy_utc.date(),
+                        "date": legacy_date(deploy_utc, bottom_utc, pullout_utc, recover_utc),
                         "station": station or None,
                         "water_depth_m": water_depth,
                         "latitude": latitude,
