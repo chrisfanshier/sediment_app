@@ -14,6 +14,13 @@ import re
 from utils import utc_datetime_input, legacy_date
 from elog_widget import elog_fill_widget
 
+
+def make_tc_core_name(core_name):
+    """Name for the companion Trigger Core: swap the core-type letters for TC (X-JPC01 -> X-TC01).
+    Names without a hyphen get '-TC' appended so the companion never collides with the main core."""
+    tc_name = re.sub(r'(-[0-9]*)([A-Z]+)([0-9]*)$', r'\1TC\3', core_name)
+    return tc_name if tc_name != core_name else core_name + '-TC'
+
 # Force wide layout for Streamlit
 #st.set_page_config(layout="wide")
 
@@ -398,7 +405,7 @@ if st.session_state.show_confirmation:
     
     # Show what will be created
     if create_trigger_core:
-        tc_core_name = re.sub(r'(-[0-9]*)([A-Z]+)([0-9]*)$', r'\1TC\3', core_name)
+        tc_core_name = make_tc_core_name(core_name)
         st.info(f"**Two cores will be created:**")
         st.markdown(f"1. **{core_name}** (Jumbo Piston Core)")
         st.markdown(f"2. **{tc_core_name}** (Trigger Core)")
@@ -466,9 +473,7 @@ if st.session_state.show_confirmation:
                 with get_connection() as conn:
                     cores_to_check = [core_name]
                     if create_trigger_core:
-                        tc_core_name = re.sub(r'(-[0-9]*)([A-Z]+)([0-9]*)$', r'\1TC\3', core_name)
-                        if tc_core_name == core_name:
-                            tc_core_name = core_name + '-TC'
+                        tc_core_name = make_tc_core_name(core_name)
                         cores_to_check.append(tc_core_name)
                     
                     # Check for duplicates
@@ -521,7 +526,7 @@ if st.session_state.show_confirmation:
                         
                         # === CREATE TC CORE if requested ===
                         if create_trigger_core:
-                            tc_core_name = re.sub(r'(-[0-9]*)([A-Z]+)([0-9]*)$', r'\1TC\3', core_name)
+                            tc_core_name = make_tc_core_name(core_name)
                             tc_core_type_id = 3  # Trigger - TC core type ID
                             
                             # TC core values (same as JC but with different name, core_type, and NULL tensions)
