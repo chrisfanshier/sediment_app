@@ -379,8 +379,15 @@ class WinchPlotView(QWidget):
     def _on_winch_trip_line_moved(self) -> None:
         if self._winch_trip_line is None or self._x_epochs is None:
             return
+        if len(self._x_epochs) == 0:
+            return
         x_pos = self._winch_trip_line.value()
         idx = int(np.argmin(np.abs(self._x_epochs - x_pos)))
+        # Only the index is persisted, so put the line on the sample it
+        # resolves to rather than leaving it where the drag ended.
+        snapped = float(self._x_epochs[idx])
+        if snapped != x_pos:
+            self._winch_trip_line.setValue(snapped)
         self.winch_trip_line_changed.emit(idx)
 
     def _on_search_region_changed(self) -> None:

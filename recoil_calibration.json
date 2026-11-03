@@ -1,0 +1,298 @@
+{
+  "calibration": {
+    "row_count_raw": 114,
+    "row_count_working": 106,
+    "low_quality_cores": [
+      228
+    ],
+    "c_drag": {
+      "steel": 0.01,
+      "hmpe": 0.003
+    },
+    "training_ranges": {
+      "steel": {
+        "n_rows": 73,
+        "depth_min_m": 38.1,
+        "depth_max_m": 3646.8,
+        "corer_lbs_min": 4200.0,
+        "corer_lbs_max": 7000.0,
+        "wl_min": 160020.0,
+        "wl_max": 17069000.0
+      },
+      "hmpe": {
+        "n_rows": 31,
+        "depth_min_m": 470.0,
+        "depth_max_m": 2566.1,
+        "corer_lbs_min": 6600.0,
+        "corer_lbs_max": 6600.0,
+        "wl_min": 3102000.0,
+        "wl_max": 16936260.0
+      }
+    },
+    "sld": {
+      "steel": {
+        "n": 22,
+        "alpha_mean": 1.0324555981543517,
+        "h_m": {
+          "mode": "linear",
+          "slope": 7.733949600023103e-07,
+          "intercept": 3.209601870713811,
+          "predictor": "WL",
+          "r2": 0.8511246967238426,
+          "n": 22
+        },
+        "t_p_s": {
+          "mode": "linear",
+          "slope": 0.0004709839609167194,
+          "intercept": 1.4199339526218233,
+          "predictor": "depth_m",
+          "r2": 0.6653680162294867,
+          "n": 22
+        }
+      },
+      "hmpe": {
+        "n": 6,
+        "alpha_mean": 0.6358345036134644,
+        "h_m": {
+          "mode": "linear",
+          "slope": 1.5405400253075836e-06,
+          "intercept": 1.634585431889775,
+          "predictor": "WL",
+          "r2": 0.5900503261209528,
+          "n": 6
+        },
+        "t_p_s": {
+          "mode": "linear",
+          "slope": 0.0013217565451143951,
+          "intercept": 1.2325187650111027,
+          "predictor": "depth_m",
+          "r2": 0.3664703451937395,
+          "n": 6
+        }
+      }
+    },
+    "physics": {
+      "steel": {
+        "slope": 0.058094056245240444,
+        "intercept": 22.372265416366737,
+        "r2": 0.8806456974616738,
+        "n": 22,
+        "use_log": false,
+        "predictor": "depth_m"
+      },
+      "hmpe": {
+        "slope": 0.012454956245240444,
+        "intercept": 30.105265416366738,
+        "r2": 0.6920414314593719,
+        "n": 6,
+        "use_log": false,
+        "predictor": "depth_m"
+      }
+    },
+    "empirical": {
+      "exponential": {
+        "steel": {
+          "A_m": {
+            "mode": "linear",
+            "slope": 2.254818482137023e-07,
+            "intercept": 0.9279846809249638,
+            "r2": 0.3920636696469712,
+            "n": 7,
+            "predictor": "WL"
+          },
+          "tau_s": {
+            "mode": "linear",
+            "slope": -0.00021946989043184937,
+            "intercept": 0.31473542605907723,
+            "r2": 0.05403097959176627,
+            "n": 7,
+            "predictor": "depth_m"
+          }
+        },
+        "hmpe": {
+          "A_m": {
+            "mode": "linear",
+            "slope": 3.851927423433202e-07,
+            "intercept": 1.9674588640992194,
+            "r2": 0.7398514792155917,
+            "n": 6,
+            "predictor": "WL"
+          },
+          "tau_s": {
+            "mode": "linear",
+            "slope": 0.00015812506886104947,
+            "intercept": 0.09160297364915088,
+            "r2": 0.4117306934952785,
+            "n": 6,
+            "predictor": "depth_m"
+          }
+        }
+      },
+      "critically_damped": {
+        "steel": {
+          "A_m": {
+            "mode": "linear",
+            "slope": 2.3542730016524976e-07,
+            "intercept": 0.8680250906437642,
+            "r2": 0.49800048307351963,
+            "n": 7,
+            "predictor": "WL"
+          },
+          "tau_s": {
+            "mode": "linear",
+            "slope": -3.492384608745299e-05,
+            "intercept": 0.12227801616743861,
+            "r2": 0.016797242171710136,
+            "n": 7,
+            "predictor": "depth_m"
+          }
+        },
+        "hmpe": {
+          "A_m": {
+            "mode": "linear",
+            "slope": 3.7614922554226275e-07,
+            "intercept": 1.8473297921407976,
+            "r2": 0.8398530846493285,
+            "n": 6,
+            "predictor": "WL"
+          },
+          "tau_s": {
+            "mode": "linear",
+            "slope": 5.722828539217034e-05,
+            "intercept": 0.052631953733197887,
+            "r2": 0.4166004547255224,
+            "n": 6,
+            "predictor": "depth_m"
+          }
+        }
+      },
+      "gamma_pulse": {
+        "steel": {
+          "A_m": {
+            "mode": "median",
+            "value": 2.6977117239696855,
+            "n": 1,
+            "source": "all-rope median"
+          },
+          "tau_s": {
+            "mode": "median",
+            "value": 0.536793982682471,
+            "n": 1,
+            "source": "all-rope median"
+          }
+        },
+        "hmpe": {
+          "A_m": {
+            "mode": "median",
+            "value": 2.6977117239696855,
+            "n": 1,
+            "source": "hmpe median"
+          },
+          "tau_s": {
+            "mode": "median",
+            "value": 0.536793982682471,
+            "n": 1,
+            "source": "hmpe median"
+          }
+        }
+      },
+      "damped_sine": {
+        "steel": {
+          "A_m": {
+            "mode": "linear",
+            "slope": 3.3449785199787355e-07,
+            "intercept": 1.325151731714785,
+            "r2": 0.7072981204368521,
+            "n": 15,
+            "predictor": "WL"
+          },
+          "tau_s": {
+            "mode": "linear",
+            "slope": 0.0020009314652582443,
+            "intercept": 2.160138929415135,
+            "r2": 0.1642867406801432,
+            "n": 15,
+            "predictor": "depth_m"
+          },
+          "omega_rads": {
+            "mode": "linear",
+            "slope": -0.0007485890154230566,
+            "intercept": 2.2698198177489166,
+            "r2": 0.5354150691999154,
+            "n": 15,
+            "predictor": "depth_m"
+          }
+        },
+        "hmpe": {
+          "A_m": {
+            "mode": "linear",
+            "slope": -1.328289799828189e-06,
+            "intercept": 55.10201043733735,
+            "r2": 0.14354557200216367,
+            "n": 6,
+            "predictor": "WL"
+          },
+          "tau_s": {
+            "mode": "linear",
+            "slope": 0.0013167422595395377,
+            "intercept": -0.6036932796967505,
+            "r2": 0.46841100136145325,
+            "n": 6,
+            "predictor": "depth_m"
+          },
+          "omega_rads": {
+            "mode": "linear",
+            "slope": 0.00012365797274493096,
+            "intercept": 0.22785746249721395,
+            "r2": 0.1240037867821682,
+            "n": 6,
+            "predictor": "depth_m"
+          }
+        }
+      }
+    }
+  },
+  "metadata": {
+    "generated_at": "2026-07-07T00:00:00+00:00",
+    "generator": "fixture",
+    "source_table": "recoil_analysis_results",
+    "source_row_count_raw": 114,
+    "source_row_count_working": 106,
+    "physics_use_log": {
+      "steel": false,
+      "hmpe": false
+    },
+    "cores_by_curve_type": {
+      "physics": {
+        "total": 28,
+        "steel": 22,
+        "hmpe": 6
+      },
+      "single_lobe_damped": {
+        "total": 28,
+        "steel": 22,
+        "hmpe": 6
+      },
+      "exponential": {
+        "total": 11,
+        "steel": 7,
+        "hmpe": 4
+      },
+      "critically_damped": {
+        "total": 13,
+        "steel": 7,
+        "hmpe": 6
+      },
+      "gamma_pulse": {
+        "total": 1,
+        "steel": 0,
+        "hmpe": 1
+      },
+      "damped_sine": {
+        "total": 21,
+        "steel": 15,
+        "hmpe": 6
+      }
+    }
+  }
+}

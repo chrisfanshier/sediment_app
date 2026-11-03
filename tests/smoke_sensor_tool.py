@@ -45,7 +45,6 @@ def t_imports():
     import sensor_tool.domain.processing.winch_trip_detection  # noqa: F401
     import sensor_tool.gui.panels.winch_panel  # noqa: F401
     import sensor_tool.gui.views.winch_plot_view  # noqa: F401
-    import sensor_tool.gui.dialogs.restore_results_dialog  # noqa: F401
 
 
 check("all sensor_tool modules import", t_imports)
@@ -58,6 +57,13 @@ ctrl = window.controller
 def t_window_title():
     # Integration-side rebrand must survive the merge.
     assert window.windowTitle() == "Sensorius", window.windowTitle()
+
+
+def t_predict_mode_registered():
+    assert "Predict" in MODES, MODES
+    assert window.predict_panel is not None
+    assert window.predict_plot_view is not None
+    assert ctrl.predict_panel is window.predict_panel
 
 
 def t_winch_mode_registered():
@@ -77,6 +83,7 @@ def t_panel_stack_indices():
         "Calculate": window.calculate_panel,
         "Alter": window.alter_panel,
         "Piston Analysis": window.piston_analysis_panel,
+        "Predict": window.predict_panel,
         "Trip Detector": window.trip_panel,
         "Piston Position": window.piston_panel,
     }
@@ -98,6 +105,8 @@ def t_secondary_view_indices():
     assert window.secondary_stack.currentWidget() is window.calibration_plot
     window.show_secondary_view("trip")
     assert window.secondary_stack.currentWidget() is window.trip_plot
+    window.show_secondary_view("predict")
+    assert window.secondary_stack.currentWidget() is window.predict_plot_view
 
 
 def t_mode_cycle():
@@ -278,6 +287,8 @@ def t_persisted_columns():
     ctrl_src = open(ctrl_mod.__file__).read()
     assert ctrl_src.count('"result_recoil_time_s"') == 2, (
         "integration-side result_recoil_time_s save paths not intact")
+    assert ctrl_src.count('"result_eff_trig_line"') == 2, (
+        "integration-side result_eff_trig_line save paths not intact")
     for col in ("winch_trip_index", "winch_time_offset_sec"):
         assert col in ctrl_src, f"{col} missing from analysis_controller"
 
@@ -380,6 +391,7 @@ def t_migration_example_present():
 
 
 check("window title preserved (Sensorius)", t_window_title)
+check("Predict mode wired into main window", t_predict_mode_registered)
 check("Winch mode wired into main window", t_winch_mode_registered)
 check("panel stack index mapping intact", t_panel_stack_indices)
 check("secondary view index mapping intact", t_secondary_view_indices)

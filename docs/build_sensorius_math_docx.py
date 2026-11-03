@@ -308,7 +308,7 @@ def build() -> None:
             ["recoil_start", "|d_rel[trip] − d_rel[start_core]|", "trip + start_core"],
             ["freefall_start", "|d_WS[trip] − d_WS[start_core]|", "trip + start_core"],
             ["piston_suck", "d_piston[pullout] − d_piston[cross]", "piston"],
-            ["pen_deficit", "d_seafloor − max d_WS", "seafloor"],
+            ["pen_deficit", "d_seafloor − max d_WS − L_WS", "seafloor"],
             ["piston_alt", "d_seafloor − d_piston[start_core]", "seafloor"],
             ["freefall_est", "|d_WS[trip]+1.5+L_core,m−d_seafloor|", "seafloor"],
         ],

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, QDateTime
 
 from .base_panel import BaseModePanel
+from ...domain.processing.calculations import DEFAULT_PISTON_OFFSET_M
 from ..widgets.log_widget import LogWidget
 
 
@@ -111,7 +112,7 @@ class PistonPositionPanel(BaseModePanel):
         self.offset_spin.setRange(0.0, 100.0)
         self.offset_spin.setDecimals(2)
         self.offset_spin.setSingleStep(0.25)
-        self.offset_spin.setValue(1.25)
+        self.offset_spin.setValue(DEFAULT_PISTON_OFFSET_M)
         param_layout.addWidget(self.offset_spin, 2, 1)
         param_layout.addWidget(QLabel("m"), 2, 2)
 
