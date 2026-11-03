@@ -1,0 +1,4 @@
+data/example/CD166_19_S1_book/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
