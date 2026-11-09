@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Signal, QDateTime
 
 from .base_panel import BaseModePanel
+from ...domain.processing.calculations import DEFAULT_WEIGHT_STAND_LENGTH_M
 from ..widgets.log_widget import LogWidget
 
 
@@ -214,6 +215,25 @@ class CalculatePanel(BaseModePanel):
         trigger_group.setLayout(trigger_layout)
         self._layout.addWidget(trigger_group)
 
+        ws_len_group = QGroupBox("Weight Stand Length (m)")
+        ws_len_layout = QGridLayout()
+        ws_len_layout.addWidget(QLabel("Weight stand length:"), 0, 0)
+        self.weight_stand_length_spin = QDoubleSpinBox()
+        self.weight_stand_length_spin.setRange(0.5, 5.0)
+        self.weight_stand_length_spin.setDecimals(2)
+        self.weight_stand_length_spin.setSingleStep(0.1)
+        self.weight_stand_length_spin.setValue(DEFAULT_WEIGHT_STAND_LENGTH_M)
+        self.weight_stand_length_spin.setToolTip(
+            "Length of the weight stand in metres. The depth sensor is at the "
+            "top; the barrel hangs below. Used for core-tip depth, freefall "
+            "estimate, penetration deficit, and the default piston offset "
+            "(length − 0.25 m)."
+        )
+        ws_len_layout.addWidget(self.weight_stand_length_spin, 0, 1)
+        ws_len_layout.addWidget(QLabel("m"), 0, 2)
+        ws_len_group.setLayout(ws_len_layout)
+        self._layout.addWidget(ws_len_group)
+
         # -- Manual Seafloor Override ----------------------------------------
         sf_group = QGroupBox("Manual Seafloor Override")
         sf_layout = QVBoxLayout()
@@ -239,7 +259,7 @@ class CalculatePanel(BaseModePanel):
 
         self.seafloor_estimate_btn = QPushButton("Estimate from Trip")
         self.seafloor_estimate_btn.setToolTip(
-            "Sets depth to:  WS[trip] + core_length + 1.5 m + scope\n"
+            "Sets depth to:  WS[trip] + core_length + weight stand length + scope\n"
             "(assumes zero freefall — actual seafloor is shallower)"
         )
         self.seafloor_estimate_btn.setEnabled(False)
@@ -434,6 +454,12 @@ class CalculatePanel(BaseModePanel):
         """Set the trigger-penetration spinbox value."""
         self.trigger_pen_spin.setValue(float(value))
 
+    def get_weight_stand_length_m(self) -> float:
+        return self.weight_stand_length_spin.value()
+
+    def set_weight_stand_length_m(self, value: float) -> None:
+        self.weight_stand_length_spin.setValue(float(value))
+
     def get_smoothing_enabled(self) -> bool:
         return self.smooth_check.isChecked()
 
@@ -475,3 +501,19 @@ class CalculatePanel(BaseModePanel):
     def set_seafloor_override(self, depth: float):
         """Set the spinbox value (does not check the checkbox)."""
         self.seafloor_spin.setValue(depth)
+
+    def show_seafloor_override(self, depth: float | None):
+        """Display a restored override without re-emitting it.
+
+        The caller already holds the value. Emitting would let the checkbox
+        push the spinbox's stale 0.0 back out and wipe the restored depth.
+        """
+        self.seafloor_check.blockSignals(True)
+        self.seafloor_spin.blockSignals(True)
+        self.seafloor_check.setChecked(depth is not None)
+        if depth is not None:
+            self.seafloor_spin.setValue(float(depth))
+        self.seafloor_check.blockSignals(False)
+        self.seafloor_spin.blockSignals(False)
+        self.seafloor_spin.setEnabled(depth is not None)
+        self.seafloor_estimate_btn.setEnabled(depth is not None)

@@ -330,6 +330,7 @@ def create_sensor_analysis_table():
                 result_piston_alt       FLOAT,
                 result_pen_deficit      FLOAT,
                 result_freefall_est     FLOAT,
+                result_eff_trig_line    FLOAT,
                 trigger_pen_m           FLOAT,
 
                 -- Winch alignment (real columns — see migrations/001)
@@ -363,6 +364,7 @@ def create_sensor_analysis_table():
         conn.execute(text("""
             ALTER TABLE sensor_analysis_results
                 ADD COLUMN IF NOT EXISTS result_recoil_time_s  FLOAT,
+                ADD COLUMN IF NOT EXISTS result_eff_trig_line  FLOAT,
                 ADD COLUMN IF NOT EXISTS winch_trip_index      INTEGER,
                 ADD COLUMN IF NOT EXISTS winch_trip_datetime   TIMESTAMP,
                 ADD COLUMN IF NOT EXISTS winch_time_offset_sec FLOAT;

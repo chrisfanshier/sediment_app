@@ -48,6 +48,8 @@ class PistonAnalysisView(QWidget):
         self._depth_plot.setLabel('bottom', 'Core Depth (m)  [0 = start-pen, negative = pre-penetration]')
         self._depth_plot.invertY(True)
         self._depth_plot.showGrid(x=True, y=True, alpha=0.3)
+        self._depth_plot.setDownsampling(auto=True, mode='peak')
+        self._depth_plot.setClipToView(True)
         self._depth_legend = self._depth_plot.addLegend()
 
         # Bottom subplot: velocities
@@ -55,6 +57,8 @@ class PistonAnalysisView(QWidget):
         self._vel_plot.setLabel('left', 'Velocity (m/s)')
         self._vel_plot.setLabel('bottom', 'Core Depth (m)  [0 = start-pen, negative = pre-penetration]')
         self._vel_plot.showGrid(x=True, y=True, alpha=0.3)
+        self._vel_plot.setDownsampling(auto=True, mode='peak')
+        self._vel_plot.setClipToView(True)
         self._vel_legend = self._vel_plot.addLegend()
         self._zero_line = pg.InfiniteLine(
             pos=0, angle=0, movable=False,

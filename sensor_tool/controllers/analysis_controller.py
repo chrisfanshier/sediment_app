@@ -17,6 +17,7 @@ import pandas as pd
 import numpy as np
 from scipy import stats as sp_stats
 
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from ..domain.models.sensor_data import SensorData, CorrectionRecord
@@ -31,18 +32,25 @@ from ..domain.processing.piston_position import (
     compute_piston_position, detect_start_core,
 )
 from ..domain.processing.calculations import (
-    compute_calculations, format_results, apply_savgol,
+    compute_calculations,
+    format_results,
+    apply_savgol,
+    DEFAULT_WEIGHT_STAND_LENGTH_M,
 )
 from ..domain.processing.piston_analysis import (
     PistonAnalysisProcessor,
 )
 from ..domain.processing.winch_trip_detection import WinchTripDetectionProcessor
-from ..gui.views.calculation_plot_view import GeometryInput, WEIGHT_LENGTH
+from ..gui.views.calculation_plot_view import GeometryInput
 from ..persistence.csv_loader import CSVLoader
 from ..persistence.calibration_io import CalibrationIO
+from ..persistence.recoil_calibration_io import RecoilCalibrationIO
+from ..domain.models.recoil_calibration import RecoilCalibration
+from ..domain.processing.predict import run_prediction, training_warnings
+from ..domain.processing.predict_overlay import build_actual_overlay
 from ..persistence.database_loader import DatabaseLoader
 from ..persistence.winch_loader import WinchLoader, get_winch_parameters, datetime_to_epoch, timestamp_to_epoch
-from ..persistence.analysis_results_io import insert_result, update_result
+from ..persistence.analysis_results_io import upsert_result
 
 
 class AnalysisController:
@@ -60,7 +68,6 @@ class AnalysisController:
         self._loaded_file_path: Optional[str] = None        # Full path to loaded file
         self._loaded_core_id: Optional[int] = None           # core_id when loaded from DB
         self._loaded_cruise_id: Optional[int] = None         # cruise_id when loaded from DB
-        self._current_db_result_id: Optional[int] = None     # active sensor_analysis_results row
         self.calibration: Optional[DepthCalibration] = None
         self.generated_calibration: Optional[DepthCalibration] = None
         self.time_offset_results: Optional[list[TimeOffsetResult]] = None
@@ -73,6 +80,9 @@ class AnalysisController:
         self._piston_start_core_idx: Optional[int] = None
         self._piston_values: Optional[np.ndarray] = None
         self._start_pen_idx: Optional[int] = None
+        # Set when the user drags the start-pen line; suppresses the automatic
+        # core-tip/seafloor intersection so the drag is not recomputed away.
+        self._manual_start_pen: Optional[int] = None
 
         # GUI references (set by main_window after construction)
         self.main_window = None
@@ -110,6 +120,12 @@ class AnalysisController:
         self.alter_panel = None
         self.piston_analysis_panel = None
         self.winch_panel = None
+        self.predict_panel = None
+        self.predict_plot_view = None
+        self.recoil_calibration: Optional[RecoilCalibration] = None
+        self._last_predict_result = None
+        self._predict_settings = QSettings("Sensorius", "sensor_tool")
+        self._loaded_core_info: Optional[dict] = None
 
         # Alter mode state
         self._alter_core_info: Optional[dict] = None
@@ -249,6 +265,14 @@ class AnalysisController:
                 self.run_piston_analysis
             )
 
+        # Predict panel
+        if self.predict_panel is not None:
+            self.predict_panel.load_calibration_requested.connect(
+                self._prompt_load_recoil_calibration
+            )
+            self.predict_panel.predict_requested.connect(self.run_predict)
+            self.predict_panel.overlay_changed.connect(self._on_predict_overlay_changed)
+
         # Winch panel
         if self.winch_panel is not None:
             self.winch_panel.reload_requested.connect(self.reload_winch_data)
@@ -291,6 +315,7 @@ class AnalysisController:
             self._loaded_file_path = file_path
             self._loaded_core_id = None  # CSV has no DB context
             self._loaded_cruise_id = None
+            self._loaded_core_info = None
 
             self._reset_analysis_state()
             self._update_all_panels_file_info()
@@ -317,6 +342,8 @@ class AnalysisController:
             self._loaded_file_path = None  # no CSV on disk
             self._loaded_core_id = core_id
             self._loaded_cruise_id = cruise_id
+            self._loaded_core_info = dict(core_info)
+            self._alter_core_info = dict(core_info)
 
             self._reset_analysis_state()
             self._update_all_panels_file_info()
@@ -347,13 +374,13 @@ class AnalysisController:
         self._piston_start_core_idx = None
         self._piston_values = None
         self._start_pen_idx = None
+        self._manual_start_pen = None
         self._calc_start_core_idx = None
         self._end_pen_idx = None
         self._pullout_idx = None
         self._last_calc_results = None
         self._last_calc_inputs = None
         self._manual_seafloor = None
-        self._current_db_result_id = None  # new analysis session
         self._heave_profiles = None
         self._heave_sel = None
         self._reset_winch_state()
@@ -1212,29 +1239,29 @@ class AnalysisController:
         if self.sensor_data is None:
             return
 
-        # Update stored trip index in detection result (if available)
+        dt_col = self.sensor_data.datetime_col
+        new_ts = None
+        if (dt_col in self.sensor_data.df.columns
+                and 0 <= new_idx < len(self.sensor_data.df)):
+            ts = self.sensor_data.df[dt_col].iloc[new_idx]
+            if pd.notna(ts):
+                new_ts = pd.Timestamp(ts)
+
+        # Update stored trip index in detection result (if available). The
+        # datetime has to move with it: both are persisted, and a stale
+        # datetime would disagree with the index in the saved row.
         if self.trip_detection_result is not None:
             self.trip_detection_result.trip_index = new_idx
+            if new_ts is not None:
+                self.trip_detection_result.trip_datetime = new_ts
 
-        # Update the trip time widget on the piston panel
-        if self.piston_panel is not None:
-            dt_col = self.sensor_data.datetime_col
-            if (dt_col in self.sensor_data.df.columns
-                    and 0 <= new_idx < len(self.sensor_data.df)):
-                ts = self.sensor_data.df[dt_col].iloc[new_idx]
-                if pd.notna(ts):
-                    self.piston_panel.set_trip_time(str(ts), source='plot drag')
-
-        # Update the trip time widget on the calculate panel
-        if self.calculate_panel is not None:
-            dt_col = self.sensor_data.datetime_col
-            if (dt_col in self.sensor_data.df.columns
-                    and 0 <= new_idx < len(self.sensor_data.df)):
-                ts = self.sensor_data.df[dt_col].iloc[new_idx]
-                if pd.notna(ts):
-                    self.calculate_panel.set_trip_time(
-                        str(ts), source='plot drag',
-                    )
+        if new_ts is not None:
+            if self.piston_panel is not None:
+                self.piston_panel.set_trip_time(str(new_ts), source='plot drag')
+            if self.calculate_panel is not None:
+                self.calculate_panel.set_trip_time(
+                    str(new_ts), source='plot drag',
+                )
 
         mode = (
             self.main_window.get_current_mode() if self.main_window else None
@@ -1248,6 +1275,14 @@ class AnalysisController:
             self.calculate_panel.log_widget.log(
                 f"Trip line moved to index {new_idx}"
             )
+            return
+
+        if mode == 'Predict':
+            self._update_predict_trigger_line_display()
+            if self._last_predict_result is not None:
+                self._refresh_predict_plot()
+            if self.predict_panel is not None:
+                self._log_predict(f"Trip line moved to index {new_idx}")
             return
 
         # If piston has already been calculated, recalculate with new trip gate
@@ -1356,6 +1391,12 @@ class AnalysisController:
         if self.sensor_data is None:
             return
         self._start_pen_idx = new_idx
+        self._manual_start_pen = new_idx
+        if self.calculate_panel is not None:
+            self.calculate_panel.log_widget.log(
+                f"Start pen moved to index {new_idx} (manual override; "
+                "reload the core to go back to the computed position)"
+            )
 
     def _on_seafloor_dragged(self, depth: float):
         """Handle the user dragging the seafloor line on the main plot."""
@@ -1385,7 +1426,7 @@ class AnalysisController:
         self._update_start_pen_line(trip_idx)
 
     def _estimate_seafloor_from_trip(self):
-        """Fill the seafloor spinbox with WS[trip] + core_length + 1.5 + scope."""
+        """Fill the seafloor spinbox with WS[trip] + core_length + L_WS + scope."""
         if self.sensor_data is None or self.calculate_panel is None:
             return
         trip_idx = self._resolve_calc_trip_index()
@@ -1405,15 +1446,16 @@ class AnalysisController:
         FT_TO_M_local = 1.0 / 3.28
         core_length_ft = md.get('core_length') or 0.0
         scope_ft = md.get('scope') or 0.0
+        ws_len_m = panel.get_weight_stand_length_m()
         estimate = (
             float(ws_vals[trip_idx])
             + core_length_ft * FT_TO_M_local
-            + 1.5
+            + ws_len_m
             + scope_ft * FT_TO_M_local
         )
         panel.set_seafloor_override(estimate)
         panel.log_widget.log(
-            f"Seafloor estimate (WS[trip]+core+1.5+scope): {estimate:.2f} m  "
+            f"Seafloor estimate (WS[trip]+core+L_WS+scope): {estimate:.2f} m  "
             f"[upper bound — actual seafloor is shallower by freefall distance]"
         )
 
@@ -1502,6 +1544,7 @@ class AnalysisController:
             trigger_core_length_ft = md.get('trigger_core_length')
             core_length_ft = md.get('core_length')
             trigger_pen = panel.get_trigger_pen()
+            weight_stand_length_m = panel.get_weight_stand_length_m()
 
             panel.log_widget.log("")
 
@@ -1585,6 +1628,7 @@ class AnalysisController:
                 end_pen_idx=end_pen_idx,
                 pullout_idx=pullout_idx,
                 seafloor_override=self._manual_seafloor,
+                weight_stand_length_m=weight_stand_length_m,
             )
 
             # Store results & inputs for export
@@ -1602,9 +1646,28 @@ class AnalysisController:
                 'trigger_core_length_ft': trigger_core_length_ft,
                 'core_length_ft': core_length_ft,
                 'trigger_pen': trigger_pen,
+                'weight_stand_length_m': weight_stand_length_m,
             }
 
             panel.log_widget.log(format_results(results))
+
+            planned_trig = md.get("trigger_line_length")
+            if results.eff_trig_line_ft is not None:
+                eff = results.eff_trig_line_ft
+                panel.log_widget.log(
+                    f"Trigger line — measured: {eff:.2f} ft"
+                )
+                if planned_trig is not None:
+                    panel.log_widget.log(
+                        f"Trigger line — planned (core): {float(planned_trig):.2f} ft, "
+                        f"Δ(meas−plan): {eff - float(planned_trig):+.2f} ft"
+                    )
+                if self.predict_panel is not None:
+                    pred_ft = self.predict_panel.get_inputs().trigger_line_length_ft
+                    panel.log_widget.log(
+                        f"Trigger line — predict model input: {pred_ft:.2f} ft, "
+                        f"Δ(meas−model): {eff - pred_ft:+.2f} ft"
+                    )
 
             # Show smoothed traces on the plot if smoothing is enabled
             if panel.get_smoothing_enabled():
@@ -1681,7 +1744,12 @@ class AnalysisController:
         piston_at_sp = None
         piston_alt_sp = None
         pen_before_core = False
-        core_tip_series = ws_vals + WEIGHT_LENGTH + core_length_m
+        ws_len_m = (
+            self.calculate_panel.get_weight_stand_length_m()
+            if self.calculate_panel is not None
+            else DEFAULT_WEIGHT_STAND_LENGTH_M
+        )
+        core_tip_series = ws_vals + ws_len_m + core_length_m
         after_search = core_tip_series[trip_idx:]
         pen_candidates = np.where(after_search >= results.seafloor)[0]
         if len(pen_candidates) > 0:
@@ -1713,6 +1781,7 @@ class AnalysisController:
             seafloor=results.seafloor,
             core_length_m=core_length_m,
             freefall_est=freefall_est,
+            weight_stand_length_m=ws_len_m,
             ws_at_start_core=ws_at_sc,
             piston_at_start_core=piston_at_sc,
             piston_alt_at_start_core=piston_alt_sc,
@@ -2403,8 +2472,19 @@ class AnalysisController:
         # Add seafloor line (movable when using manual override)
         movable = self._manual_seafloor is not None
         self.main_plot.add_seafloor_line(sf, movable=movable)
+        # A dragged start_pen wins over the computed intersection, otherwise
+        # every recompute (seafloor edit, calculate re-run, restore) would
+        # silently undo the drag.
+        if self._manual_start_pen is not None:
+            if 0 <= self._manual_start_pen < len(x):
+                self._start_pen_idx = self._manual_start_pen
+                self.main_plot.add_start_pen_line(
+                    float(x[self._manual_start_pen])
+                )
+                return
         # Add start_pen line
-        core_tip = ws_vals + WEIGHT_LENGTH + core_length_m
+        ws_len_m = panel.get_weight_stand_length_m()
+        core_tip = ws_vals + ws_len_m + core_length_m
         search_from = trip_idx
         after = core_tip[search_from:]
         candidates = np.where(after >= sf)[0]
@@ -2980,12 +3060,11 @@ class AnalysisController:
                                  flat_data: Optional[dict] = None,
                                  params_section: Optional[dict] = None) -> None:
         """
-        Insert a new result row or update the current session row.
+        Write into this core's single analysis result row.
 
-        Creates a new row (and caches its result_id) on the first call
-        after a core is loaded or analysis is reset.  Subsequent calls
-        within the same session update that same row so each panel
-        contributes to one consolidated record.
+        Each core has one row, created on its first save and updated by every
+        later save, so each panel contributes to one consolidated record
+        regardless of which session it was saved from.
         """
         if self._loaded_core_id is None:
             self._show_warning(
@@ -2996,22 +3075,11 @@ class AnalysisController:
             return
 
         try:
-            if self._current_db_result_id is None:
-                self._current_db_result_id = insert_result(
-                    self._loaded_core_id, flat_data, params_section
-                )
-                msg = (
-                    f"Analysis result saved to DB "
-                    f"(result_id={self._current_db_result_id})"
-                )
-            else:
-                update_result(
-                    self._current_db_result_id, flat_data, params_section
-                )
-                msg = (
-                    f"Analysis result updated in DB "
-                    f"(result_id={self._current_db_result_id})"
-                )
+            result_id, created = upsert_result(
+                self._loaded_core_id, flat_data, params_section
+            )
+            verb = "saved to" if created else "updated in"
+            msg = f"Analysis result {verb} DB (result_id={result_id})"
 
             self._log_active(msg)
             if self.main_window:
@@ -3038,21 +3106,31 @@ class AnalysisController:
         skipped: list = []
 
         # --- Depth offset ---
-        if self.sensor_data is not None:
+        # Every section here replaces its stored counterpart wholesale, so an
+        # empty panel must be skipped rather than written: a save from a
+        # session that never visited this mode would otherwise blank a
+        # calibration saved earlier.
+        if self.sensor_data is None:
+            skipped.append("depth offset (no data)")
+        else:
             panel = self.depth_panel
             calib_json = self.calibration.to_dict() if self.calibration is not None else None
-            params_section["depth_offset"] = {
+            depth_section = {
                 "calib_json": calib_json,
                 "label_mapping": panel.get_calibration_mapping(),
                 "reference_sensor": panel.get_ref_sensor(),
                 "manual_offsets": panel.get_manual_offsets(),
             }
-            saved.append("depth offset")
-        else:
-            skipped.append("depth offset (no data)")
+            if any(depth_section.values()):
+                params_section["depth_offset"] = depth_section
+                saved.append("depth offset")
+            else:
+                skipped.append("depth offset (nothing set)")
 
         # --- Time offset ---
-        if self.sensor_data is not None:
+        if self.sensor_data is None:
+            skipped.append("time offset (no data)")
+        else:
             panel = self.time_panel
             low_hz, high_hz, order = panel.get_filter_params()
             offsets_data = []
@@ -3064,15 +3142,21 @@ class AnalysisController:
                         "rms_value": r.rms_value,
                         "is_reference": r.is_reference,
                     })
-            params_section["time_offset"] = {
-                "reference_col": panel.get_ref_col(),
-                "filter_low_hz": low_hz,
-                "filter_high_hz": high_hz,
-                "filter_order": order,
-                "manual_offsets": panel.get_manual_offsets(),
-                "offsets": offsets_data,
-            }
-            saved.append("time offset")
+            manual_time_offsets = panel.get_manual_offsets()
+            # The filter settings alone are just spinbox defaults; only a
+            # computed or hand-entered offset counts as real content.
+            if offsets_data or manual_time_offsets:
+                params_section["time_offset"] = {
+                    "reference_col": panel.get_ref_col(),
+                    "filter_low_hz": low_hz,
+                    "filter_high_hz": high_hz,
+                    "filter_order": order,
+                    "manual_offsets": manual_time_offsets,
+                    "offsets": offsets_data,
+                }
+                saved.append("time offset")
+            else:
+                skipped.append("time offset (nothing set)")
 
         # --- Trip detection ---
         if self.trip_detection_result is not None:
@@ -3140,6 +3224,7 @@ class AnalysisController:
                 "result_piston_alt":     r.piston_alt,
                 "result_pen_deficit":    r.pen_deficit,
                 "result_freefall_est":   r.freefall_est,
+                "result_eff_trig_line":  r.eff_trig_line_ft,
                 "trigger_pen_m":         inp.get("trigger_pen"),
             }
             flat_data.update({k: v for k, v in calc_flat.items() if v is not None})
@@ -3154,9 +3239,12 @@ class AnalysisController:
                 "start_core_idx":         inp.get("start_core_idx"),
                 "end_pen_idx":            self._end_pen_idx,
                 "pullout_idx":            self._pullout_idx,
+                "start_pen_idx":          self._start_pen_idx,
+                "start_pen_manual":       self._manual_start_pen,
                 "trigger_pen_m":          inp.get("trigger_pen"),
                 "core_length_ft":         inp.get("core_length_ft"),
                 "trigger_core_length_ft": inp.get("trigger_core_length_ft"),
+                "weight_stand_length_m":  inp.get("weight_stand_length_m"),
                 "seafloor_manual":        self._manual_seafloor,
             }
             params_section["calc_notes"] = list(r.notes)
@@ -3176,6 +3264,9 @@ class AnalysisController:
         else:
             skipped.append("winch alignment (not aligned)")
 
+        # Read the stored row before writing over it.
+        stale_note = self._stale_calc_warning(saved)
+
         self._upsert_analysis_result(
             flat_data=flat_data if flat_data else None,
             params_section=params_section if params_section else None,
@@ -3187,6 +3278,52 @@ class AnalysisController:
         if skipped:
             parts.append(f"Skipped: {', '.join(skipped)}")
         self._log_active("Save All — " + " | ".join(parts))
+        if stale_note:
+            self._log_active(stale_note)
+            self._show_warning(stale_note)
+
+    # Flat columns produced only by Calculate mode.
+    _CALC_RESULT_COLUMNS = (
+        "result_recoil_max", "result_recoil_time_s", "result_fall_dist",
+        "result_suck_in", "result_recoil_start", "result_freefall_start",
+        "result_piston_suck", "result_seafloor", "result_piston_alt",
+        "result_pen_deficit", "result_freefall_est", "result_eff_trig_line",
+    )
+
+    def _stale_calc_warning(self, saved: list) -> Optional[str]:
+        """Warn when a save leaves stored calculations behind their inputs.
+
+        With one row per core, re-saving part of the analysis keeps whatever
+        calculation results were already stored. Those were derived from the
+        inputs as they stood at the time, so the row stops being internally
+        consistent until Calculate is re-run. Nothing is lost either way, but
+        the mismatch is invisible unless we say so.
+
+        Returns the warning text, or None when the row is consistent.
+        """
+        if "calculations" in saved:
+            return None
+        upstream = [s for s in saved if s != "winch alignment"]
+        if not upstream:
+            return None
+        if self._loaded_core_id is None:
+            return None
+        try:
+            from ..persistence.analysis_results_io import fetch_latest_result
+            existing = fetch_latest_result(self._loaded_core_id)
+        except Exception:
+            return None
+        if existing is None:
+            return None
+        if not any(existing.get(c) is not None
+                   for c in self._CALC_RESULT_COLUMNS):
+            return None
+        return (
+            "Saved calculation results for this core are now out of date.\n\n"
+            f"This save updated {', '.join(upstream)}, but the stored "
+            "calculations were computed from the earlier values.\n\n"
+            "Run Calculate and save again to bring them back in step."
+        )
 
     def save_depth_offset_to_db(self):
         """Save depth offset correction parameters to the DB."""
@@ -3328,6 +3465,7 @@ class AnalysisController:
             "result_piston_alt":     r.piston_alt,
             "result_pen_deficit":    r.pen_deficit,
             "result_freefall_est":   r.freefall_est,
+            "result_eff_trig_line":  r.eff_trig_line_ft,
             "trigger_pen_m":         inp.get("trigger_pen"),
         }
         # Drop None floats so we don't overwrite already-set columns with NULL
@@ -3346,9 +3484,12 @@ class AnalysisController:
                 "start_core_idx":          inp.get("start_core_idx"),
                 "end_pen_idx":             self._end_pen_idx,
                 "pullout_idx":             self._pullout_idx,
+                "start_pen_idx":           self._start_pen_idx,
+                "start_pen_manual":        self._manual_start_pen,
                 "trigger_pen_m":           inp.get("trigger_pen"),
                 "core_length_ft":          inp.get("core_length_ft"),
                 "trigger_core_length_ft":  inp.get("trigger_core_length_ft"),
+                "weight_stand_length_m":   inp.get("weight_stand_length_m"),
                 "seafloor_manual":         self._manual_seafloor,
             },
             "calc_notes": list(r.notes),
@@ -3465,12 +3606,23 @@ class AnalysisController:
                 if self.winch_plot_view is not None and self.main_plot is not None:
                     self.winch_plot_view.set_x_link(self.main_plot.plot_item)
                 self.reload_winch_data()
+        elif mode_name == 'Predict':
+            self.main_window.show_secondary_view('predict')
+            if self.sensor_data is not None:
+                self._populate_predict_panel_from_session()
+                self._plot_predict_mode()
+            if self.recoil_calibration is None:
+                self._prompt_load_recoil_calibration()
+            elif self._last_predict_result is not None:
+                self._refresh_predict_plot()
+            self._update_predict_trigger_line_display()
         else:
             self.main_window.hide_secondary_view()
 
         # Clean up piston overlays when leaving overlay-preserving modes
         if mode_name not in (
             'Piston Position', 'Calculate', 'Alter', 'Piston Analysis', 'Winch',
+            'Predict',
         ):
             self.main_plot.remove_piston_trace()
             self.main_plot.remove_start_core_line()
@@ -3709,6 +3861,7 @@ class AnalysisController:
             trigger_pen = self.alter_panel.get_trigger_pen()
 
             # Re-run calculations
+            ws_len_m = self.calculate_panel.get_weight_stand_length_m()
             results = compute_calculations(
                 weight_stand=ws_mod,
                 release=rel_mod,
@@ -3722,6 +3875,7 @@ class AnalysisController:
                 core_length_ft=core_length_ft,
                 end_pen_idx=self._end_pen_idx,
                 pullout_idx=self._pullout_idx,
+                weight_stand_length_m=ws_len_m,
             )
 
             log.log(format_results(results))
@@ -3868,9 +4022,7 @@ class AnalysisController:
 
     def _on_restore_results(self) -> None:
         """Handle the 'Restore Results' toolbar action."""
-        from ..persistence.analysis_results_io import fetch_results_for_core
-        from ..gui.dialogs.restore_results_dialog import RestoreResultsDialog
-        from PySide6.QtWidgets import QDialog
+        from ..persistence.analysis_results_io import latest_result_id
 
         if self._loaded_core_id is None:
             self._show_warning(
@@ -3880,24 +4032,14 @@ class AnalysisController:
             return
 
         try:
-            results = fetch_results_for_core(self._loaded_core_id)
+            result_id = latest_result_id(self._loaded_core_id)
         except Exception as e:
             self._show_error("Restore Error", f"Could not query saved results:\n{e}")
             return
 
-        if not results:
+        if result_id is None:
             self._show_warning("No saved analysis results found for this core.")
             return
-
-        if len(results) == 1:
-            result_id = results[0]['result_id']
-        else:
-            dialog = RestoreResultsDialog(results, parent=self.main_window)
-            if dialog.exec() != QDialog.Accepted:
-                return
-            result_id = dialog.selected_result_id()
-            if result_id is None:
-                return
 
         self.restore_from_db(result_id)
 
@@ -4134,7 +4276,18 @@ class AnalysisController:
         import numpy as np
         from ..domain.processing.trip_detection import TripDetectionResult
 
+        # The saved index is exact, the saved datetime may not be. Calculate and
+        # Piston modes re-derive the trip index from their panel time widget, so
+        # that widget has to agree with trip_index to the sample or the restored
+        # trip lands on a neighbouring sample.
         ts = pd.Timestamp(trip_datetime)
+        dt_col = self.sensor_data.datetime_col
+        if (dt_col in self.sensor_data.df.columns
+                and 0 <= trip_index < len(self.sensor_data.df)):
+            sample_ts = self.sensor_data.df[dt_col].iloc[trip_index]
+            if pd.notna(sample_ts):
+                ts = pd.Timestamp(sample_ts)
+
         n = self.sensor_data.row_count
         depth_cols = self.sensor_data.depth_columns
 
@@ -4321,6 +4474,8 @@ class AnalysisController:
         pullout = calc_params.get('pullout_idx')
         sc = calc_params.get('start_core_idx')
         sf = calc_params.get('seafloor_manual')
+        sp = calc_params.get('start_pen_idx')
+        sp_manual = calc_params.get('start_pen_manual')
 
         if end_pen is not None:
             self._end_pen_idx = int(end_pen)
@@ -4330,6 +4485,29 @@ class AnalysisController:
             self._calc_start_core_idx = int(sc)
         if sf is not None:
             self._manual_seafloor = float(sf)
+            if self.calculate_panel is not None:
+                self.calculate_panel.show_seafloor_override(self._manual_seafloor)
+        if sp is not None:
+            self._start_pen_idx = int(sp)
+        # Only a dragged start_pen is pinned on restore; an auto-computed one
+        # is left to recompute so it tracks the restored inputs.
+        if sp_manual is not None:
+            self._manual_start_pen = int(sp_manual)
+
+        # Restore panel column picks before re-running; without them
+        # _update_start_pen_line cannot draw the restored start_pen line.
+        if self.calculate_panel is not None and self.sensor_data is not None:
+            ws_col = calc_params.get('weight_stand_col')
+            rel_col = calc_params.get('release_col')
+            trig_col = calc_params.get('trigger_col')
+            if ws_col or rel_col or trig_col:
+                columns_and_names = [
+                    (col, SensorData.get_location_name(col))
+                    for col in self.sensor_data.depth_columns
+                ]
+                self.calculate_panel.populate_sensor_combos(
+                    columns_and_names, ws_col, rel_col, trig_col,
+                )
 
         # Restore panel numeric params
         if self.calculate_panel is not None:
@@ -4338,6 +4516,9 @@ class AnalysisController:
             sg_p = calc_params.get('sg_poly')
             if trigger_pen is not None:
                 self.calculate_panel.set_trigger_pen(float(trigger_pen))
+            ws_len = calc_params.get("weight_stand_length_m")
+            if ws_len is not None:
+                self.calculate_panel.set_weight_stand_length_m(float(ws_len))
             if sg_w is not None and sg_p is not None:
                 self.calculate_panel.set_sg_params(int(sg_w), int(sg_p))
 
@@ -4463,6 +4644,238 @@ class AnalysisController:
             self.calculate_panel.log_widget.log(msg)
         elif mode == 'Piston Analysis' and self.piston_analysis_panel is not None:
             self.piston_analysis_panel.log_widget.log(msg)
+        elif mode == 'Predict' and self.predict_panel is not None:
+            self.predict_panel.log.log(msg)
+
+    # ==================================================================
+    # Predict mode
+    # ==================================================================
+
+    def _prompt_load_recoil_calibration(self) -> None:
+        """Open file picker for recoil calibration JSON (remembers last path)."""
+        last_path = self._predict_settings.value("predict/last_calibration_path", "")
+        start_dir = str(Path(last_path).parent) if last_path else ""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.main_window,
+            "Load Recoil Calibration",
+            start_dir,
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if file_path:
+            self.load_recoil_calibration(file_path)
+
+    def load_recoil_calibration(self, file_path: str) -> None:
+        try:
+            self.recoil_calibration = RecoilCalibrationIO.load(file_path)
+            self._predict_settings.setValue("predict/last_calibration_path", file_path)
+            filename = Path(file_path).name
+            if self.predict_panel is not None:
+                self.predict_panel.update_calibration_info(
+                    filename,
+                    self.recoil_calibration.summary_lines(),
+                )
+            self._log_predict(f"Recoil calibration loaded: {filename}")
+        except Exception as e:
+            self._show_error("Calibration Error", str(e))
+            self._log_predict(f"ERROR loading recoil calibration: {e}")
+
+    def run_predict(self) -> None:
+        if self.predict_panel is None or self.predict_plot_view is None:
+            return
+        if self.recoil_calibration is None:
+            self._show_warning("Load a recoil calibration JSON file first.")
+            self._prompt_load_recoil_calibration()
+            return
+
+        log = self.predict_panel.log
+        try:
+            inputs = self.predict_panel.get_inputs()
+            if inputs.v0_min_ms > inputs.v0_max_ms:
+                self._show_error("Invalid inputs", "v0 min must be <= v0 max.")
+                return
+
+            cal = self.recoil_calibration.body
+            for warning in training_warnings(inputs, cal):
+                log.log(f"WARNING: {warning}")
+
+            log.log("Running forward prediction…")
+            result = run_prediction(inputs, cal)
+            self._last_predict_result = result
+
+            log.log(
+                f"Seafloor estimate: {result['seafloor_m']:.2f} m "
+                f"(rel. corer trip {result['seafloor_relative_m']:+.2f} m)"
+            )
+            log.log(
+                f"Corer depth at trip: {result['corer_depth_at_trip_m']:.2f} m | "
+                f"Release depth at trip: {result['release_depth_at_trip_m']:.2f} m"
+            )
+
+            summary = result["event_summary"]
+            for _, row in summary.iterrows():
+                curve = row["curve_type"]
+                log.log(
+                    f"{curve}: start_core t={row['start_core_time_median_s']:.3f}s, "
+                    f"piston alt={row['piston_alt_start_core_median_m']:.2f} m | "
+                    f"start_pen t={row['start_pen_time_median_s']:.3f}s, "
+                    f"piston alt={row['piston_alt_start_pen_median_m']:.2f} m"
+                )
+
+            self._refresh_predict_plot()
+            log.log("Prediction complete.")
+        except Exception as e:
+            self._show_error("Prediction Error", str(e))
+            log.log(f"ERROR: {e}")
+
+    def _refresh_predict_plot(self) -> None:
+        if (
+            self.predict_panel is None
+            or self.predict_plot_view is None
+            or self._last_predict_result is None
+        ):
+            return
+        curves = self.predict_panel.get_selected_curves()
+        overlay = None
+        if self.predict_panel.overlay_actual_enabled():
+            try:
+                overlay = self._build_predict_overlay(self._last_predict_result)
+                curves = [curves[0]] if curves else curves
+            except Exception as e:
+                self._log_predict(f"Overlay skipped: {e}")
+        self.predict_plot_view.show_prediction(
+            self._last_predict_result,
+            curves,
+            self.predict_panel.show_piston(),
+            show_trigger=self.predict_panel.show_trigger(),
+            overlay=overlay,
+        )
+        self._update_predict_trigger_line_display(overlay)
+
+    def _on_predict_overlay_changed(self) -> None:
+        if self._last_predict_result is not None:
+            self._refresh_predict_plot()
+        else:
+            self._update_predict_trigger_line_display()
+
+    def _populate_predict_panel_from_session(self) -> None:
+        if self.predict_panel is None or self.sensor_data is None:
+            return
+        md = dict(self.sensor_data.metadata or {})
+        if self._loaded_core_info:
+            for key in (
+                "scope", "core_length", "trigger_core_length",
+                "trigger_line_length",
+            ):
+                val = self._loaded_core_info.get(key)
+                if val is not None:
+                    md[key] = val
+        self.predict_panel.populate_from_metadata(md)
+        self._sync_trip_to_calculate_panel()
+
+    def _plot_predict_mode(self) -> None:
+        """Main depth plot with draggable trip line for overlay alignment."""
+        if self.sensor_data is None:
+            return
+        self.plot_depths()
+        trip_idx = self._resolve_calc_trip_index()
+        if trip_idx is not None:
+            self.main_plot.add_trip_line(trip_idx)
+        if self._calc_start_core_idx is not None:
+            self.main_plot.add_start_core_line(self._calc_start_core_idx)
+        if self._piston_values is not None:
+            x = self.sensor_data.get_timestamps_epoch()
+            self.main_plot.add_piston_trace(x, self._piston_values)
+
+    def _build_predict_overlay(self, result: dict):
+        if self.sensor_data is None or self.calculate_panel is None:
+            raise ValueError("Load sensor data and configure Calculate sensors first")
+        ws_col = self.calculate_panel.get_weight_stand_col()
+        rel_col = self.calculate_panel.get_release_col()
+        trig_col = self.calculate_panel.get_trigger_col()
+        if ws_col is None or rel_col is None:
+            raise ValueError("Select weight stand and release sensors in Calculate mode")
+
+        trip_idx = self._resolve_calc_trip_index()
+        if trip_idx is None:
+            raise ValueError("Set trip time (Calculate panel or trip detector)")
+
+        ws_vals = (
+            self.sensor_data.df[ws_col]
+            .interpolate().ffill().bfill().values
+        )
+        rel_vals = (
+            self.sensor_data.df[rel_col]
+            .interpolate().ffill().bfill().values
+        )
+        trig_vals = None
+        if trig_col and trig_col in self.sensor_data.df.columns:
+            trig_vals = (
+                self.sensor_data.df[trig_col]
+                .interpolate().ffill().bfill().values
+            )
+
+        panel = self.calculate_panel
+        if panel.get_smoothing_enabled():
+            sg_win, sg_poly = panel.get_sg_params()
+            ws_vals = apply_savgol(ws_vals, sg_win, sg_poly)
+            rel_vals = apply_savgol(rel_vals, sg_win, sg_poly)
+            if trig_vals is not None:
+                trig_vals = apply_savgol(trig_vals, sg_win, sg_poly)
+
+        piston = self._piston_values
+        if piston is not None and panel.get_smoothing_enabled():
+            sg_win, sg_poly = panel.get_sg_params()
+            piston = apply_savgol(piston, sg_win, sg_poly)
+
+        md = self.sensor_data.metadata or {}
+        planned = md.get("trigger_line_length")
+        if self._loaded_core_info and self._loaded_core_info.get("trigger_line_length"):
+            planned = self._loaded_core_info.get("trigger_line_length")
+
+        inputs = result["inputs"]
+        return build_actual_overlay(
+            weight_stand=ws_vals,
+            release=rel_vals,
+            timestamps_epoch=self.sensor_data.get_timestamps_epoch(),
+            trip_idx=trip_idx,
+            time_grid=result["time"],
+            release_above_corer_m=inputs.release_above_corer_m,
+            piston=piston,
+            trigger_core=trig_vals,
+            planned_trigger_line_ft=float(planned) if planned is not None else None,
+        )
+
+    def _update_predict_trigger_line_display(self, overlay=None) -> None:
+        if self.predict_panel is None:
+            return
+        model_ft = None
+        if self._last_predict_result is not None:
+            model_ft = float(self._last_predict_result["inputs"].trigger_line_length_ft)
+        else:
+            model_ft = self.predict_panel.get_inputs().trigger_line_length_ft
+
+        effective_ft = None
+        planned_ft = None
+        if overlay is not None:
+            effective_ft = overlay.effective_trigger_line_ft
+            planned_ft = overlay.planned_trigger_line_ft
+        elif self._last_calc_results is not None:
+            effective_ft = self._last_calc_results.eff_trig_line_ft
+        if planned_ft is None and self.sensor_data is not None:
+            md = self.sensor_data.metadata or {}
+            planned = md.get("trigger_line_length")
+            if planned is None and self._loaded_core_info:
+                planned = self._loaded_core_info.get("trigger_line_length")
+            if planned is not None:
+                planned_ft = float(planned)
+
+        self.predict_panel.update_trigger_line_comparison(
+            planned_ft, effective_ft, model_ft,
+        )
+
+    def _log_predict(self, msg: str) -> None:
+        if self.predict_panel is not None:
+            self.predict_panel.log.log(msg)
 
     def _show_error(self, title: str, msg: str):
         if self.main_window:

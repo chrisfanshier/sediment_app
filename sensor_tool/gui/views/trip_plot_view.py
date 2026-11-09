@@ -48,6 +48,8 @@ class TripPlotView(QWidget):
         self.divergence_plot.addLegend()
         self.divergence_plot.setLabel('left', 'Divergence (Std Dev)')
         self.divergence_plot.setLabel('bottom', 'Sample Index')
+        self.divergence_plot.setDownsampling(auto=True, mode='peak')
+        self.divergence_plot.setClipToView(True)
         self._splitter.addWidget(self.divergence_plot)
 
         self.derivatives_plot = pg.PlotWidget()
@@ -56,6 +58,8 @@ class TripPlotView(QWidget):
         self.derivatives_plot.addLegend()
         self.derivatives_plot.setLabel('left', 'Derivative')
         self.derivatives_plot.setLabel('bottom', 'Sample Index')
+        self.derivatives_plot.setDownsampling(auto=True, mode='peak')
+        self.derivatives_plot.setClipToView(True)
         self._splitter.addWidget(self.derivatives_plot)
 
         self._splitter.setStretchFactor(0, 1)

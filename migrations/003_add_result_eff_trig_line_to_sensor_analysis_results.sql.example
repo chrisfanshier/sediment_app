@@ -1,0 +1,12 @@
+-- result_eff_trig_line column for sensor_analysis_results.
+-- Effective measured trigger line length at trip (feet), from calculate mode.
+-- Run against shipside / central databases that predate this column.
+-- Copy/rename to .sql or paste into psql.
+--
+-- Re-running prepare_db.py also applies this.
+
+ALTER TABLE sensor_analysis_results
+    ADD COLUMN IF NOT EXISTS result_eff_trig_line double precision;
+
+COMMENT ON COLUMN sensor_analysis_results.result_eff_trig_line IS
+    'Measured trigger line length at trip in feet: (trigger_depth - weight_stand_depth) / FT_TO_M';
